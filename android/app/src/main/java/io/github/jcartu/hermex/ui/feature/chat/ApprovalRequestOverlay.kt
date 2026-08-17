@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,6 +58,7 @@ fun ApprovalRequestOverlay(
     onSkipAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scrimInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -64,7 +66,7 @@ fun ApprovalRequestOverlay(
             .background(Color.Black.copy(alpha = 0.38f))
             // Swallow taps so the transcript behind is inert (modal semantics).
             .clickable(
-                interactionSource = MutableInteractionSource(),
+                interactionSource = scrimInteraction,
                 indication = null,
                 onClick = {},
             ),

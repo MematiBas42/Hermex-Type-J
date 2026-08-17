@@ -5,10 +5,47 @@ unreleased changes accumulate at the top. Format follows
 [Keep a Changelog](https://keepachangelog.com/) with Added / Changed / Fixed /
 Security sections per release.
 
-## [Unreleased]
+## [2.0.0] - 2026-08-17
 
 ### Added
-- Native Android client built with Kotlin and Jetpack Compose, with feature
+- Renamed the Android fork to **Hermex-Type-J** (`jcartu/Hermex-Type-J`,
+  package ID unchanged for in-place upgrades) and expanded it with:
+- Kanban boards: boards/columns/cards, card detail (comments, activity,
+  dependencies, runs), create/edit/move/block/unblock, bulk actions, dispatcher
+  dry-run/execute, worker logs, and live event reconciliation.
+- Git workspaces: session-scoped status, branches, staged/unstaged diffs,
+  stage/unstage/discard, fetch/pull/push, checkout + stash-checkout, generated
+  commit messages, and selected-path commits, all with explicit confirmations.
+- Android share target (ACTION_SEND/SEND_MULTIPLE/PROCESS_TEXT) backed by a
+  durable app-private inbox; drafts and attachments survive process death and
+  land in a new-chat composer.
+- Deep links (`hermex-type-j://` + legacy `hermes-agent://`) for new chat,
+  sessions, Kanban boards/cards, and Git workspaces, plus launcher shortcuts.
+- Foreground run monitoring with private ongoing/completion notifications,
+  cancel action, and status/replay recovery (opt-in, POST_NOTIFICATIONS).
+- Encrypted per-origin custom request headers with masked editing, validation,
+  cross-origin redirect stripping, and Keystore encryption at rest.
+- Voice notes (native AAC recorder) with server transcription, and assistant
+  Listen via server TTS with Android TextToSpeech fallback.
+- Deterministic fuzz/property tests (hinge geometry, dynamic path encoding,
+  deep-link parsing, tolerant decoding, speech normalization, stream reducers).
+
+### Fixed
+- Cold-start crash from a mis-packed Compose color built with `ULong` packing
+  (`Invalid ID: 40` in the draw pass), found by surface testing.
+- Android Lint errors and warnings resolved to zero (state lifetime, window
+  metrics, Activity access, subcomposition, backup policy, resource qualifiers,
+  Compose API shape, KTX calls).
+- Kanban live-event cursor could regress to a stale snapshot value.
+- Composer approval/clarification polling no longer runs while the chat screen
+  is backgrounded (also fixes virtual-time test starvation).
+- Rail-mode headers no longer render under the status bar; Git header and
+  summary chips no longer wrap/clipped at pane widths.
+- A session-opening destination is restored across compact↔expanded shell
+  transitions instead of resetting to the list.
+
+### Added
+- Native Hermex-Type-J Android client built with Kotlin and Jetpack Compose, with feature
   parity for streaming chat, sessions/projects, model/profile/reasoning
   selection, editable scheduled tasks, skills, workspace files, memory,
   insights, settings, and offline cache.

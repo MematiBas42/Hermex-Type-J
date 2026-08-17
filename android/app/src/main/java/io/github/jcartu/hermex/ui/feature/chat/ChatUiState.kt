@@ -118,6 +118,7 @@ data class ChatUiState(
     val draft: String = "",
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val isUploadingAttachment: Boolean = false,
+    val isProcessingVoiceNote: Boolean = false,
     val uploadAttachmentErrorMessage: String? = null,
     val selectedModelId: String? = null,
     val selectedModelProviderId: String? = null,
@@ -188,6 +189,7 @@ interface ChatComposerActions {
 
     /** Upload a picked file; on success it joins [ChatUiState.pendingAttachments]. */
     fun uploadAttachment(bytes: ByteArray, filename: String)
+    fun importVoiceNote(bytes: ByteArray, filename: String)
     fun removePendingAttachment(id: String)
     fun clearPendingAttachments()
 

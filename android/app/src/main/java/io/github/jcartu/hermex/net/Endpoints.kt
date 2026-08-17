@@ -5,9 +5,9 @@ import okhttp3.HttpUrl
 
 /**
  * Port of `Networking/Endpoints.swift` — one case per server route, carrying
- * exactly the query parameters the Swift enum builds. Git, Kanban, TTS, and
- * transcribe routes are out of the Android v1 scope and are intentionally
- * absent.
+ * exactly the query parameters the Swift enum builds. Dynamic Kanban/Git path
+ * segments are encoded separately so a server-provided identifier can never
+ * escape its route.
  */
 sealed class Endpoint {
 
@@ -62,6 +62,22 @@ sealed class Endpoint {
     data class DirectoryList(val sessionId: String, val filePath: String?) : Endpoint()
     data class File(val sessionId: String, val filePath: String) : Endpoint()
     data class RawFile(val sessionId: String, val filePath: String) : Endpoint()
+    data class GitInfo(val sessionId: String) : Endpoint()
+    data class GitStatus(val sessionId: String) : Endpoint()
+    data class GitBranches(val sessionId: String) : Endpoint()
+    data class GitDiff(val sessionId: String, val filePath: String, val kind: String) : Endpoint()
+    object GitFetch : Endpoint()
+    object GitPull : Endpoint()
+    object GitPush : Endpoint()
+    object GitCheckout : Endpoint()
+    object GitStashCheckout : Endpoint()
+    object GitStage : Endpoint()
+    object GitUnstage : Endpoint()
+    object GitDiscard : Endpoint()
+    object GitCommit : Endpoint()
+    object GitCommitSelected : Endpoint()
+    object GitCommitMessage : Endpoint()
+    object GitCommitMessageSelected : Endpoint()
     object Models : Endpoint()
     object ModelsLive : Endpoint()
     object Commands : Endpoint()
@@ -88,6 +104,37 @@ sealed class Endpoint {
     data class SkillContent(val name: String, val file: String?) : Endpoint()
     object ToggleSkill : Endpoint()
     object Upload : Endpoint()
+    object KanbanConfig : Endpoint()
+    object KanbanBoards : Endpoint()
+    object KanbanCreateBoard : Endpoint()
+    data class KanbanEditBoard(val slug: String) : Endpoint()
+    data class KanbanArchiveBoard(val slug: String) : Endpoint()
+    data class KanbanSwitchBoard(val slug: String) : Endpoint()
+    data class KanbanDispatch(val board: String, val dryRun: Boolean, val maximum: Int) : Endpoint()
+    data class KanbanBoard(
+        val board: String,
+        val tenant: String?,
+        val assignee: String?,
+        val includeArchived: Boolean,
+        val onlyMine: Boolean,
+        val since: Int?,
+    ) : Endpoint()
+    object Tts : Endpoint()
+    object Transcribe : Endpoint()
+    data class KanbanStats(val board: String) : Endpoint()
+    data class KanbanAssignees(val board: String) : Endpoint()
+    data class KanbanEvents(val board: String, val since: Int, val limit: Int) : Endpoint()
+    data class KanbanCardDetail(val cardId: String, val board: String) : Endpoint()
+    data class KanbanWorkerLog(val cardId: String, val board: String, val tailBytes: Int) : Endpoint()
+    data class KanbanAddComment(val cardId: String, val board: String) : Endpoint()
+    data class KanbanCreateCard(val board: String) : Endpoint()
+    data class KanbanBulkAction(val board: String) : Endpoint()
+    data class KanbanEditCard(val cardId: String, val board: String) : Endpoint()
+    data class KanbanCardStatus(val cardId: String, val board: String) : Endpoint()
+    data class KanbanBlockCard(val cardId: String, val board: String) : Endpoint()
+    data class KanbanUnblockCard(val cardId: String, val board: String) : Endpoint()
+    data class KanbanAddDependency(val board: String) : Endpoint()
+    data class KanbanRemoveDependency(val board: String) : Endpoint()
 
     val path: String
         get() = when (this) {
@@ -107,6 +154,22 @@ sealed class Endpoint {
             BranchSession -> "/api/session/branch"
             TruncateSession -> "/api/session/truncate"
             CompressSession -> "/api/session/compress"
+            is GitInfo -> "/api/git-info"
+            is GitStatus -> "/api/git/status"
+            is GitBranches -> "/api/git/branches"
+            is GitDiff -> "/api/git/diff"
+            GitFetch -> "/api/git/fetch"
+            GitPull -> "/api/git/pull"
+            GitPush -> "/api/git/push"
+            GitCheckout -> "/api/git/checkout"
+            GitStashCheckout -> "/api/git/stash-checkout"
+            GitStage -> "/api/git/stage"
+            GitUnstage -> "/api/git/unstage"
+            GitDiscard -> "/api/git/discard"
+            GitCommit -> "/api/git/commit"
+            GitCommitSelected -> "/api/git/commit-selected"
+            GitCommitMessage -> "/api/git/commit-message"
+            GitCommitMessageSelected -> "/api/git/commit-message-selected"
             UndoSession -> "/api/session/undo"
             RetrySession -> "/api/session/retry"
             UpdateSession -> "/api/session/update"
@@ -161,6 +224,25 @@ sealed class Endpoint {
             is SkillContent -> "/api/skills/content"
             ToggleSkill -> "/api/skills/toggle"
             Upload -> "/api/upload"
+            KanbanConfig -> "/api/kanban/config"
+            KanbanBoards, KanbanCreateBoard -> "/api/kanban/boards"
+            is KanbanEditBoard, is KanbanArchiveBoard -> "/api/kanban/boards"
+            is KanbanSwitchBoard -> "/api/kanban/boards"
+            is KanbanDispatch -> "/api/kanban/dispatch"
+            is KanbanBoard -> "/api/kanban/board"
+            is KanbanStats -> "/api/kanban/stats"
+            is KanbanAssignees -> "/api/kanban/assignees"
+            is KanbanEvents -> "/api/kanban/events"
+            is KanbanCardDetail, is KanbanEditCard, is KanbanCardStatus -> "/api/kanban/tasks"
+            is KanbanWorkerLog -> "/api/kanban/tasks"
+            is KanbanAddComment -> "/api/kanban/tasks"
+            is KanbanCreateCard -> "/api/kanban/tasks"
+            is KanbanBulkAction -> "/api/kanban/tasks/bulk"
+            is KanbanBlockCard, is KanbanUnblockCard -> "/api/kanban/tasks"
+            is KanbanAddDependency -> "/api/kanban/links"
+            is KanbanRemoveDependency -> "/api/kanban/links/delete"
+            Tts -> "/api/tts"
+            Transcribe -> "/api/transcribe"
         }
 
     val queryItems: List<Pair<String, String>>
@@ -215,6 +297,10 @@ sealed class Endpoint {
             is WorkspaceSuggestions -> listOf("prefix" to prefix)
             is File -> listOf("session_id" to sessionId, "path" to filePath)
             is RawFile -> listOf("session_id" to sessionId, "path" to filePath)
+            is GitInfo -> listOf("session_id" to sessionId)
+            is GitStatus -> listOf("session_id" to sessionId)
+            is GitBranches -> listOf("session_id" to sessionId)
+            is GitDiff -> listOf("session_id" to sessionId, "path" to filePath, "kind" to kind)
 
             is CronStatus -> jobId?.let { listOf("job_id" to it) } ?: emptyList()
 
@@ -237,6 +323,37 @@ sealed class Endpoint {
                 add("name" to name)
                 file?.let { add("file" to it) }
             }
+            is KanbanDispatch -> listOf(
+                "board" to board,
+                "dry_run" to if (dryRun) "true" else "false",
+                "max" to maximum.coerceIn(1, 8).toString(),
+            )
+            is KanbanBoard -> buildList {
+                add("board" to board)
+                tenant?.takeIf { it.isNotBlank() }?.let { add("tenant" to it) }
+                assignee?.takeIf { it.isNotBlank() }?.let { add("assignee" to it) }
+                if (includeArchived) add("include_archived" to "true")
+                if (onlyMine) add("only_mine" to "true")
+                since?.let { add("since" to it.coerceAtLeast(0).toString()) }
+            }
+            is KanbanStats -> listOf("board" to board)
+            is KanbanAssignees -> listOf("board" to board)
+            is KanbanEvents -> listOf(
+                "board" to board,
+                "since" to since.coerceAtLeast(0).toString(),
+                "limit" to limit.coerceIn(1, 200).toString(),
+            )
+            is KanbanCardDetail -> listOf("board" to board)
+            is KanbanWorkerLog -> listOf("board" to board, "tail" to tailBytes.coerceIn(1, 2_000_000).toString())
+            is KanbanAddComment -> listOf("board" to board)
+            is KanbanCreateCard -> listOf("board" to board)
+            is KanbanBulkAction -> listOf("board" to board)
+            is KanbanEditCard -> listOf("board" to board)
+            is KanbanCardStatus -> listOf("board" to board)
+            is KanbanBlockCard -> listOf("board" to board)
+            is KanbanUnblockCard -> listOf("board" to board)
+            is KanbanAddDependency -> listOf("board" to board)
+            is KanbanRemoveDependency -> listOf("board" to board)
 
             else -> emptyList()
         }
@@ -247,15 +364,30 @@ sealed class Endpoint {
      * appends the query items.
      */
     fun url(baseUrl: HttpUrl): HttpUrl {
-        val builder = baseUrl.newBuilder()
-            .addPathSegments(path.removePrefix("/"))
+        val builder = when (this) {
+            is KanbanEditBoard -> baseUrl.newBuilder().addPathSegments("api/kanban/boards").addDynamicPathSegment(slug)
+            is KanbanArchiveBoard -> baseUrl.newBuilder().addPathSegments("api/kanban/boards").addDynamicPathSegment(slug)
+            is KanbanSwitchBoard -> baseUrl.newBuilder().addPathSegments("api/kanban/boards").addDynamicPathSegment(slug).addPathSegment("switch")
+            is KanbanCardDetail -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId)
+            is KanbanWorkerLog -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("log")
+            is KanbanAddComment -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("comments")
+            is KanbanEditCard -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId)
+            is KanbanCardStatus -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId)
+            is KanbanBlockCard -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("block")
+            is KanbanUnblockCard -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("unblock")
+            else -> baseUrl.newBuilder().addPathSegments(path.removePrefix("/"))
+        }
         for ((name, value) in queryItems) {
-            // addQueryParameter percent-encodes '/', but path-like values (workspace
-            // prefixes, file paths) must stay literal to match the Swift endpoints
-            // and upstream's expectations, so encode everything except '/'.
             val encoded = java.net.URLEncoder.encode(value, "UTF-8").replace("%2F", "/").replace("+", "%20")
             builder.addEncodedQueryParameter(name, encoded)
         }
         return builder.build()
     }
+}
+
+private fun HttpUrl.Builder.addDynamicPathSegment(value: String): HttpUrl.Builder {
+    require(value.isNotBlank()) { "Dynamic path segment cannot be blank" }
+    require(value != "." && value != "..") { "Dynamic path segment cannot be dot traversal" }
+    val encoded = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    return addEncodedPathSegment(encoded)
 }

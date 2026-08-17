@@ -38,4 +38,26 @@ class AppNavigationViewModelTest {
         assertFalse(vm.isNewChat)
         assertNull(vm.selectedSessionId)
     }
+
+    @Test
+    fun `Kanban deep target survives recreation and consumes atomically`() {
+        val handle = SavedStateHandle()
+        AppNavigationViewModel(handle).openKanban("main", "card-7")
+        val restored = AppNavigationViewModel(handle)
+        assertEquals(HermexDestination.KANBAN, restored.selectedDestination)
+        assertEquals("main", restored.kanbanBoardSlug)
+        assertEquals("card-7", restored.kanbanCardId)
+        restored.consumeKanbanTarget()
+        assertNull(AppNavigationViewModel(handle).kanbanBoardSlug)
+    }
+
+    @Test
+    fun `Git deep target opens More and survives recreation`() {
+        val handle = SavedStateHandle()
+        AppNavigationViewModel(handle).openGit("s1")
+        val restored = AppNavigationViewModel(handle)
+        assertEquals(HermexDestination.MORE, restored.selectedDestination)
+        assertEquals("git", restored.pendingMoreRoute)
+        assertEquals("s1", restored.gitSessionId)
+    }
 }

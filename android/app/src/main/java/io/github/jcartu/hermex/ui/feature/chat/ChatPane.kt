@@ -1,4 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.chat
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -36,10 +40,12 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.window.layout.FoldingFeature
 import coil.ImageLoader
 import io.github.jcartu.hermex.HermexApplication
+import io.github.jcartu.hermex.core.media.AssistantSpeaker
 import io.github.jcartu.hermex.net.SseChatStream
 import io.github.jcartu.hermex.ui.adaptive.FoldState
 import io.github.jcartu.hermex.ui.adaptive.HingeAwarePaneRow
 import io.github.jcartu.hermex.ui.adaptive.LocalFoldState
+import io.github.jcartu.hermex.service.AgentRunService
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 
 /**
@@ -81,6 +87,7 @@ fun ChatPane(
                         httpClient = container.okHttpClient,
                         json = container.json,
                         api = container.api,
+                        customHeaderProvider = { container.customHeaderStore.snapshot() },
                     ),
                     cacheStore = container.cacheStore,
                     serverConfig = container.serverConfig,
@@ -100,17 +107,56 @@ fun ChatPane(
         viewModel.switchToSession(initialSessionId, initialNewChat)
     }
 
-    // Suspend the SSE collection in background, reconnect on return
-    // (port of the iOS scenePhase handling; never re-sends the message).
+    val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(sharedImport?.id, viewModel) {
+        val value = sharedImport ?: return@LaunchedEffect
+        if (viewModel.applySharedImport(value)) {
+            container.sharedImports.acknowledge(value.id)
+        }
+    }
+
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val localSettings by container.settings.settings.collectAsStateWithLifecycle(
+        initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings(),
+    )
+    val latestState = rememberUpdatedState(state)
+    val latestNotificationsEnabled = rememberUpdatedState(localSettings.backgroundRunNotificationsEnabled)
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, viewModel) {
+    DisposableEffect(lifecycleOwner, viewModel, context) {
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            latestState.value.activeStreamId?.let { AgentRunService.stop(context, it) }
             viewModel.resumeForForeground()
         }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> viewModel.resumeForForeground()
-                Lifecycle.Event.ON_STOP -> viewModel.suspendStreamForBackground()
+                Lifecycle.Event.ON_START -> {
+                    latestState.value.activeStreamId?.let { AgentRunService.stop(context, it) }
+                    viewModel.resumeForForeground()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    val current = latestState.value
+                    val permissionGranted =
+                        Build.VERSION.SDK_INT < 33 ||
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                            PackageManager.PERMISSION_GRANTED
+                    if (
+                        latestNotificationsEnabled.value &&
+                        permissionGranted &&
+                        current.activeStreamId != null &&
+                        current.sessionId != null
+                    ) {
+                        io.github.jcartu.hermex.core.logging.HermexLog.d(
+                            "Handing active stream to AgentRunService",
+                        )
+                        AgentRunService.start(
+                            context = context,
+                            streamId = current.activeStreamId,
+                            sessionId = current.sessionId,
+                            title = current.displayTitle.ifBlank { "Hermes run" },
+                        )
+                    }
+                    viewModel.suspendStreamForBackground()
+                }
                 else -> Unit
             }
         }
@@ -120,8 +166,6 @@ fun ChatPane(
             viewModel.suspendStreamForBackground()
         }
     }
-
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
     // Coil loader sharing the app's OkHttp client, so `/api/file/raw` image
@@ -131,6 +175,10 @@ fun ChatPane(
             .okHttpClient(container.okHttpClient)
             .crossfade(true)
             .build()
+    }
+    val assistantSpeaker = remember(container) { AssistantSpeaker(context, container.api) }
+    DisposableEffect(assistantSpeaker) {
+        onDispose { assistantSpeaker.release() }
     }
     val currentSessionId = rememberUpdatedState(state.sessionId)
     val attachmentUrlResolver: suspend (String) -> String? = remember(container) {
@@ -155,6 +203,7 @@ fun ChatPane(
                 listState = listState,
                 imageLoader = imageLoader,
                 attachmentUrlResolver = attachmentUrlResolver,
+                onListen = assistantSpeaker::speak,
             )
         } else {
             SingleRegionChatLayout(
@@ -163,6 +212,7 @@ fun ChatPane(
                 listState = listState,
                 imageLoader = imageLoader,
                 attachmentUrlResolver = attachmentUrlResolver,
+                onListen = assistantSpeaker::speak,
                 fold = fold,
             )
         }
@@ -201,6 +251,7 @@ private fun SingleRegionChatLayout(
     listState: LazyListState,
     imageLoader: ImageLoader,
     attachmentUrlResolver: suspend (String) -> String?,
+    onListen: (String) -> Unit,
     fold: FoldState,
 ) {
     val horizontalHinge = fold.features.firstOrNull {
@@ -231,6 +282,7 @@ private fun SingleRegionChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
                 modifier = Modifier
@@ -251,6 +303,7 @@ private fun SingleRegionChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
                 modifier = Modifier
@@ -278,6 +331,7 @@ private fun TrifoldChatLayout(
     listState: LazyListState,
     imageLoader: ImageLoader,
     attachmentUrlResolver: suspend (String) -> String?,
+    onListen: (String) -> Unit,
 ) {
     HingeAwarePaneRow(paneCount = 2) { index, paneModifier ->
         when (index) {
@@ -286,6 +340,7 @@ private fun TrifoldChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
                 modifier = paneModifier,

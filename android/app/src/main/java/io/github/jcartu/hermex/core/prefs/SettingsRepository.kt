@@ -19,6 +19,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val themeKey = stringPreferencesKey("appTheme")
         val headerLogoColorKey = stringPreferencesKey("headerLogoColorHex")
         val hapticsEnabledKey = booleanPreferencesKey("appHaptics.isEnabled")
+        val backgroundRunNotificationsKey =
+            booleanPreferencesKey("responseCompletionNotifications.isEnabled")
         val showsThinkingAndToolCardsKey = booleanPreferencesKey("chatTranscript.showsThinkingAndToolCards")
         val thinkingCardsStartExpandedKey = booleanPreferencesKey("chatTranscript.thinkingCardsStartExpanded")
         val toolCardsStartExpandedKey = booleanPreferencesKey("chatTranscript.toolCardsStartExpanded")
@@ -35,6 +37,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val theme: Theme = Theme.SYSTEM,
         val headerLogoColorHex: String = DEFAULT_HEADER_LOGO_COLOR,
         val hapticsEnabled: Boolean = true,
+        val backgroundRunNotificationsEnabled: Boolean = false,
         val showsThinkingAndToolCards: Boolean = true,
         val thinkingCardsStartExpanded: Boolean = false,
         val toolCardsStartExpanded: Boolean = false,
@@ -50,6 +53,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
             theme = prefs[themeKey]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.SYSTEM,
             headerLogoColorHex = prefs[headerLogoColorKey] ?: DEFAULT_HEADER_LOGO_COLOR,
             hapticsEnabled = prefs[hapticsEnabledKey] ?: true,
+            backgroundRunNotificationsEnabled = prefs[backgroundRunNotificationsKey] ?: false,
             showsThinkingAndToolCards = prefs[showsThinkingAndToolCardsKey] ?: true,
             thinkingCardsStartExpanded = prefs[thinkingCardsStartExpandedKey] ?: false,
             toolCardsStartExpanded = prefs[toolCardsStartExpandedKey] ?: false,
@@ -64,6 +68,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun setTheme(theme: Theme) = dataStore.edit { it[themeKey] = theme.name }
     suspend fun setHeaderLogoColor(hex: String) = dataStore.edit { it[headerLogoColorKey] = hex }
     suspend fun setHapticsEnabled(enabled: Boolean) = dataStore.edit { it[hapticsEnabledKey] = enabled }
+    suspend fun setBackgroundRunNotificationsEnabled(enabled: Boolean) =
+        dataStore.edit { it[backgroundRunNotificationsKey] = enabled }
     suspend fun setShowsThinkingAndToolCards(enabled: Boolean) = dataStore.edit { it[showsThinkingAndToolCardsKey] = enabled }
     suspend fun setThinkingCardsStartExpanded(enabled: Boolean) = dataStore.edit { it[thinkingCardsStartExpandedKey] = enabled }
     suspend fun setToolCardsStartExpanded(enabled: Boolean) = dataStore.edit { it[toolCardsStartExpandedKey] = enabled }

@@ -1,5 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
+import io.github.jcartu.hermex.core.share.SharedImport
+import io.github.jcartu.hermex.core.share.SharedImportAttachment
 import io.github.jcartu.hermex.core.prefs.ServerConfig
 import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
@@ -26,6 +28,7 @@ import io.github.jcartu.hermex.model.ReasoningStatusResponse
 import io.github.jcartu.hermex.model.SessionDetail
 import io.github.jcartu.hermex.model.SessionResponse
 import io.github.jcartu.hermex.model.SkillsResponse
+import io.github.jcartu.hermex.model.TranscribeResponse
 import io.github.jcartu.hermex.model.UploadResponse
 import io.github.jcartu.hermex.model.WorkspacesResponse
 import io.github.jcartu.hermex.net.ApiError
@@ -49,6 +52,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -556,6 +560,73 @@ class ChatViewModelTest {
         assertEquals("/up/a.png", optimistic.attachments?.single()?.path)
     }
 
+    @Test
+    fun `shared text merges once and shared file stages before acknowledgement`() = runTest(dispatcher) {
+        coEvery { api.uploadFile("s1", any(), "report.txt") } returns UploadResponse(
+            filename = "report.txt",
+            path = "/up/report.txt",
+            size = 6,
+            mime = "text/plain",
+            isImage = false,
+        )
+        val file = File(directory, "report.txt").apply { writeText("report") }
+        val shared = SharedImport(
+            id = "share-1",
+            text = "Review this",
+            attachments = listOf(SharedImportAttachment("report.txt", "text/plain", 6, file)),
+            warnings = emptyList(),
+        )
+        val vm = viewModel()
+        vm.switchToSession("s1", newChat = false)
+        vm.updateDraft("Existing")
+
+        assertTrue(vm.applySharedImport(shared))
+        assertEquals("Existing\n\nReview this\n", vm.uiState.value.draft)
+        assertEquals("/up/report.txt", vm.uiState.value.pendingAttachments.single().path)
+
+        assertTrue(vm.applySharedImport(shared))
+        assertEquals("Existing\n\nReview this\n", vm.uiState.value.draft)
+        coVerify(exactly = 1) { api.uploadFile("s1", any(), "report.txt") }
+    }
+
+    @Test
+    fun `voice note stages audio and appends server transcript`() = runTest(dispatcher) {
+        coEvery { api.uploadFile("s1", any(), "voice-note.m4a") } returns UploadResponse(
+            filename = "voice-note.m4a", path = "/up/voice-note.m4a", size = 5,
+            mime = "audio/mp4", isImage = false,
+        )
+        coEvery { api.transcribeAudio(any(), "voice-note.m4a") } returns TranscribeResponse(
+            ok = true, transcript = "Ship the Type-J build",
+        )
+        val vm = viewModel()
+        vm.switchToSession("s1", newChat = false)
+        vm.updateDraft("Context")
+        vm.importVoiceNote(byteArrayOf(1, 2, 3), "voice-note.m4a")
+        advanceUntilIdle()
+
+        assertEquals("Context\n\nShip the Type-J build", vm.uiState.value.draft)
+        assertEquals("/up/voice-note.m4a", vm.uiState.value.pendingAttachments.single().path)
+        assertFalse(vm.uiState.value.isProcessingVoiceNote)
+    }
+
+    @Test
+    fun `transcription failure keeps staged audio and surfaces precise error`() = runTest(dispatcher) {
+        coEvery { api.uploadFile("s1", any(), "voice-note.m4a") } returns UploadResponse(
+            filename = "voice-note.m4a", path = "/up/voice-note.m4a", size = 5,
+            mime = "audio/mp4", isImage = false,
+        )
+        coEvery { api.transcribeAudio(any(), "voice-note.m4a") } returns TranscribeResponse(
+            ok = false, error = "STT is not configured",
+        )
+        val vm = viewModel()
+        vm.switchToSession("s1", newChat = false)
+        vm.importVoiceNote(byteArrayOf(1), "voice-note.m4a")
+        advanceUntilIdle()
+
+        assertEquals("/up/voice-note.m4a", vm.uiState.value.pendingAttachments.single().path)
+        assertTrue(vm.uiState.value.uploadAttachmentErrorMessage!!.contains("STT is not configured"))
+        assertFalse(vm.uiState.value.isProcessingVoiceNote)
+    }
     @Test
     fun `new chat mode creates the session lazily on first send`() = runTest(dispatcher) {
         coEvery { api.createSession(any(), any(), any(), any()) } returns SessionResponse(

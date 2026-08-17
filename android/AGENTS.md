@@ -1,7 +1,7 @@
-# Hermex Android — Agent Conventions
+# Hermex-Type-J Android — Agent Conventions
 
-This directory contains the native Android port of the Hermex iOS app. The
-Swift sources are the behavioral source of truth and live at `../HermesMobile/`.
+This directory contains the native Hermex-Type-J Android client. The upstream
+Swift sources remain the behavioral source of truth at `../HermesMobile/`.
 This document is the binding contract for every agent working in `android/`.
 ## Hard rules
 

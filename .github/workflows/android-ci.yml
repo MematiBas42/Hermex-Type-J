@@ -1,4 +1,4 @@
-name: Android CI
+name: Hermex-Type-J Android CI
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: Build & test Android
+    name: Build & test Hermex-Type-J
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,6 +36,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hermex-android-unsigned
+          name: hermex-type-j-android-unsigned
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error

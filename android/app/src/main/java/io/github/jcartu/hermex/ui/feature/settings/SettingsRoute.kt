@@ -1,6 +1,11 @@
 package io.github.jcartu.hermex.ui.feature.settings
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +30,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
@@ -50,8 +56,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.jcartu.hermex.HermexApplication
@@ -100,6 +109,14 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
         key = "settingsProviders",
         factory = viewModelFactory { initializer { ProvidersViewModel(container.api) } },
     )
+    val customHeadersViewModel: CustomHeadersViewModel = viewModel(
+        key = "settingsCustomHeaders",
+        factory = viewModelFactory {
+            initializer { CustomHeadersViewModel(container.customHeaders, container.serverConfig) }
+        },
+    )
+    val customHeadersState by customHeadersViewModel.uiState.collectAsStateWithLifecycle()
+    var showCustomHeaders by rememberSaveable { mutableStateOf(false) }
 
     val uiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
@@ -123,6 +140,7 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
             settingsViewModel,
             uiState,
             onOpenArchived,
+            { showCustomHeaders = true },
             SettingsColumnGroup.ALL,
             Modifier.fillMaxSize(),
         )
@@ -131,7 +149,8 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
             if (uiState.isShowingProviders) {
                 when (index) {
                     0 -> SettingsColumn(
-                        settingsViewModel, uiState, onOpenArchived, SettingsColumnGroup.ALL, paneModifier,
+                        settingsViewModel, uiState, onOpenArchived, { showCustomHeaders = true },
+                        SettingsColumnGroup.ALL, paneModifier,
                     )
                     else -> ProvidersPane(
                         viewModel = providersViewModel,
@@ -144,6 +163,7 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
                     settingsViewModel,
                     uiState,
                     onOpenArchived,
+                    { showCustomHeaders = true },
                     if (index == 0) SettingsColumnGroup.PREFERENCES else SettingsColumnGroup.SERVER,
                     paneModifier,
                 )
@@ -153,10 +173,12 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
         else -> HingeAwarePaneRow(paneCount = 3) { index, paneModifier ->
             when (index) {
                 0 -> SettingsColumn(
-                    settingsViewModel, uiState, onOpenArchived, SettingsColumnGroup.PREFERENCES, paneModifier,
+                    settingsViewModel, uiState, onOpenArchived, { showCustomHeaders = true },
+                    SettingsColumnGroup.PREFERENCES, paneModifier,
                 )
                 1 -> SettingsColumn(
-                    settingsViewModel, uiState, onOpenArchived, SettingsColumnGroup.SERVER, paneModifier,
+                    settingsViewModel, uiState, onOpenArchived, { showCustomHeaders = true },
+                    SettingsColumnGroup.SERVER, paneModifier,
                 )
                 else -> if (uiState.isShowingProviders) {
                     ProvidersPane(
@@ -209,6 +231,18 @@ fun SettingsRoute(onOpenArchived: () -> Unit = {}) {
             },
         )
     }
+
+    if (showCustomHeaders) {
+        CustomHeadersDialog(
+            state = customHeadersState,
+            validate = customHeadersViewModel::validate,
+            onSave = customHeadersViewModel::save,
+            onDismiss = {
+                showCustomHeaders = false
+                customHeadersViewModel.consumeSaved()
+            },
+        )
+    }
 }
 
 /** Which section cards a column shows; medium+ splits preferences | server. */
@@ -219,6 +253,7 @@ private fun SettingsColumn(
     viewModel: SettingsViewModel,
     uiState: SettingsUiState,
     onOpenArchived: () -> Unit,
+    onOpenCustomHeaders: () -> Unit,
     group: SettingsColumnGroup,
     modifier: Modifier = Modifier,
 ) {
@@ -242,7 +277,7 @@ private fun SettingsColumn(
             if (group != SettingsColumnGroup.PREFERENCES) {
                 item("mainPage") { MainPageCard(viewModel, uiState) }
                 item("archived") { ArchivedSessionsCard(onOpenArchived) }
-                item("activeServer") { ActiveServerCard(viewModel, uiState) }
+                item("activeServer") { ActiveServerCard(viewModel, uiState, onOpenCustomHeaders) }
                 item("account") { AccountCard(viewModel, uiState) }
                 item("about") { AboutCard() }
             }
@@ -312,6 +347,12 @@ private fun AppearanceCard(viewModel: SettingsViewModel, uiState: SettingsUiStat
 
 @Composable
 private fun InteractionCard(viewModel: SettingsViewModel, uiState: SettingsUiState) {
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.setBackgroundRunNotificationsEnabled(granted)
+    }
     SettingsCard(title = "Interaction") {
         SettingsToggleRow(
             title = "Haptic Feedback",
@@ -319,6 +360,24 @@ private fun InteractionCard(viewModel: SettingsViewModel, uiState: SettingsUiSta
             checked = uiState.settings.hapticsEnabled,
             onCheckedChange = viewModel::setHapticsEnabled,
         )
+        SettingsDivider()
+        SettingsToggleRow(
+            title = "Background Run Notifications",
+            icon = Icons.Filled.NotificationsActive,
+            checked = uiState.settings.backgroundRunNotificationsEnabled,
+            onCheckedChange = { enabled ->
+                if (
+                    enabled &&
+                    Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    viewModel.setBackgroundRunNotificationsEnabled(enabled)
+                }
+            },
+        )
+        SettingsFootnote("Keeps an active response monitored in the foreground and posts completion or failure.")
     }
 }
 
@@ -453,7 +512,11 @@ private fun ArchivedSessionsCard(onOpenArchived: () -> Unit) {
 }
 
 @Composable
-private fun ActiveServerCard(viewModel: SettingsViewModel, uiState: SettingsUiState) {
+private fun ActiveServerCard(
+    viewModel: SettingsViewModel,
+    uiState: SettingsUiState,
+    onOpenCustomHeaders: () -> Unit,
+) {
     SettingsCard(title = "Active Server") {
         SettingsInfoRow(
             title = "Server",
@@ -505,6 +568,13 @@ private fun ActiveServerCard(viewModel: SettingsViewModel, uiState: SettingsUiSt
             title = "Providers",
             icon = Icons.Filled.Key,
             onClick = viewModel::openProviders,
+        )
+        SettingsDivider()
+        SettingsAccessoryRow(
+            title = "Encrypted Custom Headers",
+            icon = Icons.Filled.Shield,
+            value = "Per server",
+            onClick = onOpenCustomHeaders,
         )
     }
 }

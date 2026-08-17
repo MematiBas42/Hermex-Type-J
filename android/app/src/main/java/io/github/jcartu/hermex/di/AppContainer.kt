@@ -8,6 +8,7 @@ import io.github.jcartu.hermex.core.crypto.AndroidKeystoreCipher
 import io.github.jcartu.hermex.core.crypto.StringCipher
 import io.github.jcartu.hermex.core.net.PersistentCookieJar
 import io.github.jcartu.hermex.core.prefs.CookieSerializer
+import io.github.jcartu.hermex.net.CustomHeaderStore
 import kotlinx.coroutines.launch
 import io.github.jcartu.hermex.core.prefs.ServerConfig
 import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
@@ -15,6 +16,10 @@ import io.github.jcartu.hermex.core.prefs.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.Json
 import okhttp3.CookieJar
 import okhttp3.OkHttpClient
@@ -56,11 +61,32 @@ class AppContainer(context: Context) {
         scope = appScope,
     )
 
+    val customHeaderStore = CustomHeaderStore()
+    val customHeaders = io.github.jcartu.hermex.core.prefs.EncryptedCustomHeaderRepository(
+        dataStore = context.dataStore,
+        cipher = cipher,
+        json = json,
+        runtimeStore = customHeaderStore,
+    )
+    val deepLinks = io.github.jcartu.hermex.core.navigation.DeepLinkRepository(context.dataStore)
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
+
+    init {
+        appScope.launch {
+            deepLinks.load()
+            customHeaders.load(serverConfig.current().baseUrl)
+            _isReady.value = true
+            serverConfig.config.collect { customHeaders.activate(it.baseUrl) }
+        }
+    }
+
     val api: io.github.jcartu.hermex.net.HermesApi by lazy {
         io.github.jcartu.hermex.net.HermesApi(
             httpClient = okHttpClient,
             json = json,
             configProvider = { serverConfig.current() },
+            customHeaderProvider = { customHeaderStore.snapshot() },
         )
     }
 
@@ -102,5 +128,11 @@ class AppContainer(context: Context) {
             directory = java.io.File(appContext.filesDir, "offline-cache"),
             json = json,
         )
+    }
+
+    val sharedImports: io.github.jcartu.hermex.core.share.SharedImportRepository by lazy {
+        io.github.jcartu.hermex.core.share.SharedImportRepository(appContext, json).also { repository ->
+            appScope.launch { repository.refresh() }
+        }
     }
 }

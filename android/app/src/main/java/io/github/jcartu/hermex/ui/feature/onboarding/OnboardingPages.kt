@@ -101,7 +101,7 @@ internal fun OnboardingWelcomePage(modifier: Modifier = Modifier) {
                 ) {
                     Icon(
                         Icons.Filled.Bolt,
-                        contentDescription = "Hermex",
+                        contentDescription = "Hermex-Type-J",
                         tint = Color.Black,
                         modifier = Modifier.size(64.dp),
                     )

@@ -35,8 +35,8 @@ fun LoadingState(modifier: Modifier = Modifier, label: String? = null) {
 @Composable
 fun EmptyState(
     title: String,
-    message: String? = null,
     modifier: Modifier = Modifier,
+    message: String? = null,
 ) {
     Column(
         modifier = modifier.fillMaxSize().padding(32.dp),

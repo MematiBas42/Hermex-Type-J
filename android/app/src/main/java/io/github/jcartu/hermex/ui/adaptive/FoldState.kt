@@ -1,17 +1,16 @@
 package io.github.jcartu.hermex.ui.adaptive
 
-import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.State
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
-import androidx.window.layout.WindowLayoutInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -63,26 +62,25 @@ data class FoldState(
 
 @Composable
 fun rememberFoldState(): State<FoldState> {
-    val activity = LocalContext.current as? Activity
-    val layoutInfoFlow: Flow<WindowLayoutInfo> = remember(activity) {
+    val activity = LocalActivity.current
+    val foldFlow: Flow<FoldState> = remember(activity) {
         if (activity != null) {
-            WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity)
+            WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity).map { info ->
+                FoldState(features = info.displayFeatures.filterIsInstance<FoldingFeature>())
+            }
         } else {
-            flowOf(WindowLayoutInfo(emptyList()))
+            flowOf(FoldState())
         }
     }
-    return remember(layoutInfoFlow) {
-        layoutInfoFlow.mapToFoldState()
-    }.collectAsStateWithLifecycle(initialValue = FoldState())
+    return foldFlow.collectAsStateWithLifecycle(initialValue = FoldState())
 }
-private fun Flow<WindowLayoutInfo>.mapToFoldState(): Flow<FoldState> =
-    this.map { info ->
-        FoldState(features = info.displayFeatures.filterIsInstance<FoldingFeature>())
-    }
 
-/** Window width in dp — drives compact/medium/expanded decisions alongside WindowSizeClass. */
+/** Exact available window width in dp, including consistent inset semantics. */
 @Composable
-fun rememberWindowWidthDp(): Int = LocalConfiguration.current.screenWidthDp
+fun rememberWindowWidthDp(): Int {
+    val widthPx = LocalWindowInfo.current.containerSize.width
+    return with(LocalDensity.current) { widthPx.toDp().value.toInt() }
+}
 
 /**
  * Heuristic pane count for the trifold: 1 panel (cover screen), 2 (half-fold / medium

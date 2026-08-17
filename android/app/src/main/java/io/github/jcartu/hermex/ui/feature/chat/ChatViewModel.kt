@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
 import io.github.jcartu.hermex.data.CacheStore
+import io.github.jcartu.hermex.core.share.SharedImport
 import io.github.jcartu.hermex.model.ApprovalChoice
 import io.github.jcartu.hermex.model.ApprovalPendingResponse
 import io.github.jcartu.hermex.model.BackgroundResult
@@ -166,6 +167,8 @@ class ChatViewModel(
 
     /** Approval/clarification polling only runs while ChatPane is visible. */
     private var isScreenActive = false
+    private val importedSharedDrafts = mutableSetOf<String>()
+    private val importedSharedFiles = mutableSetOf<String>()
 
     init {
         streamCoordinator.attach(this)
@@ -667,6 +670,82 @@ class ChatViewModel(
 
     override fun uploadAttachment(bytes: ByteArray, filename: String) {
         viewModelScope.launch { attachmentCoordinator.uploadAttachment(bytes, filename) }
+    }
+
+    override fun importVoiceNote(bytes: ByteArray, filename: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isProcessingVoiceNote = true, uploadAttachmentErrorMessage = null)
+            }
+            try {
+                if (ensureSessionForSend() == null) return@launch
+                val attachment = attachmentCoordinator.uploadAttachment(bytes, filename)
+                val transcription = runCatching { api.transcribeAudio(bytes, filename) }
+                    .getOrElse { error ->
+                        if (attachment != null) {
+                            attachmentCoordinator.setUploadAttachmentError(
+                                "Audio attached; transcription unavailable: ${error.message ?: "server error"}",
+                            )
+                        }
+                        return@launch
+                    }
+                val transcript = transcription.transcript?.trim().orEmpty()
+                if (transcript.isNotEmpty()) {
+                    _uiState.update { state ->
+                        val current = state.draft.trim()
+                        state.copy(draft = listOf(current, transcript).filter(String::isNotEmpty).joinToString("\n\n"))
+                    }
+                } else if (!transcription.error.isNullOrBlank()) {
+                    attachmentCoordinator.setUploadAttachmentError(
+                        "Audio attached; transcription unavailable: ${transcription.error}",
+                    )
+                }
+            } finally {
+                _uiState.update { it.copy(isProcessingVoiceNote = false) }
+            }
+        }
+    }
+
+    /**
+     * Imports Android ACTION_SEND content. Text is merged once; shared files
+     * force lazy session creation because hermes-webui uploads are session
+     * scoped. Returns true only when every copied file is staged.
+     */
+    suspend fun applySharedImport(shared: SharedImport): Boolean {
+        if (importedSharedDrafts.add(shared.id)) {
+            val existing = _uiState.value.draft.trim()
+            val incoming = shared.text.trim()
+            val merged = listOf(existing, incoming).filter(String::isNotEmpty).distinct().joinToString("\n\n")
+            _uiState.update {
+                it.copy(
+                    draft = if (incoming.isNotEmpty() && merged.isNotEmpty()) "$merged\n" else merged,
+                    uploadAttachmentErrorMessage = shared.warnings.takeIf(List<String>::isNotEmpty)?.joinToString("\n"),
+                )
+            }
+        }
+        if (shared.attachments.isEmpty()) return true
+        if (ensureSessionForSend() == null) return false
+
+        var succeeded = true
+        for (attachment in shared.attachments) {
+            val key = attachment.file.absolutePath
+            if (key in importedSharedFiles) continue
+            val bytes = runCatching { withContext(ioDispatcher) { attachment.file.readBytes() } }
+                .getOrElse {
+                    attachmentCoordinator.setUploadAttachmentError(
+                        "${attachment.filename}: ${it.message ?: "could not be read"}",
+                    )
+                    succeeded = false
+                    continue
+                }
+            val uploaded = attachmentCoordinator.uploadAttachment(
+                data = bytes,
+                filename = attachment.filename,
+                previewData = bytes.takeIf { attachment.mimeType?.startsWith("image/") == true },
+            )
+            if (uploaded == null) succeeded = false else importedSharedFiles += key
+        }
+        return succeeded
     }
 
     override fun removePendingAttachment(id: String) = attachmentCoordinator.removePendingAttachment(id)

@@ -1,17 +1,17 @@
-# Hermex Android
+# Hermex-Type-J Android
 
 Native Kotlin + Jetpack Compose client for a self-hosted Hermes agent.
 
-This directory is the Android implementation added by the
-[`jcartu/hermex`](https://github.com/jcartu/hermex) fork. For the product
+This directory is the native Android implementation maintained by the
+[`jcartu/Hermex-Type-J`](https://github.com/jcartu/Hermex-Type-J) fork. For the product
 story, screenshots, fork rationale, and complete feature map, start with the
 [root README](../README.md).
 
-[![Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml)
+[![Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml)
 [![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](build.gradle.kts)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](gradle/libs.versions.toml)
 
-<img src="../docs/assets/android/android-postures.png" alt="Hermex Android across phone tablet fold and trifold layouts" width="100%" />
+<img src="../docs/assets/android/android-postures.png" alt="Hermex-Type-J across phone tablet fold and trifold layouts" width="100%" />
 
 ## Supported Android layouts
 
@@ -120,17 +120,22 @@ anything routed beyond that boundary.
 app/src/main/java/io/github/jcartu/hermex/
 ├── HermexApplication.kt
 ├── MainActivity.kt
+├── service/
+│   └── AgentRunService.kt           # foreground run monitor + notifications
 ├── di/
 │   └── AppContainer.kt              # process-wide dependencies
 ├── core/
 │   ├── crypto/                      # Android Keystore AES-GCM
+│   ├── media/                       # voice notes + assistant TTS
+│   ├── navigation/                  # durable deep-link inbox
 │   ├── net/                         # persistent cookie jar
-│   └── prefs/                       # DataStore settings/config
+│   ├── prefs/                       # settings/config + encrypted headers
+│   └── share/                       # durable ACTION_SEND inbox
 ├── data/
 │   └── CacheStore.kt                # file-backed offline cache
 ├── model/                           # tolerant server contract models
 ├── net/
-│   ├── Endpoints.kt
+│   ├── Endpoints.kt                 # every route incl. Kanban/Git/voice
 │   ├── HermesApi.kt                 # OkHttp REST client
 │   └── SseChatStream.kt             # native SSE stream
 └── ui/
@@ -140,6 +145,7 @@ app/src/main/java/io/github/jcartu/hermex/
     └── feature/
         ├── onboarding/ settings/
         ├── sessions/ chat/ models/
+        ├── kanban/ git/
         ├── tasks/ skills/
         └── workspace/ memory/ insights/
 ```
@@ -228,6 +234,8 @@ Real Android emulator captures live in [`docs/assets/android`](../docs/assets/an
 - `half-open-chat.png`
 - `trifold-chat.png`
 - `trifold-tasks.png`
+- `trifold-kanban.png`
+- `trifold-git.png`
 - `trifold-files.png`
 
 Editorial composites are generated from those captures; no application UI is
@@ -235,10 +243,11 @@ fabricated inside the presentation artwork.
 
 ## Current exclusions
 
-Kanban boards, Git panels, TTS/transcription endpoints, an Android share target,
-push notifications, and iOS-only Live Activities/App Intents are outside the
-current Android scope. There are no fake buttons or placeholder screens for
-those features.
+A TTS engine voice picker, remote-relay push notifications, and iOS-only Live
+Activities/App Intents are outside the current Android scope. Everything else —
+Kanban boards, Git workspace tooling, the share target, deep links, foreground
+run notifications, encrypted custom headers, and voice notes/transcription — is
+implemented. There are no fake buttons or placeholder screens.
 
 ## Contributing
 
@@ -255,7 +264,7 @@ Read [`AGENTS.md`](AGENTS.md) before changing Android code. The short version:
 
 MIT — see [`../LICENSE`](../LICENSE).
 
-The Android implementation is part of the proper
-[`jcartu/hermex`](https://github.com/jcartu/hermex) fork. The original SwiftUI
-project and product foundation are by
+The Android implementation is maintained in the proper
+[`jcartu/Hermex-Type-J`](https://github.com/jcartu/Hermex-Type-J) fork. The original
+SwiftUI project and product foundation are by
 [`uzairansaruzi/hermex`](https://github.com/uzairansaruzi/hermex).

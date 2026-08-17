@@ -2,7 +2,6 @@ package io.github.jcartu.hermex.ui.adaptive
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.absoluteOffset
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
@@ -87,7 +86,7 @@ fun HingeAwarePaneRow(
     var rowStartX by remember { mutableFloatStateOf(0f) }
     var rowWidth by remember { mutableFloatStateOf(0f) }
 
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { coordinates ->
@@ -129,7 +128,7 @@ fun FirstPaneSplitRow(
     var rowStartX by remember { mutableFloatStateOf(0f) }
     var rowWidth by remember { mutableFloatStateOf(0f) }
 
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { coordinates ->

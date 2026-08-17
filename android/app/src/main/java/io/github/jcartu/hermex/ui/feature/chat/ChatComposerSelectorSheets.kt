@@ -56,8 +56,8 @@ internal fun ChatComposerSelectorChips(
     onOpenProfile: () -> Unit,
     onOpenWorkspace: () -> Unit,
     onSelectReasoningEffort: (String) -> Unit,
-    trailingContent: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
+    trailingContent: @Composable () -> Unit = {},
 ) {
     Row(
         modifier = modifier

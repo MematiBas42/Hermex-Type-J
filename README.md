@@ -2,27 +2,27 @@
 
 <img src="docs/assets/readme/hermex-icon.png" alt="Hermex app icon" width="96" />
 
-# Hermex for Android
+# Hermex-Type-J
 
 **A native Android control plane for your self-hosted Hermes agent.**<br />
 Built for phones, tablets, foldables, and the Samsung Galaxy Trifold.
 
-[![Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml)
+[![Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml)
 [![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](android/README.md)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](android/README.md)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack-Compose-4285F4?logo=jetpackcompose&logoColor=white)](android/README.md)
 [![Tests](https://img.shields.io/badge/tests-538%20passing-34C759)](#verification)
 [![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
-[Android guide](android/README.md) · [Upstream iOS project](https://github.com/uzairansaruzi/hermex) · [Hermes WebUI](https://github.com/nesquena/hermes-webui) · [Android issues](https://github.com/jcartu/hermex/issues)
+[Android guide](android/README.md) · [Upstream iOS project](https://github.com/uzairansaruzi/hermex) · [Hermes WebUI](https://github.com/nesquena/hermes-webui) · [Type-J issues](https://github.com/jcartu/Hermex-Type-J/issues)
 
-<img src="docs/assets/android/android-hero.png" alt="Hermex Android running on a compact cover display and fully unfolded trifold" width="100%" />
+<img src="docs/assets/android/android-hero.png" alt="Hermex-Type-J running on a compact cover display and fully unfolded trifold" width="100%" />
 
 </div>
 
 ## What this is
 
-Hermex for Android is a **native Kotlin + Jetpack Compose client** for a
+Hermex-Type-J is a **native Kotlin + Jetpack Compose client** for a
 self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server.
 It lets you start work, watch an agent run, steer it, approve actions, inspect
 files, manage scheduled jobs, and recover context without sitting at the
@@ -78,7 +78,7 @@ native `android/` application with four goals:
 
 ## One app, every posture
 
-<img src="docs/assets/android/android-postures.png" alt="Hermex Android shown on cover screen, standard phone, tablet fold, and trifold layouts" width="100%" />
+<img src="docs/assets/android/android-postures.png" alt="Hermex-Type-J shown on cover screen, standard phone, tablet fold, and trifold layouts" width="100%" />
 
 The layout is selected from the **actual window and hinge state**, not from a
 hard-coded portrait/landscape switch.
@@ -170,6 +170,45 @@ system falls back to measured window width.
 - skill grouping, search, tags, enable/disable, markdown content, and linked files
 - optimistic skill toggles with rollback on failure
 
+### Kanban boards
+
+- boards with columns, counts, active-board switching, create/edit/archive
+- cards with status, priority, assignee, tenant, skills, workspace, and staleness badges
+- card detail with comments, activity events, dependency links, and run history
+- create/edit/move/block/unblock, bulk actions, and dispatcher dry-run/execute
+- worker-log tailing and lifecycle-bound live event reconciliation (monotonic cursor)
+- three-pane boards | columns | detail on a trifold
+
+### Git workspaces
+
+- session-scoped workspace status, branch, ahead/behind, and conflict badges
+- per-file staged/unstaged unified diffs with binary and size-cap handling
+- stage, unstage, and explicitly confirmed discard
+- fetch, pull, push, checkout, and stash-checkout with dirty-guard semantics
+- generated commit messages and staged or selected-path commits
+- no force-push and no unconfirmed destructive action anywhere
+
+### Android platform integration
+
+- ACTION_SEND / SEND_MULTIPLE / PROCESS_TEXT share target with a durable
+  app-private inbox (survives process death; acknowledged only after staging)
+- deep links (`hermex-type-j://` and legacy `hermes-agent://`) to new chat,
+  sessions, Kanban boards/cards, and Git workspaces, persisted through onboarding
+- static launcher shortcuts for New Chat, Kanban, and Git Workspaces
+- opt-in foreground monitoring of active runs with private ongoing and
+  completion notifications, cancel action, and status/replay recovery
+- encrypted per-origin custom request headers for authenticated reverse proxies
+  (masked editor, duplicate/injection/protected-header validation, cross-origin
+  redirect stripping, never logged, Keystore-encrypted at rest)
+- Android Keystore, DataStore, predictive back, edge-to-edge, and multi-window
+
+### Voice
+
+- native AAC voice notes with mic permission, timer, and duration/size guards
+- server transcription with audio preserved when STT is unavailable
+- assistant **Listen** action: server neural TTS for ≤5,000 characters with
+  silent Android TextToSpeech fallback and markdown-safe text normalization
+
 ### Files, memory, and insights
 
 - workspace roots, breadcrumbs, directory navigation, search, and back stack
@@ -224,6 +263,14 @@ application against a disposable local hermes-webui-compatible fixture.
 
 <img src="docs/assets/android/trifold-tasks.png" alt="Trifold task list detail and output" width="100%" />
 
+#### Kanban: boards, columns, detail
+
+<img src="docs/assets/android/trifold-kanban.png" alt="Trifold Kanban boards columns and card detail" width="100%" />
+
+#### Git: workspaces, status, diff and commit
+
+<img src="docs/assets/android/trifold-git.png" alt="Trifold Git workspace status diff and commit" width="100%" />
+
 #### Files: workspaces, directory, preview
 
 <img src="docs/assets/android/trifold-files.png" alt="Trifold workspace file browser and preview" width="100%" />
@@ -247,6 +294,13 @@ application against a disposable local hermes-webui-compatible fixture.
 | Models | Provider groups, search, custom models, favorites, recents |
 | Profiles | Active/default profile, switching, model/workspace inheritance |
 | Tasks | Full cron lifecycle plus detail, delivery options, output |
+| Kanban | Boards, columns, card detail, bulk actions, dispatcher, live events |
+| Git | Status, diffs, stage/commit, guarded remotes, stash-checkout |
+| Share target | Durable text/file inbox routed into a new-chat composer |
+| Voice | Voice notes, server transcription, Listen with device TTS fallback |
+| Background | Foreground run monitor with private progress/completion notifications |
+| Deep links | Type-J + legacy schemes to chat, sessions, Kanban, Git; launcher shortcuts |
+| Custom headers | Encrypted per-origin proxy headers with redirect stripping |
 | Skills | Browse, search, render, linked files, enable/disable |
 | Files | Workspace roots, directories, text/markdown/image previews |
 | Memory | Memory, user, soul, and project context |
@@ -259,7 +313,7 @@ application against a disposable local hermes-webui-compatible fixture.
 
 ```mermaid
 flowchart LR
-    A[Hermex Android<br/>Compose UI] -->|HTTPS REST| B[hermes-webui]
+    A[Hermex-Type-J<br/>Compose UI] -->|HTTPS REST| B[hermes-webui]
     B -->|Server-Sent Events| A
     B --> C[Hermes agent + tools]
     A --> D[Android Keystore<br/>encrypted password]
@@ -317,8 +371,8 @@ proxy. Plain HTTP remains useful for a trusted LAN or emulator development.
 Requirements: JDK 21 and Android SDK platform 37.
 
 ```bash
-git clone https://github.com/jcartu/hermex.git
-cd hermex/android
+git clone https://github.com/jcartu/Hermex-Type-J.git
+cd Hermex-Type-J/android
 ./gradlew testDebugUnitTest
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -339,11 +393,13 @@ The Android delivery is checked at three levels:
 
 | Gate | Evidence |
 |---|---|
-| JVM behavior | 538 unit and contract tests across 49 suites |
+| JVM behavior | 608 unit, contract, fuzz, and framework tests across 63 suites |
+| Static analysis | Android Lint: 0 issues; JetBrains Kotlin LSP: 0 diagnostics |
 | Release | `assembleRelease` succeeds; local APK verified with Signature Scheme v2 |
-| Surface | Android 16 Pixel Fold emulator: CLOSED, HALF_OPENED, OPENED, standard phone/tablet widths, and simulated 3600×2208 trifold |
-| Native flows | Authentication restore, session continuity, document picker, chat, task detail/output, file preview, memory/insights/settings |
-| Cloud | [Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml) runs tests and uploads an unsigned release APK |
+| Surface | Android 16 Pixel Fold emulator: CLOSED, HALF_OPENED, OPENED, standard phone/tablet widths, simulated 3600×2208 trifold, and 1.3× font scale |
+| Abuse | 2,500-event UI monkey sweep with zero crashes/ANRs; deterministic fuzz invariants for hinge geometry, path encoding, deep links, tolerant decoding, and stream reducers |
+| Native flows | Auth restore, session continuity, share target, deep links, notifications, document picker, Kanban, Git, task detail/output, file preview, memory/insights/settings |
+| Cloud | [Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml) runs tests and uploads an unsigned release APK |
 
 Run the same local gate:
 
@@ -354,10 +410,11 @@ cd android
 
 ## Current scope boundaries
 
-The Android app does not currently port Kanban boards, Git panels,
-TTS/transcription endpoints, an Android share target, push notifications, or
-iOS-specific Live Activities and App Intents. They are intentionally omitted,
-not represented by non-functional placeholders.
+The Android app does not currently port an Android share-extension process
+model beyond the share target described above, push notifications via a remote
+relay, TTS engine voice pickers, or iOS-specific Live Activities and App
+Intents. They are intentionally omitted, not represented by non-functional
+placeholders.
 
 ## Upstream and attribution
 

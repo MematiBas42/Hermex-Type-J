@@ -20,10 +20,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.KeyboardCommandKey
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +61,7 @@ fun MessageBubble(
     liveTokensPerSecond: Double?,
     attachmentUrlResolver: suspend (path: String) -> String?,
     imageLoader: ImageLoader?,
+    onListen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (message.role) {
@@ -91,6 +94,7 @@ fun MessageBubble(
             state = state,
             isStreaming = isStreaming,
             liveTokensPerSecond = liveTokensPerSecond,
+            onListen = onListen,
             modifier = modifier,
         )
     }
@@ -158,6 +162,7 @@ private fun AssistantMessageRow(
     state: ChatUiState,
     isStreaming: Boolean,
     liveTokensPerSecond: Double?,
+    onListen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -234,6 +239,13 @@ private fun AssistantMessageRow(
                         },
                     ),
             )
+        }
+        if (hasVisibleText && !isStreaming) {
+            TextButton(onClick = { onListen(content.orEmpty()) }) {
+                Icon(Icons.Rounded.VolumeUp, contentDescription = null)
+                Spacer(Modifier.width(5.dp))
+                Text("Listen")
+            }
         }
     }
 }

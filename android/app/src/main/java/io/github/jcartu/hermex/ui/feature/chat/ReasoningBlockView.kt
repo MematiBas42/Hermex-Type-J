@@ -48,9 +48,9 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ReasoningBlock(
     text: String,
+    modifier: Modifier = Modifier,
     startExpanded: Boolean = false,
     isStreaming: Boolean = false,
-    modifier: Modifier = Modifier,
 ) {
     val trimmedText = text.trim()
     if (trimmedText.isEmpty()) return

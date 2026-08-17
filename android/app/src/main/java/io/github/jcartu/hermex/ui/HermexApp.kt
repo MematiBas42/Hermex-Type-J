@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Psychology
@@ -15,7 +16,9 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.ViewKanban
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Source
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +43,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jcartu.hermex.core.prefs.ServerConfig
+import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.FirstPaneSplitRow
 import io.github.jcartu.hermex.ui.adaptive.FoldState
@@ -50,11 +54,13 @@ import io.github.jcartu.hermex.ui.adaptive.rememberWindowWidthDp
 import io.github.jcartu.hermex.ui.adaptive.trifoldPaneCount
 import io.github.jcartu.hermex.ui.components.LoadingState
 import io.github.jcartu.hermex.ui.feature.chat.ChatPane
+import io.github.jcartu.hermex.ui.feature.git.GitWorkspaceRoute
 import io.github.jcartu.hermex.ui.feature.insights.InsightsRoute
 import io.github.jcartu.hermex.ui.feature.memory.MemoryRoute
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingRoute
+import io.github.jcartu.hermex.ui.feature.kanban.KanbanRoute
 import io.github.jcartu.hermex.ui.feature.sessions.SessionsListPane
 import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 import io.github.jcartu.hermex.ui.feature.skills.SkillsRoute
@@ -63,8 +69,8 @@ import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceRoute
 
 enum class HermexDestination(val label: String, val icon: ImageVector) {
     CHATS("Chats", Icons.AutoMirrored.Filled.Chat),
+    KANBAN("Kanban", Icons.Filled.ViewKanban),
     TASKS("Tasks", Icons.Filled.Schedule),
-    SKILLS("Skills", Icons.Filled.Bolt),
     FILES("Files", Icons.Filled.Folder),
     MORE("More", Icons.Filled.MoreHoriz),
 }
@@ -76,9 +82,15 @@ enum class HermexDestination(val label: String, val icon: ImageVector) {
 @Composable
 fun HermexApp(container: AppContainer) {
     val authManager = container.authManager
-    LaunchedEffect(authManager) { authManager.restoreSavedServer() }
+    val isReady by container.isReady.collectAsStateWithLifecycle()
+    LaunchedEffect(authManager, isReady) {
+        if (isReady) authManager.restoreSavedServer()
+    }
+    if (!isReady) {
+        LoadingState(label = "Starting Hermex-Type-J")
+        return
+    }
     val authState: AuthState by authManager.state.collectAsStateWithLifecycle()
-
     when (val state = authState) {
         AuthState.Unconfigured -> OnboardingRoute(container, savedServer = null)
         is AuthState.LoggedOut -> OnboardingRoute(container, savedServer = state.saved)
@@ -94,7 +106,30 @@ private fun MainShell(container: AppContainer) {
     val paneCount: Int = fold.value.trifoldPaneCount(windowWidthDp)
     val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val selected = navigation.selectedDestination
-
+    val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
+    val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingDeepLink?.first) {
+        val pending = pendingDeepLink ?: return@LaunchedEffect
+        when (val link = pending.second) {
+            AppDeepLink.NewChat -> {
+                navigation.selectDestination(HermexDestination.CHATS)
+                navigation.startNewChat()
+            }
+            is AppDeepLink.Session -> {
+                navigation.selectDestination(HermexDestination.CHATS)
+                navigation.selectSession(link.sessionId)
+            }
+            is AppDeepLink.Kanban -> navigation.openKanban(link.boardSlug, link.cardId)
+            is AppDeepLink.Git -> navigation.openGit(link.sessionId)
+        }
+        container.deepLinks.acknowledge(pending.first)
+    }
+    LaunchedEffect(sharedImport?.id) {
+        if (sharedImport != null) {
+            navigation.selectDestination(HermexDestination.CHATS)
+            navigation.startNewChat()
+        }
+    }
     CompositionLocalProvider(
         LocalFoldState provides fold.value,
         LocalPaneCount provides paneCount,
@@ -102,12 +137,14 @@ private fun MainShell(container: AppContainer) {
         val destinationContent: @Composable (HermexDestination) -> Unit = { destination ->
             when (destination) {
                 HermexDestination.CHATS -> ChatsArea(navigation)
-                HermexDestination.TASKS -> TasksRoute()
-                HermexDestination.SKILLS -> SkillsRoute()
-                HermexDestination.FILES -> WorkspaceRoute()
-                HermexDestination.MORE -> MoreRoute(
-                    onOpenChats = { navigation.selectDestination(HermexDestination.CHATS) },
+                HermexDestination.KANBAN -> KanbanRoute(
+                    initialBoardSlug = navigation.kanbanBoardSlug,
+                    initialCardId = navigation.kanbanCardId,
+                    onDeepLinkConsumed = navigation::consumeKanbanTarget,
                 )
+                HermexDestination.TASKS -> TasksRoute()
+                HermexDestination.FILES -> WorkspaceRoute()
+                HermexDestination.MORE -> MoreRoute(navigation)
             }
         }
 
@@ -142,7 +179,7 @@ private fun MainShell(container: AppContainer) {
                         )
                     }
                 }
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().systemBarsPadding()) {
                     DestinationHost(selected, destinationStateHolder, destinationContent)
                 }
             }
@@ -208,6 +245,8 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
 }
 
 private enum class MoreEntry(val label: String, val icon: ImageVector) {
+    SKILLS("Skills", Icons.Filled.Bolt),
+    GIT("Git", Icons.Filled.Source),
     MEMORY("Memory", Icons.Filled.Psychology),
     INSIGHTS("Insights", Icons.Filled.Insights),
     SETTINGS("Settings", Icons.Filled.Settings),
@@ -218,15 +257,27 @@ private enum class MoreEntry(val label: String, val icon: ImageVector) {
  * Two+ panes: menu rail column | content side by side.
  */
 @Composable
-private fun MoreRoute(onOpenChats: () -> Unit) {
+private fun MoreRoute(navigation: AppNavigationViewModel) {
     val paneCount = LocalPaneCount.current
     var entry by rememberSaveable { mutableStateOf<MoreEntry?>(null) }
-
+    LaunchedEffect(navigation.pendingMoreRoute) {
+        if (navigation.pendingMoreRoute == "git") {
+            entry = MoreEntry.GIT
+            if (navigation.gitSessionId == null) navigation.consumeGitTarget()
+        }
+    }
     val content: @Composable (MoreEntry?) -> Unit = { current ->
         when (current) {
+            MoreEntry.SKILLS -> SkillsRoute()
+            MoreEntry.GIT -> GitWorkspaceRoute(
+                initialSessionId = navigation.gitSessionId,
+                onDeepLinkConsumed = navigation::consumeGitTarget,
+            )
             MoreEntry.MEMORY -> MemoryRoute()
             MoreEntry.INSIGHTS -> InsightsRoute()
-            MoreEntry.SETTINGS -> SettingsRoute(onOpenArchived = onOpenChats)
+            MoreEntry.SETTINGS -> SettingsRoute(
+                onOpenArchived = { navigation.selectDestination(HermexDestination.CHATS) },
+            )
             null -> {}
         }
     }

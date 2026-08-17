@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hermex</string>
+    <string name="app_name">Hermex-Type-J</string>
+    <string name="shortcut_new_chat">New Chat</string>
+    <string name="shortcut_new_chat_long">Start a new Type-J agent chat</string>
+    <string name="shortcut_kanban">Kanban</string>
+    <string name="shortcut_kanban_long">Open autonomous work boards</string>
+    <string name="shortcut_git">Git Workspaces</string>
+    <string name="shortcut_git_long">Inspect workspace changes</string>
 </resources>

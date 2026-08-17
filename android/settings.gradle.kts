@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Hermex"
+rootProject.name = "Hermex-Type-J"
 include(":app")

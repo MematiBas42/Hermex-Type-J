@@ -64,13 +64,14 @@ fun ClarificationRequestOverlay(
     onSubmit: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scrimInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .fillMaxSize()
             .zIndex(9f)
             .background(Color.Black.copy(alpha = 0.22f))
             .clickable(
-                interactionSource = MutableInteractionSource(),
+                interactionSource = scrimInteraction,
                 indication = null,
                 onClick = {},
             ),

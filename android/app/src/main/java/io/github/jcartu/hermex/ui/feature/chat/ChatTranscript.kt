@@ -85,6 +85,7 @@ fun ChatTranscript(
     listState: LazyListState,
     attachmentUrlResolver: suspend (path: String) -> String?,
     imageLoader: ImageLoader?,
+    onListen: (String) -> Unit,
     onLoadOlder: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
@@ -113,6 +114,7 @@ fun ChatTranscript(
             listState = listState,
             attachmentUrlResolver = attachmentUrlResolver,
             imageLoader = imageLoader,
+            onListen = onListen,
             onLoadOlder = onLoadOlder,
             modifier = modifier,
         )
@@ -125,6 +127,7 @@ private fun TranscriptList(
     listState: LazyListState,
     attachmentUrlResolver: suspend (path: String) -> String?,
     imageLoader: ImageLoader?,
+    onListen: (String) -> Unit,
     onLoadOlder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -277,6 +280,7 @@ private fun TranscriptList(
                             state = state,
                             attachmentUrlResolver = attachmentUrlResolver,
                             imageLoader = imageLoader,
+                            onListen = onListen,
                         )
                     }
 
@@ -389,6 +393,7 @@ private fun TranscriptMessageBlock(
     state: ChatUiState,
     attachmentUrlResolver: suspend (path: String) -> String?,
     imageLoader: ImageLoader?,
+    onListen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val anchorId = transcriptMessage.anchorID
@@ -448,6 +453,7 @@ private fun TranscriptMessageBlock(
                 liveTokensPerSecond = if (isStreamingRow) state.liveTokensPerSecond else null,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                onListen = onListen,
             )
         }
     }

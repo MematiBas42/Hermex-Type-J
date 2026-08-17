@@ -45,8 +45,8 @@ import io.github.jcartu.hermex.ui.theme.CodeTextStyle
 @Composable
 fun ToolCallCard(
     toolCall: ToolCall,
-    startExpanded: Boolean = false,
     modifier: Modifier = Modifier,
+    startExpanded: Boolean = false,
 ) {
     var isExpanded by rememberSaveable(toolCall.id, startExpanded) { mutableStateOf(startExpanded) }
     val argumentRows = ToolCallDisplayFormatter.argumentRows(toolCall.args)
@@ -249,8 +249,8 @@ private fun ToolCallExpandedContent(
 @Composable
 fun ToolCallGroupCard(
     group: ToolCallGroup,
-    startExpanded: Boolean = false,
     modifier: Modifier = Modifier,
+    startExpanded: Boolean = false,
 ) {
     var isExpanded by rememberSaveable(group.id, startExpanded) { mutableStateOf(startExpanded) }
     val status = when {

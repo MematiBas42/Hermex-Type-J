@@ -27,6 +27,45 @@ import io.github.jcartu.hermex.model.HealthResponse
 import io.github.jcartu.hermex.model.LoginResponse
 import io.github.jcartu.hermex.model.GoalSubmissionResponse
 import io.github.jcartu.hermex.model.MemoryResponse
+import io.github.jcartu.hermex.model.GitBranchesResponse
+import io.github.jcartu.hermex.model.GitCheckoutResponse
+import io.github.jcartu.hermex.model.GitCheckoutTarget
+import io.github.jcartu.hermex.model.GitCommitMessageResponse
+import io.github.jcartu.hermex.model.GitCommitResponse
+import io.github.jcartu.hermex.model.GitDiffResponse
+import io.github.jcartu.hermex.model.GitInfoResponse
+import io.github.jcartu.hermex.model.GitMutationResponse
+import io.github.jcartu.hermex.model.GitRemoteActionResponse
+import io.github.jcartu.hermex.model.GitStatusResponse
+import io.github.jcartu.hermex.model.KanbanAddCommentRequest
+import io.github.jcartu.hermex.model.KanbanAddCommentResponse
+import io.github.jcartu.hermex.model.KanbanAssigneeHistory
+import io.github.jcartu.hermex.model.KanbanBoardMutationEnvelope
+import io.github.jcartu.hermex.model.KanbanBoardRequest
+import io.github.jcartu.hermex.model.KanbanBoardSnapshot
+import io.github.jcartu.hermex.model.KanbanBoardsResponse
+import io.github.jcartu.hermex.model.KanbanBulkActionEnvelope
+import io.github.jcartu.hermex.model.KanbanBulkActionRequest
+import io.github.jcartu.hermex.model.KanbanBulkActionType
+import io.github.jcartu.hermex.model.KanbanCardActionRequest
+import io.github.jcartu.hermex.model.KanbanCardDetailEnvelope
+import io.github.jcartu.hermex.model.KanbanCardDetailRequest
+import io.github.jcartu.hermex.model.KanbanCardMutationEnvelope
+import io.github.jcartu.hermex.model.KanbanCardStatusRequest
+import io.github.jcartu.hermex.model.KanbanConfiguration
+import io.github.jcartu.hermex.model.KanbanCreateBoardRequest
+import io.github.jcartu.hermex.model.KanbanCreateCardRequest
+import io.github.jcartu.hermex.model.KanbanDependencyMutationEnvelope
+import io.github.jcartu.hermex.model.KanbanDependencyMutationRequest
+import io.github.jcartu.hermex.model.KanbanDispatchRequest
+import io.github.jcartu.hermex.model.KanbanDispatchResult
+import io.github.jcartu.hermex.model.KanbanEditBoardRequest
+import io.github.jcartu.hermex.model.KanbanEditCardRequest
+import io.github.jcartu.hermex.model.KanbanEventsEnvelope
+import io.github.jcartu.hermex.model.KanbanEventsRequest
+import io.github.jcartu.hermex.model.KanbanStats
+import io.github.jcartu.hermex.model.KanbanWorkerLog
+import io.github.jcartu.hermex.model.KanbanWorkerLogRequest
 import io.github.jcartu.hermex.model.ModelsResponse
 import io.github.jcartu.hermex.model.ModelsLiveResponse
 import io.github.jcartu.hermex.model.SessionYoloResponse
@@ -45,6 +84,7 @@ import io.github.jcartu.hermex.model.SessionResponse
 import io.github.jcartu.hermex.model.SessionSearchResponse
 import io.github.jcartu.hermex.model.SessionRetryResponse
 import io.github.jcartu.hermex.model.SessionUndoResponse
+import io.github.jcartu.hermex.model.TranscribeResponse
 import io.github.jcartu.hermex.model.ToggleSkillRequest
 import io.github.jcartu.hermex.model.ToggleSkillResponse
 import io.github.jcartu.hermex.model.SessionStatusResponse
@@ -64,6 +104,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -522,6 +564,170 @@ class HermesApi(
 
     suspend fun settings(): SettingsResponse = get(Endpoint.Settings)
 
+    // MARK: Git workspace (APIClient+Git.swift)
+
+    suspend fun gitInfo(sessionId: String): GitInfoResponse =
+        get(Endpoint.GitInfo(sessionId))
+
+    suspend fun gitStatus(sessionId: String): GitStatusResponse =
+        get(Endpoint.GitStatus(sessionId))
+
+    suspend fun gitBranches(sessionId: String): GitBranchesResponse =
+        get(Endpoint.GitBranches(sessionId))
+
+    suspend fun gitDiff(sessionId: String, path: String, kind: String = "unstaged"): GitDiffResponse =
+        get(Endpoint.GitDiff(sessionId, path, kind))
+
+    suspend fun gitFetch(sessionId: String): GitRemoteActionResponse =
+        post(Endpoint.GitFetch, GitSessionRequest(sessionId))
+
+    suspend fun gitPull(sessionId: String): GitRemoteActionResponse =
+        post(Endpoint.GitPull, GitSessionRequest(sessionId))
+
+    suspend fun gitPush(sessionId: String): GitRemoteActionResponse =
+        post(Endpoint.GitPush, GitSessionRequest(sessionId))
+
+    suspend fun gitCheckout(sessionId: String, target: GitCheckoutTarget): GitCheckoutResponse =
+        post(Endpoint.GitCheckout, GitCheckoutRequest(sessionId, target, includesDirtyMode = true))
+
+    suspend fun gitStashCheckout(sessionId: String, target: GitCheckoutTarget): GitCheckoutResponse =
+        post(Endpoint.GitStashCheckout, GitCheckoutRequest(sessionId, target, includesDirtyMode = false))
+
+    suspend fun gitStage(sessionId: String, paths: List<String>): GitMutationResponse =
+        post(Endpoint.GitStage, GitPathsRequest(sessionId, paths))
+
+    suspend fun gitUnstage(sessionId: String, paths: List<String>): GitMutationResponse =
+        post(Endpoint.GitUnstage, GitPathsRequest(sessionId, paths))
+
+    suspend fun gitDiscard(
+        sessionId: String,
+        paths: List<String>,
+        deleteUntracked: Boolean = false,
+    ): GitMutationResponse =
+        post(Endpoint.GitDiscard, GitDiscardRequest(sessionId, paths, deleteUntracked))
+
+    suspend fun gitCommit(sessionId: String, message: String): GitCommitResponse =
+        post(Endpoint.GitCommit, GitCommitRequest(sessionId, message))
+
+    suspend fun gitCommitSelected(sessionId: String, message: String, paths: List<String>): GitCommitResponse =
+        post(Endpoint.GitCommitSelected, GitCommitSelectedRequest(sessionId, message, paths))
+
+    suspend fun gitCommitMessage(sessionId: String): GitCommitMessageResponse =
+        post(Endpoint.GitCommitMessage, GitSessionRequest(sessionId))
+
+    suspend fun gitCommitMessageSelected(sessionId: String, paths: List<String>): GitCommitMessageResponse =
+        post(Endpoint.GitCommitMessageSelected, GitPathsRequest(sessionId, paths))
+
+    // MARK: Kanban (APIClient+Kanban.swift)
+
+    suspend fun kanbanConfiguration(): KanbanConfiguration =
+        kanbanRequest(Endpoint.KanbanConfig)
+
+    suspend fun kanbanBoards(): KanbanBoardsResponse =
+        kanbanRequest(Endpoint.KanbanBoards)
+
+    suspend fun createKanbanBoard(request: KanbanCreateBoardRequest): KanbanBoardMutationEnvelope =
+        kanbanBody(Endpoint.KanbanCreateBoard, "POST", KanbanCreateBoardBody(request))
+
+    suspend fun editKanbanBoard(request: KanbanEditBoardRequest): KanbanBoardMutationEnvelope =
+        kanbanBody(Endpoint.KanbanEditBoard(request.slug), "PATCH", KanbanEditBoardBody(request))
+
+    suspend fun archiveKanbanBoard(slug: String): KanbanBoardMutationEnvelope =
+        kanbanRequest(Endpoint.KanbanArchiveBoard(slug), method = "DELETE")
+
+    suspend fun makeKanbanBoardActive(slug: String): KanbanBoardMutationEnvelope =
+        kanbanRequest(Endpoint.KanbanSwitchBoard(slug), method = "POST", body = EMPTY_REQUEST_BODY)
+
+    suspend fun dispatchKanban(request: KanbanDispatchRequest): KanbanDispatchResult {
+        val result: KanbanDispatchResult = kanbanRequest(
+            Endpoint.KanbanDispatch(request.board, request.dryRun, request.maximum),
+            method = "POST",
+            body = EMPTY_REQUEST_BODY,
+        )
+        if (!result.hasKnownCategory) throw ApiError.Decoding(
+            IllegalArgumentException("Kanban dispatch response omitted result categories"),
+        )
+        return result
+    }
+
+    suspend fun kanbanBoard(request: KanbanBoardRequest): KanbanBoardSnapshot =
+        kanbanRequest(
+            Endpoint.KanbanBoard(
+                board = request.board,
+                tenant = request.tenant,
+                assignee = request.assignee,
+                includeArchived = request.includeArchived,
+                onlyMine = request.onlyMine,
+                since = request.since,
+            ),
+        )
+
+    suspend fun kanbanStats(board: String): KanbanStats =
+        kanbanRequest(Endpoint.KanbanStats(board))
+
+    suspend fun kanbanAssignees(board: String): KanbanAssigneeHistory =
+        kanbanRequest(Endpoint.KanbanAssignees(board))
+
+    suspend fun kanbanEvents(request: KanbanEventsRequest): KanbanEventsEnvelope =
+        kanbanRequest(Endpoint.KanbanEvents(request.board, request.since, request.limit))
+
+    suspend fun kanbanCardDetail(request: KanbanCardDetailRequest): KanbanCardDetailEnvelope =
+        kanbanRequest(Endpoint.KanbanCardDetail(request.cardId, request.board))
+
+    suspend fun kanbanWorkerLog(request: KanbanWorkerLogRequest): KanbanWorkerLog =
+        kanbanRequest(Endpoint.KanbanWorkerLog(request.cardId, request.board, request.tailBytes))
+
+    suspend fun addKanbanComment(request: KanbanAddCommentRequest): KanbanAddCommentResponse =
+        kanbanBody(Endpoint.KanbanAddComment(request.cardId, request.board), "POST", KanbanCommentBody(request.body))
+
+    suspend fun createKanbanCard(request: KanbanCreateCardRequest): KanbanCardMutationEnvelope =
+        kanbanBody(Endpoint.KanbanCreateCard(request.board), "POST", KanbanCreateCardBody(request))
+
+    suspend fun performKanbanBulkAction(request: KanbanBulkActionRequest): KanbanBulkActionEnvelope =
+        kanbanBody(Endpoint.KanbanBulkAction(request.board), "POST", KanbanBulkActionBody(request))
+
+    suspend fun editKanbanCard(request: KanbanEditCardRequest): KanbanCardMutationEnvelope =
+        kanbanBody(Endpoint.KanbanEditCard(request.cardId, request.board), "PATCH", KanbanEditCardBody(request))
+
+    suspend fun setKanbanCardStatus(request: KanbanCardStatusRequest): KanbanCardMutationEnvelope {
+        require(request.status.trim().lowercase() != "running") {
+            "Running status must be entered through the dispatcher"
+        }
+        return kanbanBody(
+            Endpoint.KanbanCardStatus(request.cardId, request.board),
+            "PATCH",
+            KanbanStatusBody(request.status),
+        )
+    }
+
+    suspend fun blockKanbanCard(request: KanbanCardActionRequest): KanbanCardMutationEnvelope =
+        kanbanBody(
+            Endpoint.KanbanBlockCard(request.cardId, request.board),
+            "POST",
+            KanbanActionBody(request.reason),
+        )
+
+    suspend fun unblockKanbanCard(request: KanbanCardActionRequest): KanbanCardMutationEnvelope =
+        kanbanBody(
+            Endpoint.KanbanUnblockCard(request.cardId, request.board),
+            "POST",
+            KanbanActionBody(null),
+        )
+
+    suspend fun addKanbanDependency(request: KanbanDependencyMutationRequest): KanbanDependencyMutationEnvelope =
+        kanbanBody(
+            Endpoint.KanbanAddDependency(request.board),
+            "POST",
+            KanbanDependencyBody(request.prerequisiteId, request.dependentId),
+        )
+
+    suspend fun removeKanbanDependency(request: KanbanDependencyMutationRequest): KanbanDependencyMutationEnvelope =
+        kanbanBody(
+            Endpoint.KanbanRemoveDependency(request.board),
+            "POST",
+            KanbanDependencyBody(request.prerequisiteId, request.dependentId),
+        )
+
     // MARK: Workspace + files (APIClient+Workspace.swift)
 
     suspend fun workspaces(): WorkspacesResponse = get(Endpoint.Workspaces)
@@ -542,6 +748,42 @@ class HermesApi(
     suspend fun rawFileUrl(sessionId: String, path: String): HttpUrl =
         Endpoint.RawFile(sessionId, path).url(resolveBaseUrl())
 
+
+    // MARK: Voice (APIClient+TTS.swift + APIClient+Transcribe.swift)
+
+    suspend fun synthesizeSpeech(text: String, voice: String): ByteArray {
+        val encoded = json.encodeToString(TtsSynthesisRequest(text, voice))
+        val builder = Request.Builder()
+            .url(Endpoint.Tts.url(resolveBaseUrl()))
+            .post(encoded.toRequestBody(JSON_MEDIA_TYPE))
+        customHeaderProvider().applyTo(builder)
+        builder.header("Accept", "audio/mpeg")
+        return execute(builder.build()).use { response ->
+            val bytes = runCatching { response.body?.bytes() ?: ByteArray(0) }
+                .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            if (response.code == 401) throw ApiError.Unauthorized
+            if (!response.isSuccessful) throw ApiError.Http(response.code, bytes.toString(Charsets.UTF_8))
+            bytes
+        }
+    }
+
+    suspend fun transcribeAudio(data: ByteArray, filename: String): TranscribeResponse {
+        val form = MultipartFormData().apply { appendFileField("file", filename, data) }
+        val builder = Request.Builder()
+            .url(Endpoint.Transcribe.url(resolveBaseUrl()))
+            .post(form.build().toRequestBody(form.contentType.toMediaType()))
+        customHeaderProvider().applyTo(builder)
+        builder.header("Accept", "application/json")
+        return execute(builder.build()).use { response ->
+            val raw = runCatching { response.body?.string().orEmpty() }
+                .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            if (response.code == 401) throw ApiError.Unauthorized
+            val decoded = runCatching { json.decodeFromString<TranscribeResponse>(raw) }.getOrNull()
+            if (decoded != null) return@use decoded
+            if (!response.isSuccessful) throw ApiError.Http(response.code, raw)
+            throw ApiError.Decoding(IllegalArgumentException("The transcription response could not be decoded"))
+        }
+    }
     // MARK: Upload (APIClient+Upload.swift + MultipartFormData.swift)
 
     suspend fun uploadFile(sessionId: String, data: ByteArray, filename: String): UploadResponse {
@@ -564,6 +806,32 @@ class HermesApi(
     }
 
     // MARK: Plumbing
+
+    private suspend inline fun <reified R> kanbanRequest(
+        endpoint: Endpoint,
+        method: String = "GET",
+        body: RequestBody? = null,
+    ): R {
+        val builder = Request.Builder().url(endpoint.url(resolveBaseUrl())).method(method, body)
+        customHeaderProvider().applyTo(builder)
+        builder.header("Accept", "application/json")
+        val response = execute(builder.build())
+        val contentType = response.header("Content-Type").orEmpty().lowercase()
+        val raw = readSuccessBody(response)
+        if (!contentType.startsWith("application/json")) {
+            throw ApiError.Decoding(IllegalArgumentException("Kanban endpoint returned non-JSON content"))
+        }
+        return decode(raw)
+    }
+
+    private suspend inline fun <reified R, reified B> kanbanBody(
+        endpoint: Endpoint,
+        method: String,
+        body: B,
+    ): R {
+        val encoded = json.encodeToString(body)
+        return kanbanRequest(endpoint, method, encoded.toRequestBody(JSON_MEDIA_TYPE))
+    }
 
     private suspend inline fun <reified R> get(endpoint: Endpoint): R =
         decode(sendForBody(endpoint, method = "GET", body = null))
@@ -633,6 +901,7 @@ class HermesApi(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
+        val EMPTY_REQUEST_BODY = ByteArray(0).toRequestBody(null)
     }
 }
 
@@ -836,3 +1105,164 @@ private data class PersonalitySetRequest(
 
 @Serializable
 private data class ProfileSwitchRequest(val name: String)
+
+@Serializable
+private data class KanbanCreateBoardBody(
+    val slug: String,
+    val name: String,
+    val description: String,
+    val icon: String,
+    val color: String,
+) {
+    constructor(request: KanbanCreateBoardRequest) : this(
+        request.slug, request.name, request.description, request.icon, request.color,
+    )
+}
+
+@Serializable
+private data class KanbanEditBoardBody(
+    val name: String,
+    val description: String,
+    val icon: String,
+    val color: String,
+) {
+    constructor(request: KanbanEditBoardRequest) : this(
+        request.name, request.description, request.icon, request.color,
+    )
+}
+
+@Serializable
+private data class KanbanCommentBody(val body: String)
+
+@Serializable
+private data class KanbanStatusBody(val status: String)
+
+@Serializable
+private data class KanbanActionBody(val reason: String?)
+
+@Serializable
+private data class KanbanDependencyBody(
+    @SerialName("parent_id") val parentId: String,
+    @SerialName("child_id") val childId: String,
+)
+
+@Serializable
+private data class KanbanCreateCardBody(
+    val title: String,
+    val body: String?,
+    val status: String,
+    val priority: Int?,
+    val assignee: String?,
+    val tenant: String?,
+    @SerialName("workspace_kind") val workspaceKind: String,
+    @SerialName("workspace_path") val workspacePath: String?,
+    val skills: List<String>?,
+    @SerialName("max_runtime_seconds") val maxRuntimeSeconds: Int?,
+    val parents: List<String>?,
+    @SerialName("idempotency_key") val idempotencyKey: String,
+) {
+    constructor(request: KanbanCreateCardRequest) : this(
+        title = request.title,
+        body = request.body,
+        status = request.status,
+        priority = request.priority,
+        assignee = request.assignee,
+        tenant = request.tenant,
+        workspaceKind = request.workspaceKind,
+        workspacePath = request.workspacePath,
+        skills = request.skills,
+        maxRuntimeSeconds = request.maxRuntimeSeconds,
+        parents = request.prerequisiteId?.let(::listOf),
+        idempotencyKey = request.idempotencyKey,
+    )
+}
+
+@Serializable
+private data class KanbanEditCardBody(
+    val title: String,
+    val body: String,
+    val tenant: JsonElement,
+    val priority: Int,
+    val assignee: JsonElement,
+    val status: String?,
+) {
+    constructor(request: KanbanEditCardRequest) : this(
+        title = request.title,
+        body = request.body,
+        tenant = request.tenant?.let(::JsonPrimitive) ?: JsonNull,
+        priority = request.priority,
+        assignee = request.assignee?.let(::JsonPrimitive) ?: JsonNull,
+        status = request.status,
+    )
+}
+
+@Serializable
+private data class KanbanBulkActionBody(
+    val ids: List<String>,
+    val archive: Boolean? = null,
+    val status: String? = null,
+    val assignee: String? = null,
+    val priority: Int? = null,
+) {
+    constructor(request: KanbanBulkActionRequest) : this(
+        ids = request.cardIds,
+        archive = true.takeIf { request.action == KanbanBulkActionType.ARCHIVE },
+        status = request.value.takeIf { request.action == KanbanBulkActionType.CHANGE_STATUS },
+        assignee = request.value.orEmpty().takeIf { request.action == KanbanBulkActionType.ASSIGN_PROFILE },
+        priority = request.value?.toIntOrNull().takeIf { request.action == KanbanBulkActionType.SET_PRIORITY },
+    )
+}
+
+@Serializable
+private data class GitSessionRequest(@SerialName("session_id") val sessionId: String)
+
+@Serializable
+private data class GitPathsRequest(
+    @SerialName("session_id") val sessionId: String,
+    val paths: List<String>,
+)
+
+@Serializable
+private data class GitDiscardRequest(
+    @SerialName("session_id") val sessionId: String,
+    val paths: List<String>,
+    @SerialName("delete_untracked") val deleteUntracked: Boolean,
+)
+
+@Serializable
+private data class GitCommitRequest(
+    @SerialName("session_id") val sessionId: String,
+    val message: String,
+)
+
+@Serializable
+private data class GitCommitSelectedRequest(
+    @SerialName("session_id") val sessionId: String,
+    val message: String,
+    val paths: List<String>,
+)
+
+@Serializable
+private data class GitCheckoutRequest(
+    @SerialName("session_id") val sessionId: String,
+    val ref: String,
+    val mode: String,
+    @SerialName("new_branch") val newBranch: String?,
+    val track: Boolean?,
+    @SerialName("dirty_mode") val dirtyMode: String?,
+) {
+    constructor(sessionId: String, target: GitCheckoutTarget, includesDirtyMode: Boolean) : this(
+        sessionId = sessionId,
+        ref = target.ref,
+        mode = if (target.mode.rawValue == "local" && target.newBranch != null) "new" else target.mode.rawValue,
+        newBranch = target.newBranch,
+        track = true.takeIf { target.track },
+        dirtyMode = "block".takeIf { includesDirtyMode },
+    )
+}
+
+@Serializable
+private data class TtsSynthesisRequest(
+    val text: String,
+    val voice: String,
+)

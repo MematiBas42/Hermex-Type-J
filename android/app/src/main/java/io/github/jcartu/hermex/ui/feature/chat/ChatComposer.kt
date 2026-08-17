@@ -250,6 +250,11 @@ fun ChatComposer(
                         enabled = voiceInputEnabled,
                         actions = actions,
                     )
+                    ComposerVoiceNoteButton(
+                        enabled = voiceInputEnabled,
+                        isProcessing = state.isProcessingVoiceNote,
+                        actions = actions,
+                    )
 
                     ChatComposerTextInput(
                         draft = state.draft,
@@ -459,7 +464,7 @@ private fun readPickedAttachment(context: Context, uri: Uri): PickedAttachmentRe
             PickedAttachmentResult.Success(metadata.filename, bytes)
         }
     } catch (_: SecurityException) {
-        PickedAttachmentResult.Failure("Hermex doesn't have permission to read ${metadata.filename}.")
+        PickedAttachmentResult.Failure("Hermex-Type-J doesn't have permission to read ${metadata.filename}.")
     } catch (_: IOException) {
         PickedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
     }

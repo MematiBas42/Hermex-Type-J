@@ -171,6 +171,9 @@ class SettingsViewModel(
     fun setHapticsEnabled(enabled: Boolean) =
         launchWrite { settingsRepository.setHapticsEnabled(enabled) }
 
+    fun setBackgroundRunNotificationsEnabled(enabled: Boolean) =
+        launchWrite { settingsRepository.setBackgroundRunNotificationsEnabled(enabled) }
+
     fun setShowsThinkingAndToolCards(enabled: Boolean) =
         launchWrite { settingsRepository.setShowsThinkingAndToolCards(enabled) }
 
