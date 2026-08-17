@@ -41,40 +41,51 @@ This is deliberately not:
 The app talks directly to the server you configure over REST and Server-Sent
 Events. There is no analytics SDK, ad SDK, third-party relay, or subscription.
 
+## What this fork adds over upstream Hermex
+
+Upstream [Hermex](https://github.com/uzairansaruzi/hermex) is an iPhone app.
+Same server, same wire contract — but Type-J is a substantially bigger client:
+
+| | Upstream Hermex (iOS) | **Hermex-Type-J (Android)** |
+|---|---|---|
+| Platform | SwiftUI, iPhone | Kotlin + Compose, **phones / tablets / foldables / trifold** |
+| Layout | Single-column portrait/landscape | **Hinge-aware 1/2/3-pane with state continuity** across every posture change |
+| Kanban boards | — | **Boards, cards, comments, dependencies, bulk actions, dispatcher, worker logs, live events** |
+| Git workspaces | — | **Status, branches, diffs, stage/commit, guarded remotes, generated commit messages** |
+| Share target | iOS share extension | **Durable ACTION_SEND inbox — survives process death; text + up to 10 files** |
+| Deep links | `hermes-agent://` | **`hermex-type-j://` + legacy, launcher shortcuts, notification intents, onboarding-safe** |
+| Background runs | Background URLSession | **Foreground service with private progress/completion notifications + cancel action** |
+| Proxy headers | Static list | **Keystore-encrypted, per-origin, validated editor, redirect-safe** |
+| Voice | Dictation + TTS | **Dictation + native voice notes with server transcription + assistant Listen (server TTS, device fallback)** |
+| Quality gates | XCTest suite | **608 tests across 63 suites incl. Robolectric + deterministic fuzz · Android Lint 0 · Kotlin LSP clean · 2,500-event monkey 0 crashes** |
+| Distribution | App Store / TestFlight | **Source build, signed local APK, CI artifact on every push** |
+
+Everything the iOS app does — streaming chat with reasoning and tools, stop and
+steer, approvals, sessions and projects, models and profiles, tasks, skills,
+files, memory, insights, settings, offline cache — is here too, tested against
+the same pinned server contract ([`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA)).
+
 ## Why this fork exists
 
-The excellent upstream [Hermex](https://github.com/uzairansaruzi/hermex)
-project is a native SwiftUI iPhone application. Its API contract, product
-thinking, and iOS implementation are the foundation of this repository.
+The upstream project's API contract, product thinking, and iOS implementation
+are the foundation of this repository. But Android needed more than a
+mechanical port: foldables and large screens change how an agent client should
+work — the session list stays visible, the transcript keeps its place, the
+composer doesn't cover the work, and a third panel carries real context instead
+of empty padding. And Android's platform services (share sheet, deep links,
+foreground services, Keystore) allow capabilities no iOS build can offer.
 
-Android needed more than a mechanical port. Foldables and large screens change
-how an agent client should work: the session list should remain visible, the
-transcript should keep its place, the composer should not cover the work, and a
-third panel should carry useful context instead of empty padding.
-
-This fork therefore keeps the original iOS project intact and adds a separate,
-native `android/` application with four goals:
+This fork keeps the original iOS project intact in `HermesMobile/` and adds a
+separate native `android/` application:
 
 1. **Native Android interaction.** Compose UI, Android file and camera pickers,
-   voice dictation, Android Keystore, DataStore, predictive back, and proper
-   lifecycle handling.
-2. **First-class adaptive layouts.** Compact cover displays, ordinary phones,
-   tablets, dual-fold devices, and triple-fold devices each get a layout shaped
-   for their usable space.
-3. **Operational parity.** Chat, sessions, projects, models, tasks, skills,
-   files, memory, insights, settings, approvals, and recovery are real working
-   surfaces—not screenshots around an unfinished core.
-4. **Upstream-compatible wire behavior.** The Android client decodes the same
-   tolerant response models and targets the same pinned hermes-webui contract
-   as the iOS app. It does not invent server APIs.
-
-| | Upstream Hermex | This fork |
-|---|---|---|
-| Primary client | Native SwiftUI for iPhone | Native Compose for Android |
-| Original code | Preserved in `HermesMobile/` | Added in `android/` |
-| Large screens | iPhone portrait/landscape | Phone, tablet, fold, trifold, multi-window |
-| Distribution | App Store / TestFlight | Source build + signed local APK workflow |
-| Relationship | Source project and product foundation | Proper GitHub fork with explicit attribution |
+   Android Keystore, DataStore, predictive back, proper lifecycle handling.
+2. **First-class adaptive layouts.** Compact cover displays, phones, tablets,
+   dual-fold and triple-fold devices each get a layout shaped for their space.
+3. **Operational parity — and then beyond.** Every iOS surface works, plus
+   Kanban, Git, sharing, notifications, and voice features listed above.
+4. **Upstream-compatible wire behavior.** Tolerant decoding of the same models;
+   no invented server APIs.
 
 ## One app, every posture
 
@@ -274,6 +285,10 @@ application against a disposable local hermes-webui-compatible fixture.
 #### Files: workspaces, directory, preview
 
 <img src="docs/assets/android/trifold-files.png" alt="Trifold workspace file browser and preview" width="100%" />
+
+#### Insights: usage analytics
+
+<img src="docs/assets/android/trifold-insights.png" alt="Trifold usage analytics with stat cards and timeframes" width="100%" />
 
 #### Half-open continuity
 

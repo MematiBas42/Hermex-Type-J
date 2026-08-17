@@ -97,7 +97,9 @@ import io.github.jcartu.hermex.model.SkillsResponse
 import io.github.jcartu.hermex.model.UploadResponse
 import io.github.jcartu.hermex.model.WorkspaceSuggestionsResponse
 import io.github.jcartu.hermex.model.WorkspacesResponse
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -291,10 +293,12 @@ class HermesApi(
         builder.header("Accept", "*/*")
 
         execute(builder.build()).use { response ->
-            val bytes = try {
-                response.body?.bytes() ?: ByteArray(0)
-            } catch (error: IOException) {
-                throw ApiError.Network(error)
+            val bytes = withContext(Dispatchers.IO) {
+                try {
+                    response.body?.bytes() ?: ByteArray(0)
+                } catch (error: IOException) {
+                    throw ApiError.Network(error)
+                }
             }
 
             if (response.code == 401) throw ApiError.Unauthorized
@@ -759,8 +763,10 @@ class HermesApi(
         customHeaderProvider().applyTo(builder)
         builder.header("Accept", "audio/mpeg")
         return execute(builder.build()).use { response ->
-            val bytes = runCatching { response.body?.bytes() ?: ByteArray(0) }
-                .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching { response.body?.bytes() ?: ByteArray(0) }
+                    .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            }
             if (response.code == 401) throw ApiError.Unauthorized
             if (!response.isSuccessful) throw ApiError.Http(response.code, bytes.toString(Charsets.UTF_8))
             bytes
@@ -775,8 +781,10 @@ class HermesApi(
         customHeaderProvider().applyTo(builder)
         builder.header("Accept", "application/json")
         return execute(builder.build()).use { response ->
-            val raw = runCatching { response.body?.string().orEmpty() }
-                .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            val raw = withContext(Dispatchers.IO) {
+                runCatching { response.body?.string().orEmpty() }
+                    .getOrElse { throw ApiError.Network(it as? IOException ?: IOException(it)) }
+            }
             if (response.code == 401) throw ApiError.Unauthorized
             val decoded = runCatching { json.decodeFromString<TranscribeResponse>(raw) }.getOrNull()
             if (decoded != null) return@use decoded
@@ -861,16 +869,18 @@ class HermesApi(
         client.newCall(request).await()
 
     /** 401 → [ApiError.Unauthorized]; other non-2xx → [ApiError.Http] with the raw body. */
-    private fun readSuccessBody(response: Response): String = response.use {
-        val bodyText = try {
-            it.body?.string().orEmpty()
-        } catch (error: IOException) {
-            throw ApiError.Network(error)
-        }
+    private suspend fun readSuccessBody(response: Response): String = withContext(Dispatchers.IO) {
+        response.use {
+            val bodyText = try {
+                it.body?.string().orEmpty()
+            } catch (error: IOException) {
+                throw ApiError.Network(error)
+            }
 
-        if (it.code == 401) throw ApiError.Unauthorized
-        if (it.code !in 200..299) throw ApiError.Http(it.code, bodyText)
-        bodyText
+            if (it.code == 401) throw ApiError.Unauthorized
+            if (it.code !in 200..299) throw ApiError.Http(it.code, bodyText)
+            bodyText
+        }
     }
 
     /**

@@ -187,6 +187,8 @@ The important three-pane contracts are:
 
 ```text
 Chat     sessions | transcript | composer + run controls
+Kanban   boards | columns | card detail, activity, runs
+Git      workspace sessions | status + files | diff + commit
 Tasks    task list | detail + actions | recent output
 Skills   skill list | rendered skill | linked file
 Files    workspaces | directory contents | file preview
@@ -237,9 +239,7 @@ Real Android emulator captures live in [`docs/assets/android`](../docs/assets/an
 - `trifold-kanban.png`
 - `trifold-git.png`
 - `trifold-files.png`
-
-Editorial composites are generated from those captures; no application UI is
-fabricated inside the presentation artwork.
+- `trifold-insights.png`
 
 ## Current exclusions
 
