@@ -1,88 +1,261 @@
-# Hermex for Android
+# Hermex Android
 
-Native Android port of the [Hermex](https://github.com/uzairansaruzi/hermex) iOS
-app — a mobile cockpit for a self-hosted
-[hermes-webui](https://github.com/nesquena/hermes-webui) agent server. Built
-with Kotlin + Jetpack Compose (Material 3 Adaptive), and optimized for
-foldables — specifically the **Samsung Galaxy Trifold** (cover screen,
-half-fold, and fully-unfolded three-panel layouts with pane boundaries that
-snap to the physical hinges).
+Native Kotlin + Jetpack Compose client for a self-hosted Hermes agent.
 
-The phone is the control plane, not the compute plane: the app talks only to
-your server over HTTPS (REST + Server-Sent Events). Bring your own
-hermes-webui instance — see the root [README](../README.md) for server setup.
+This directory is the Android implementation added by the
+[`jcartu/hermex`](https://github.com/jcartu/hermex) fork. For the product
+story, screenshots, fork rationale, and complete feature map, start with the
+[root README](../README.md).
 
-## Feature parity (v1)
+[![Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml)
+[![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](build.gradle.kts)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](gradle/libs.versions.toml)
 
-Ported from the iOS app:
+<img src="../docs/assets/android/android-postures.png" alt="Hermex Android across phone tablet fold and trifold layouts" width="100%" />
 
-- **Connect & onboarding** — server URL + password, health check, cookie
-  session persisted across restarts (password stored encrypted in the Android
-  Keystore, never in plain preferences).
-- **Chat** — streaming transcript over SSE with reasoning blocks, tool-call
-  cards, markdown + code blocks, model / reasoning-effort / profile / workspace
-  selection in the composer, attachments, stop and steer mid-run.
-- **Sessions** — browse, search, pin, archive, rename, delete, branch, move to
-  projects; cached sessions readable offline.
-- **Models** — picker with recents and favorites.
-- **Tasks** — browse, create, edit, run, pause/resume and delete scheduled
-  cron jobs, with delivery options, running status and recent output.
-- **Skills** — browse/search skill categories, enable/disable skills, read
-  skill content and linked files.
-- **Files** — workspace browser with text/image file preview.
-- **Memory** — read-only agent memory panel.
-- **Insights** — usage analytics computed from session metadata.
+## Supported Android layouts
 
-Not ported (yet): Kanban boards, git panels, TTS/transcribe, share extension,
-live activities (iOS-only surfaces), push notifications.
-
-The wire contract is verified against the same upstream pin as the iOS app:
-`UPSTREAM_TESTED_SHA` at the repo root.
-
-## Trifold / foldable behavior
-
-| Posture | Layout |
+| Window | Result |
 |---|---|
-| Cover screen (compact) | Single pane, bottom navigation |
-| Half-fold / medium width | Navigation rail + two panes (list \| detail) |
-| Fully unfolded (3 panels) | Rail + sessions \| transcript \| composer, boundaries aligned to the two hinges via `androidx.window` fold state |
+| Compact / cover | Bottom navigation and one focused screen |
+| Phone | Full-screen list/detail navigation |
+| Tablet / opened fold | Navigation rail and persistent list + detail |
+| Trifold | Hinge-aligned three-pane Chat, Tasks, Skills, and Files |
+| Half-open | Hinge-safe controls with live state continuity |
+| Multi-window | Reflow from measured width without restarting work |
 
-Layouts react live to fold/unfold; pane state and scroll positions survive the
-transition. `resizeableActivity` is enabled and the app supports multi-window,
-all aspect ratios, and edge-to-edge with predictive back.
+The app consumes `androidx.window` folding features when available. Width-based
+fallbacks keep the same behavior on tablets and emulators that report no hinge.
 
-## Building
+## Requirements
 
-Requirements: JDK 21, Android SDK (platform 37, build-tools). The Gradle
-wrapper (`./gradlew`) pulls everything else.
+- JDK 21
+- Android SDK platform 37
+- Android build-tools (36.0.0 or newer works with the current project)
+- `adb` for device installation
+- a reachable hermes-webui server for real use
+
+The checked-in Gradle wrapper pins Gradle 9.7.0. The version catalog pins AGP,
+Kotlin, Compose, OkHttp, serialization, and the remaining dependencies.
+
+## Build
+
+From the repository root:
 
 ```bash
 cd android
-./gradlew assembleDebug          # debug APK
-./gradlew testDebugUnitTest      # JVM unit tests
-./gradlew assembleRelease        # release APK (signed if keystore.properties present)
+./gradlew assembleDebug
 ```
 
-### Release signing (local)
+Debug APK:
 
-Release signing is intentionally **not** committed. Create a keystore outside
-the repository and point `android/keystore.properties` (gitignored) at it:
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install it:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Run the complete JVM gate:
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+Build the release variant:
+
+```bash
+./gradlew assembleRelease
+```
+
+Without local signing configuration, CI produces an unsigned release APK and
+uploads it as a workflow artifact.
+
+## Release signing
+
+Signing material is never committed. Keep the keystore outside the repository
+and create `android/keystore.properties` (already gitignored):
 
 ```properties
-storeFile=/absolute/path/hermex-release.jks
+storeFile=/absolute/path/to/hermex-release.jks
 storePassword=...
 keyAlias=hermex
 keyPassword=...
 ```
 
-Without the file, `assembleRelease` produces an unsigned APK (as CI does).
+Then build and verify:
 
-## Project layout
+```bash
+./gradlew assembleRelease
+$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner \
+  verify --verbose app/build/outputs/apk/release/app-release.apk
+```
 
-See [AGENTS.md](AGENTS.md) for the full architecture/conventions document —
-Swift sources under `../HermesMobile/` are the behavioral source of truth; the
-Kotlin packages mirror them (`model/`, `net/`, `data/`, `core/`, `ui/feature/…`).
+The source tree ignores `keystore.properties`, `*.jks`, `local.properties`,
+APKs, Gradle output, IDE metadata, and local SDK state.
 
-## License
+## Connect to a server
 
-MIT, same as the upstream project (see [LICENSE](../LICENSE)).
+Hermex is a client; it does not embed the Hermes Python runtime.
+
+1. Start [hermes-webui](https://github.com/nesquena/hermes-webui).
+2. Set `HERMES_WEBUI_PASSWORD` whenever the host is not loopback-only.
+3. Expose it over HTTPS with Tailscale Serve, Cloudflare Tunnel, or a reverse
+   proxy.
+4. Open Hermex, enter the exact base URL, test the connection, and connect.
+
+Passwordless servers are supported when `/api/auth/status` reports auth
+disabled. Passkey-only servers are detected and rejected with a clear message
+because this client does not implement the browser passkey ceremony.
+
+Plain HTTP is permitted for trusted LAN/emulator development. Prefer HTTPS for
+anything routed beyond that boundary.
+
+## Architecture
+
+```text
+app/src/main/java/io/github/jcartu/hermex/
+├── HermexApplication.kt
+├── MainActivity.kt
+├── di/
+│   └── AppContainer.kt              # process-wide dependencies
+├── core/
+│   ├── crypto/                      # Android Keystore AES-GCM
+│   ├── net/                         # persistent cookie jar
+│   └── prefs/                       # DataStore settings/config
+├── data/
+│   └── CacheStore.kt                # file-backed offline cache
+├── model/                           # tolerant server contract models
+├── net/
+│   ├── Endpoints.kt
+│   ├── HermesApi.kt                 # OkHttp REST client
+│   └── SseChatStream.kt             # native SSE stream
+└── ui/
+    ├── adaptive/                    # fold state + hinge geometry
+    ├── components/
+    ├── theme/
+    └── feature/
+        ├── onboarding/ settings/
+        ├── sessions/ chat/ models/
+        ├── tasks/ skills/
+        └── workspace/ memory/ insights/
+```
+
+### Dependency model
+
+`HermexApplication` owns one manual `AppContainer`. That container provides a
+single instance of:
+
+- `HermesApi`
+- `AuthManager`
+- `PersistentCookieJar`
+- `ServerConfigRepository`
+- `SettingsRepository`
+- `ModelFavoritesStore` and `ModelRecentsStore`
+- `CacheStore`
+
+Keeping these process-wide prevents split auth state, duplicate DataStores, or
+feature-specific caches.
+
+### State continuity
+
+- ViewModels own feature state.
+- `AppNavigationViewModel` uses `SavedStateHandle` for destination, selected
+  session, and new-chat mode.
+- `rememberSaveable` covers local scroll and disclosure state.
+- Chat suspends SSE and auxiliary polling on lifecycle stop, then performs a
+  status-checked reconnect on return.
+- The client never resends a user message merely because the transport dropped.
+
+### Trifold geometry
+
+`FoldState` collects `WindowInfoTracker.windowLayoutInfo`. The shell derives a
+pane count from physical hinges and window width. `HingeAwarePaneRow` converts
+hinge centers from window coordinates into local layout coordinates so controls
+and pane boundaries do not cross the occlusion strip.
+
+The important three-pane contracts are:
+
+```text
+Chat     sessions | transcript | composer + run controls
+Tasks    task list | detail + actions | recent output
+Skills   skill list | rendered skill | linked file
+Files    workspaces | directory contents | file preview
+```
+
+## Networking contract
+
+The Android app follows the same upstream pin as iOS:
+[`UPSTREAM_TESTED_SHA`](../UPSTREAM_TESTED_SHA).
+
+Important rules:
+
+- unknown JSON keys never crash decoding;
+- optional malformed fields degrade independently;
+- native requests do not add browser `Origin` or `Referer` headers;
+- non-2xx responses map to typed `ApiError` cases;
+- 401 demotes auth state without discarding the saved server;
+- cross-origin redirects strip custom headers;
+- SSE comments/heartbeats do not render as events;
+- interrupted streams use status/replay recovery and never auto-resend.
+
+## Tests
+
+The current suite covers models, endpoint request shapes, auth, cache, SSE,
+ViewModels, mutations, chat stream lifecycle, slash commands, attachment flow,
+adaptive geometry, analytics, and navigation continuity.
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+Current local gate: **538 tests across 49 suites, 0 failures**.
+
+GitHub Actions runs the same test task, builds the release variant, and uploads
+an unsigned APK for every Android change.
+
+## Screenshots
+
+Real Android emulator captures live in [`docs/assets/android`](../docs/assets/android):
+
+- `cover-chat.png`
+- `phone-sessions.png`
+- `tablet-chat.png`
+- `fold-open-chat.png`
+- `half-open-chat.png`
+- `trifold-chat.png`
+- `trifold-tasks.png`
+- `trifold-files.png`
+
+Editorial composites are generated from those captures; no application UI is
+fabricated inside the presentation artwork.
+
+## Current exclusions
+
+Kanban boards, Git panels, TTS/transcription endpoints, an Android share target,
+push notifications, and iOS-only Live Activities/App Intents are outside the
+current Android scope. There are no fake buttons or placeholder screens for
+those features.
+
+## Contributing
+
+Read [`AGENTS.md`](AGENTS.md) before changing Android code. The short version:
+
+- verify every endpoint and wire key against upstream or the Swift client;
+- keep model decoding tolerant;
+- preserve compact, tablet, fold, and trifold behavior together;
+- do not add a second convention beside an existing one;
+- add behavior tests for new observable contracts;
+- never commit secrets, APK signing material, or local SDK paths.
+
+## License and attribution
+
+MIT — see [`../LICENSE`](../LICENSE).
+
+The Android implementation is part of the proper
+[`jcartu/hermex`](https://github.com/jcartu/hermex) fork. The original SwiftUI
+project and product foundation are by
+[`uzairansaruzi/hermex`](https://github.com/uzairansaruzi/hermex).

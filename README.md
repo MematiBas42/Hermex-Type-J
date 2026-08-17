@@ -2,167 +2,384 @@
 
 <img src="docs/assets/readme/hermex-icon.png" alt="Hermex app icon" width="96" />
 
-# Hermex
+# Hermex for Android
 
-**Control your self-hosted [Hermes](https://github.com/nesquena/hermes-webui) agent from your phone or tablet.**
+**A native Android control plane for your self-hosted Hermes agent.**<br />
+Built for phones, tablets, foldables, and the Samsung Galaxy Trifold.
 
-Your server. Your devices. No middleman.
-
-[![iOS 18+](https://img.shields.io/badge/iOS-18%2B-000000?logo=apple&logoColor=white)](https://apps.apple.com/app/hermex/id6767006319)
+[![Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml)
 [![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](android/README.md)
-[![Kotlin + Compose](https://img.shields.io/badge/Kotlin-Compose-7F52FF?logo=kotlin&logoColor=white)](android/README.md)
-[![Swift](https://img.shields.io/badge/Swift-5.9%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
-[![Follow on X](https://img.shields.io/badge/Follow-%40uzairansar-000000?logo=x&logoColor=white)](https://x.com/uzairansar)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/callmeuzi)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](android/README.md)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack-Compose-4285F4?logo=jetpackcompose&logoColor=white)](android/README.md)
+[![Tests](https://img.shields.io/badge/tests-538%20passing-34C759)](#verification)
+[![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
-<a href="https://apps.apple.com/app/hermex/id6767006319">
-  <img src="https://toolbox.marketingtools.apple.com/api/v2/badges/download-on-the-app-store/black/en-us" alt="Download on the App Store" height="50" />
-</a>
+[Android guide](android/README.md) · [Upstream iOS project](https://github.com/uzairansaruzi/hermex) · [Hermes WebUI](https://github.com/nesquena/hermes-webui) · [Android issues](https://github.com/jcartu/hermex/issues)
 
-[Website](https://hermexapp.com) · [App Store](https://apps.apple.com/app/hermex/id6767006319) · [Report a bug](https://github.com/uzairansaruzi/hermex/issues) · [Contributing](CONTRIBUTING.md)
-
-<img src="docs/assets/readme/hero-devices.png" alt="Hermex running on two iPhones: a streaming chat session and the home screen with Tasks, Skills, Memory, Insights, and Sessions" width="720" />
+<img src="docs/assets/android/android-hero.png" alt="Hermex Android running on a compact cover display and fully unfolded trifold" width="100%" />
 
 </div>
 
-Hermex is a native iOS and Android client for driving a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server — a mobile cockpit for an AI agent that lives on a machine **you** control. The phone or tablet is the control plane, not the compute plane: the agent, its tools, and your data stay on your own hardware.
+## What this is
 
-- **Free.** No subscriptions, no in-app purchases.
-- **Private.** No analytics, no tracking, no third-party relay — the app talks only to your server.
-- **Native.** SwiftUI on iOS and Kotlin + Jetpack Compose on Android — no web wrapper.
+Hermex for Android is a **native Kotlin + Jetpack Compose client** for a
+self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server.
+It lets you start work, watch an agent run, steer it, approve actions, inspect
+files, manage scheduled jobs, and recover context without sitting at the
+machine hosting the agent.
 
-## Features
+The server remains the compute plane. The Android device is the control,
+review, and continuity surface.
 
-- **Chat with your agent** — send messages with model, reasoning-effort, workspace, and profile options; attach files and images; watch responses stream in real time with thinking and tool-call detail.
-- **Steer or stop a run** mid-flight.
-- **Sessions** — browse, search, and resume every conversation on your server; cached sessions stay readable offline.
-- **Pick your models** — switch between any model or provider your server is configured for, with recents and favorites.
-- **Profiles & projects** — switch agent profiles and organize sessions into projects.
-- **Tasks** — view and edit your agent's scheduled cron jobs from your phone.
-- **Skills** — browse and search the agent's installed skills.
-- **Workspace browser** — explore your server's file system from the app.
-- **Memory & Insights** — read-only panels for agent memory and usage analytics.
+This is deliberately not:
 
-<div align="center">
+- a WebView around the browser UI;
+- a hosted relay or cloud account;
+- a copy of the Hermes Python runtime inside Android;
+- a phone-only layout stretched across a tablet.
+
+The app talks directly to the server you configure over REST and Server-Sent
+Events. There is no analytics SDK, ad SDK, third-party relay, or subscription.
+
+## Why this fork exists
+
+The excellent upstream [Hermex](https://github.com/uzairansaruzi/hermex)
+project is a native SwiftUI iPhone application. Its API contract, product
+thinking, and iOS implementation are the foundation of this repository.
+
+Android needed more than a mechanical port. Foldables and large screens change
+how an agent client should work: the session list should remain visible, the
+transcript should keep its place, the composer should not cover the work, and a
+third panel should carry useful context instead of empty padding.
+
+This fork therefore keeps the original iOS project intact and adds a separate,
+native `android/` application with four goals:
+
+1. **Native Android interaction.** Compose UI, Android file and camera pickers,
+   voice dictation, Android Keystore, DataStore, predictive back, and proper
+   lifecycle handling.
+2. **First-class adaptive layouts.** Compact cover displays, ordinary phones,
+   tablets, dual-fold devices, and triple-fold devices each get a layout shaped
+   for their usable space.
+3. **Operational parity.** Chat, sessions, projects, models, tasks, skills,
+   files, memory, insights, settings, approvals, and recovery are real working
+   surfaces—not screenshots around an unfinished core.
+4. **Upstream-compatible wire behavior.** The Android client decodes the same
+   tolerant response models and targets the same pinned hermes-webui contract
+   as the iOS app. It does not invent server APIs.
+
+| | Upstream Hermex | This fork |
+|---|---|---|
+| Primary client | Native SwiftUI for iPhone | Native Compose for Android |
+| Original code | Preserved in `HermesMobile/` | Added in `android/` |
+| Large screens | iPhone portrait/landscape | Phone, tablet, fold, trifold, multi-window |
+| Distribution | App Store / TestFlight | Source build + signed local APK workflow |
+| Relationship | Source project and product foundation | Proper GitHub fork with explicit attribution |
+
+## One app, every posture
+
+<img src="docs/assets/android/android-postures.png" alt="Hermex Android shown on cover screen, standard phone, tablet fold, and trifold layouts" width="100%" />
+
+The layout is selected from the **actual window and hinge state**, not from a
+hard-coded portrait/landscape switch.
+
+| Form factor | Navigation | Working layout |
+|---|---|---|
+| Cover / compact phone | Bottom navigation | One focused surface; system back returns from chat to sessions |
+| Standard phone | Bottom navigation | Full-screen list or detail with native transitions |
+| Tablet / opened fold | Navigation rail | Persistent list + detail |
+| Galaxy Trifold | Navigation rail | Hinge-aligned list + detail + context/composer |
+| Half-open / flex posture | Rail or compact navigation | Controls avoid hinge occlusion; session/draft state remains live |
+| Multi-window | Width-driven | Reflows without restarting the active task |
+
+Selection, draft text, staged attachments, scroll position, active session, and
+stream recovery survive cover-to-inner-display transitions. App-level
+navigation uses a `SavedStateHandle`; feature state lives in ViewModels rather
+than in a disposable layout branch.
+
+## The third pane is functional
+
+<img src="docs/assets/android/android-third-pane.png" alt="Hermex trifold task output and workspace file preview layouts" width="100%" />
+
+On a trifold, the app does not merely widen two columns:
+
+- **Chat:** sessions | transcript | composer and run controls
+- **Tasks:** task list | task detail and actions | recent output
+- **Skills:** skill list | rendered skill | linked file
+- **Files:** workspaces | directory contents | file preview
+
+Pane boundaries are derived from `androidx.window` folding features and aligned
+with physical hinge centers. On devices without reported hinges, the same
+system falls back to measured window width.
+
+## What was added
+
+### Native Android foundation
+
+- Kotlin 2.4 and Jetpack Compose with Material 3 Adaptive behavior
+- Android 8 / API 26 minimum; target and compile SDK 37
+- edge-to-edge system UI, predictive back, resizable activity, and multi-window
+- Android Keystore encryption for the saved server password
+- persistent cookie jar for hermes-webui authentication
+- DataStore-backed settings, model favorites, and recents
+- file-backed offline session and transcript cache
+- tolerant `kotlinx.serialization` models matching the iOS wire behavior
+- OkHttp REST client plus a native SSE stream client
+- no WebView and no embedded browser runtime
+
+### Chat and run control
+
+- token-by-token streaming with replay-aware reconnect
+- reasoning blocks, tool calls, tool results, status, title, and metering events
+- markdown, code blocks, copy actions, and monospace math fallback
+- stop and steer while a run is active
+- approval and clarification sheets with expiry handling
+- optimistic sending with rollback when a request fails
+- active-run status and context-window indicator
+- transcript pagination and offline cache fallback
+- response speed, timestamps, RTL chat layout, code wrapping, and card display settings
+
+### Composer
+
+- model picker grouped by provider
+- model favorites and recent selections
+- reasoning effort and reasoning visibility
+- profile switching and workspace selection
+- slash-command autocomplete from local, server, and skill commands
+- persistent goal controls
+- Android document picker with multiple file types
+- camera capture through the native activity-result API
+- attachment previews, removal, upload state, and a 20 MB client-side limit
+- Android speech recognition for voice dictation
+- layout that separates from the transcript on a trifold
+
+### Sessions and projects
+
+- local title/model/workspace search plus debounced server content search
+- pinned, recent, scheduled, archived, CLI-imported, and delegated-session visibility
+- rename, pin, archive, restore, duplicate/branch, move, delete, and export
+- project create, rename, delete, color, filtering, and session counts
+- swipe actions on compact screens and contextual actions on larger screens
+- cached read-only recovery when the server is unreachable
+
+### Tasks and skills
+
+- scheduled task list, detail, status, timing, delivery, model/profile metadata, and output
+- create, edit, run now, pause, resume, and delete cron jobs
+- delivery options, toast behavior, validation, and server-rejection handling
+- skill grouping, search, tags, enable/disable, markdown content, and linked files
+- optimistic skill toggles with rollback on failure
+
+### Files, memory, and insights
+
+- workspace roots, breadcrumbs, directory navigation, search, and back stack
+- text/markdown preview, line numbers, wrapping, copy, image loading, and binary detection
+- cookie-authenticated raw file previews through the shared OkHttp client
+- memory, user profile, agent soul, and project-context sections
+- usage timeframes, token totals, estimated cost, daily usage chart, model share, and top sessions
+
+### Settings and onboarding
+
+- connection test, health probe, auth-status detection, password and passwordless servers
+- Tailscale-focused setup guidance
+- system/light/dark theme and selectable accent colors
+- chat, haptics, section visibility, default model/profile, providers, server info, and logout
+- one shared authentication state machine across shell, onboarding, and settings
+
+## Screenshots
+
+All screenshots below are real Android 16 emulator captures running the Compose
+application against a disposable local hermes-webui-compatible fixture.
+
 <table>
   <tr>
-    <td align="center"><img src="docs/assets/readme/screenshot-chat.png" alt="Streaming chat with code blocks and markdown tables" width="240" /><br /><sub><b>Stream responses in real time</b></sub></td>
-    <td align="center"><img src="docs/assets/readme/screenshot-tasks.png" alt="Tasks screen listing scheduled cron jobs" width="240" /><br /><sub><b>Manage scheduled tasks</b></sub></td>
-    <td align="center"><img src="docs/assets/readme/screenshot-skills.png" alt="Skills screen with searchable agent skills" width="240" /><br /><sub><b>Browse agent skills</b></sub></td>
+    <th>Compact cover — active chat</th>
+    <th>Standard phone — sessions</th>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/android/cover-chat.png" alt="Compact cover display active chat" width="360" /></td>
+    <td><img src="docs/assets/android/phone-sessions.png" alt="Standard phone sessions screen" width="330" /></td>
   </tr>
 </table>
 
-More screenshots at [hermexapp.com](https://hermexapp.com).
-</div>
+<table>
+  <tr>
+    <th>Opened fold — list + chat</th>
+    <th>Standard tablet — list + detail</th>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/android/fold-open-chat.png" alt="Opened fold sessions and chat" width="560" /></td>
+    <td><img src="docs/assets/android/tablet-chat.png" alt="Tablet sessions and chat" width="560" /></td>
+  </tr>
+</table>
+
+### Fully unfolded trifold
+
+<img src="docs/assets/android/trifold-chat.png" alt="Trifold sessions transcript and composer" width="100%" />
+
+<details>
+<summary><strong>More trifold surfaces</strong></summary>
+
+#### Tasks: list, detail, output
+
+<img src="docs/assets/android/trifold-tasks.png" alt="Trifold task list detail and output" width="100%" />
+
+#### Files: workspaces, directory, preview
+
+<img src="docs/assets/android/trifold-files.png" alt="Trifold workspace file browser and preview" width="100%" />
+
+#### Half-open continuity
+
+<img src="docs/assets/android/half-open-chat.png" alt="Half-open fold chat layout" width="100%" />
+
+</details>
+
+## Feature map
+
+| Surface | Android implementation |
+|---|---|
+| Connect | URL normalization, health/auth probes, password and passwordless login |
+| Chat | REST start + native SSE stream, reconnect, stop, steer, reasoning, tools |
+| Attachments | Android file picker, camera, previews, upload, transcript rendering |
+| Voice | Android `SpeechRecognizer` dictation with graceful capability fallback |
+| Sessions | Browse, content search, cache, pin/archive/branch/move/delete/export |
+| Projects | Create, rename, delete, filter, colors, session counts |
+| Models | Provider groups, search, custom models, favorites, recents |
+| Profiles | Active/default profile, switching, model/workspace inheritance |
+| Tasks | Full cron lifecycle plus detail, delivery options, output |
+| Skills | Browse, search, render, linked files, enable/disable |
+| Files | Workspace roots, directories, text/markdown/image previews |
+| Memory | Memory, user, soul, and project context |
+| Insights | Tokens, cost, timeframes, models, daily chart, top sessions |
+| Settings | Appearance, chat behavior, providers, defaults, visibility, logout |
+| Offline | Cached session list and transcripts with connectivity-aware fallback |
+| Foldables | Width + hinge-aware one/two/three-pane layouts and state continuity |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Hermex Android<br/>Compose UI] -->|HTTPS REST| B[hermes-webui]
+    B -->|Server-Sent Events| A
+    B --> C[Hermes agent + tools]
+    A --> D[Android Keystore<br/>encrypted password]
+    A --> E[DataStore<br/>settings + selections]
+    A --> F[JSON cache<br/>sessions + transcript]
+    G[WindowManager<br/>fold + hinge state] --> A
+```
+
+The Android project is intentionally a single application module. Features are
+organized by product surface; shared wire models and networking stay separate
+from Compose UI.
+
+```text
+android/app/src/main/java/io/github/jcartu/hermex/
+├── core/          # crypto, prefs, cookies, logging
+├── data/          # offline cache
+├── model/         # tolerant server models
+├── net/           # endpoints, REST, SSE, errors
+├── ui/adaptive/   # fold state and hinge-aligned panes
+└── ui/feature/    # chat, sessions, tasks, skills, files, memory, insights…
+```
+
+## Privacy and security
+
+- The app connects only to the server URL you enter.
+- The server password is encrypted by a key held in Android Keystore.
+- Session cookies persist locally; logout clears the local session.
+- Native requests deliberately omit browser `Origin` and `Referer` headers,
+  matching hermes-webui's supported non-browser CSRF path.
+- Unknown JSON fields are ignored; malformed optional fields degrade instead of
+  crashing the UI.
+- Redirected custom headers are stripped when the redirect crosses origin.
+- Signing keys, passwords, local SDK paths, APKs, and build output are ignored
+  by Git.
+
+You remain responsible for securing and updating your self-hosted server.
+HTTPS through Tailscale Serve, Cloudflare Tunnel, or a reverse proxy is the
+recommended transport.
 
 ## Getting started
 
-Hermex is a client only — it does not ship with, host, or provision a backend. You bring your own [hermes-webui](https://github.com/nesquena/hermes-webui) server (a third-party, MIT-licensed open-source project) running on a machine you control. Setup takes about 15 minutes:
+### 1. Run hermes-webui
 
-1. **Run the server.** Install and start `hermes-webui` on macOS, Linux, or Windows/WSL2 (Python 3.11+). Set `HERMES_WEBUI_PASSWORD`.
-2. **Make it reachable from your phone** (see options below).
-3. **Connect.** [Download Hermex](https://apps.apple.com/app/hermex/id6767006319), enter your server URL (e.g. `https://hermes.yourdomain.com`) and password, and you're in.
+Install and start [hermes-webui](https://github.com/nesquena/hermes-webui) on a
+machine you control. Configure a strong `HERMES_WEBUI_PASSWORD` whenever the
+server is reachable beyond loopback.
 
-Self-hosting the server, securing it, and keeping it reachable are your responsibility.
+### 2. Make it reachable
 
-### Making the server reachable
+Use real HTTPS through Tailscale Serve, Cloudflare Tunnel, or your reverse
+proxy. Plain HTTP remains useful for a trusted LAN or emulator development.
 
-- **HTTPS via a tunnel or reverse proxy (recommended).** Expose the server through Cloudflare Tunnel or any reverse proxy that terminates real TLS at a hostname you own. Real HTTPS keeps iOS App Transport Security happy with no exceptions. On a publicly reachable hostname the password is your only app-level defense — set a strong one.
-- **Private HTTPS with Tailscale Serve.** Keep the server password-protected and bound to `127.0.0.1:8787`, inspect existing Serve/Funnel routes, then add `tailscale serve --bg 8787` only when HTTPS port 443 at the root path is free. Install Tailscale on the iPhone and connect with the exact `https://…ts.net` URL reported by `tailscale serve status`. Direct binding to `0.0.0.0` over plain HTTP remains a manual fallback, not the default.
-- **Simulator-only local testing** can use `http://localhost:8787` when the server runs on the same Mac.
+### 3. Build and install Android
 
-### Troubleshooting the connection
-
-If connection testing fails, check these first:
-
-1. The machine hosting `hermes-webui` is awake.
-2. `hermes-webui` is running and serving `/health` (`curl https://<your-server>/health`).
-3. The tunnel, reverse proxy, or Tailscale route is connected.
-4. The server URL and password are correct.
-
-## Building from source
-
-### iOS
-
-Prefer the [App Store build](https://apps.apple.com/app/hermex/id6767006319) unless you're developing. To build yourself you need Xcode 26 or newer (iOS 18 SDK) and an iPhone or simulator on iOS 18+.
-
-Clone the repo, open `HermesMobile.xcodeproj`, and run the `HermesMobile` scheme on an iPhone simulator (the Xcode target is `HermesMobile`; the app's display name is `Hermex`). Dependencies are resolved automatically via Swift Package Manager.
-
-From the command line:
-
-```zsh
-xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17' build
-```
-
-```zsh
-xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'
-```
-
-If that simulator is not installed, list available devices and choose a nearby iPhone simulator:
-
-```zsh
-xcrun simctl list devices available
-```
-
-Local validation defaults for XcodeBuildMCP users live in `.xcodebuildmcp/config.yaml`; the standard post-change flow is in [`DEVELOPMENT.md`](DEVELOPMENT.md).
-
-### Android
-
-The Android app is a native Kotlin + Jetpack Compose port with Material 3
-Adaptive layouts for phones, tablets, foldables, and the Samsung Galaxy
-Trifold. It includes native file/camera attachments, voice dictation,
-streaming chat, sessions/projects, editable tasks, skills, workspace browser,
-memory, insights, and offline cache.
-
-Requirements: JDK 21 and Android SDK platform 37. The Gradle wrapper downloads
-the pinned build toolchain:
+Requirements: JDK 21 and Android SDK platform 37.
 
 ```bash
-cd android
+git clone https://github.com/jcartu/hermex.git
+cd hermex/android
 ./gradlew testDebugUnitTest
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+For a signed local release:
+
+```bash
 ./gradlew assembleRelease
 ```
 
-See [`android/README.md`](android/README.md) for signing and layout details.
+Signing credentials live in a gitignored `android/keystore.properties`; see
+[`android/README.md`](android/README.md) for the exact format and toolchain.
 
-## Server compatibility
+## Verification
 
-The app is developed and tested against the `hermes-webui` commit pinned in [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA). Upstream does not yet guarantee API stability (its README declares version skew unsupported pending their stable-API work), so newer or older server versions may break individual features — please include your server version in bug reports. The app decodes tolerantly (unknown fields never crash it) and endpoint shapes are verified against upstream source, never invented; see [`CONTRACT_TESTS.md`](CONTRACT_TESTS.md) for the contract-testing approach.
+The Android delivery is checked at three levels:
 
-## Documentation map
-- [`android/README.md`](android/README.md): Android build, signing, feature-parity, foldable and trifold behavior.
+| Gate | Evidence |
+|---|---|
+| JVM behavior | 538 unit and contract tests across 49 suites |
+| Release | `assembleRelease` succeeds; local APK verified with Signature Scheme v2 |
+| Surface | Android 16 Pixel Fold emulator: CLOSED, HALF_OPENED, OPENED, standard phone/tablet widths, and simulated 3600×2208 trifold |
+| Native flows | Authentication restore, session continuity, document picker, chat, task detail/output, file preview, memory/insights/settings |
+| Cloud | [Android CI](https://github.com/jcartu/hermex/actions/workflows/android-ci.yml) runs tests and uploads an unsigned release APK |
 
-- [`PROJECT_SPEC.md`](PROJECT_SPEC.md): source of truth for product scope, API behavior, dependencies, and architecture decisions.
-- [`PROJECT_INTENT.md`](PROJECT_INTENT.md): short orientation; useful for product tradeoffs, not implementation details.
-- [`DEVELOPMENT.md`](DEVELOPMENT.md): local development workflow, server setup notes, and the maintainer release runbook.
-- [`TESTFLIGHT.md`](TESTFLIGHT.md): maintainer-only TestFlight/App Store Connect operations.
-- [`CONTRACT_TESTS.md`](CONTRACT_TESTS.md): upstream contract-test readiness and the pin-advance policy.
-- [`SECURITY.md`](SECURITY.md): how to report a vulnerability.
-- [`docs/agents/`](docs/agents): repo-local agent workflow conventions (issues, triage labels, domain notes).
-- [GitHub Issues](https://github.com/uzairansaruzi/hermex/issues): source of truth for active bugs, polish notes, and feature requests.
+Run the same local gate:
 
-## Contributing
+```bash
+cd android
+./gradlew testDebugUnitTest assembleRelease
+```
 
-Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to pick up work and open a PR, [`AGENTS.md`](AGENTS.md) for the working agreement coding agents follow in this repo, and the [Code of Conduct](CODE_OF_CONDUCT.md). The short version:
+## Current scope boundaries
 
-- Do not invent API endpoints or JSON shapes; verify against the upstream server source or a running server.
-- Every `Codable` model decodes tolerantly — never crash on unknown fields.
-- Add no third-party dependencies beyond the locked list in `PROJECT_SPEC.md` without explicit approval.
-- Do not modify the upstream `hermes-webui` server from this repo.
+The Android app does not currently port Kanban boards, Git panels,
+TTS/transcription endpoints, an Android share target, push notifications, or
+iOS-specific Live Activities and App Intents. They are intentionally omitted,
+not represented by non-functional placeholders.
 
-## Support the project
+## Upstream and attribution
 
-Hermex is free and built in the open. If it's useful to you:
+This repository is a proper fork of
+[`uzairansaruzi/hermex`](https://github.com/uzairansaruzi/hermex), created by
+[Uzair Ansar](https://github.com/uzairansaruzi). The upstream SwiftUI app,
+product specification, test approach, artwork, and API-contract research made
+this Android work possible.
 
-- ⭐ **Star this repo** — it helps others find the project.
-- 🐦 **Follow [@uzairansar on X](https://x.com/uzairansar)** for updates and dev logs.
-- ☕ **[Buy me a coffee](https://buymeacoffee.com/callmeuzi)** to support development.
+- Upstream website: [hermexapp.com](https://hermexapp.com)
+- Upstream iOS app: [App Store](https://apps.apple.com/app/hermex/id6767006319)
+- Upstream contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Android implementation guide: [`android/README.md`](android/README.md)
+- Tested server pin: [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA)
 
-<a href="https://buymeacoffee.com/callmeuzi"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-callmeuzi-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" height="40" /></a>
+Android-specific issues and pull requests belong in this fork. Changes to the
+iOS product should be proposed upstream.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
 
-Hermex is an independent client and is not affiliated with the upstream [hermes-webui](https://github.com/nesquena/hermes-webui) project. Apple, the Apple logo, and App Store are trademarks of Apple Inc.
+Hermex is an independent client and is not affiliated with the upstream
+hermes-webui project. Apple, the Apple logo, and App Store are trademarks of
+Apple Inc. Android, Jetpack, and Google Play are trademarks of Google LLC.

@@ -20,6 +20,12 @@ Security sections per release.
   command autocomplete, approval/clarification prompts, stop/steer, and SSE
   stream recovery on Android.
 
+### Changed
+- Reworked the repository presentation around the Android fork: clear fork
+  rationale, complete feature map, architecture/security/build documentation,
+  and real dark-mode captures for cover, phone, tablet, fold, half-fold, and
+  trifold layouts.
+
 ## [1.5.0] - TBA
 
 ### Added
