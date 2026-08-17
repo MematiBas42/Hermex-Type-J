@@ -4,11 +4,13 @@
 
 # Hermex
 
-**Control your self-hosted [Hermes](https://github.com/nesquena/hermes-webui) agent from your iPhone.**
+**Control your self-hosted [Hermes](https://github.com/nesquena/hermes-webui) agent from your phone or tablet.**
 
-Your server. Your iPhone. No middleman.
+Your server. Your devices. No middleman.
 
 [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-000000?logo=apple&logoColor=white)](https://apps.apple.com/app/hermex/id6767006319)
+[![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](android/README.md)
+[![Kotlin + Compose](https://img.shields.io/badge/Kotlin-Compose-7F52FF?logo=kotlin&logoColor=white)](android/README.md)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Follow on X](https://img.shields.io/badge/Follow-%40uzairansar-000000?logo=x&logoColor=white)](https://x.com/uzairansar)
@@ -24,11 +26,11 @@ Your server. Your iPhone. No middleman.
 
 </div>
 
-Hermex is a native SwiftUI iPhone app for driving a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server — a mobile cockpit for an AI agent that lives on a machine **you** control. The phone is the control plane, not the compute plane: the agent, its tools, and your data stay on your own hardware.
+Hermex is a native iOS and Android client for driving a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server — a mobile cockpit for an AI agent that lives on a machine **you** control. The phone or tablet is the control plane, not the compute plane: the agent, its tools, and your data stay on your own hardware.
 
 - **Free.** No subscriptions, no in-app purchases.
 - **Private.** No analytics, no tracking, no third-party relay — the app talks only to your server.
-- **Native.** Real SwiftUI, built for iOS 18+, not a web wrapper.
+- **Native.** SwiftUI on iOS and Kotlin + Jetpack Compose on Android — no web wrapper.
 
 ## Features
 
@@ -81,6 +83,8 @@ If connection testing fails, check these first:
 
 ## Building from source
 
+### iOS
+
 Prefer the [App Store build](https://apps.apple.com/app/hermex/id6767006319) unless you're developing. To build yourself you need Xcode 26 or newer (iOS 18 SDK) and an iPhone or simulator on iOS 18+.
 
 Clone the repo, open `HermesMobile.xcodeproj`, and run the `HermesMobile` scheme on an iPhone simulator (the Xcode target is `HermesMobile`; the app's display name is `Hermex`). Dependencies are resolved automatically via Swift Package Manager.
@@ -103,11 +107,31 @@ xcrun simctl list devices available
 
 Local validation defaults for XcodeBuildMCP users live in `.xcodebuildmcp/config.yaml`; the standard post-change flow is in [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
+### Android
+
+The Android app is a native Kotlin + Jetpack Compose port with Material 3
+Adaptive layouts for phones, tablets, foldables, and the Samsung Galaxy
+Trifold. It includes native file/camera attachments, voice dictation,
+streaming chat, sessions/projects, editable tasks, skills, workspace browser,
+memory, insights, and offline cache.
+
+Requirements: JDK 21 and Android SDK platform 37. The Gradle wrapper downloads
+the pinned build toolchain:
+
+```bash
+cd android
+./gradlew testDebugUnitTest
+./gradlew assembleRelease
+```
+
+See [`android/README.md`](android/README.md) for signing and layout details.
+
 ## Server compatibility
 
 The app is developed and tested against the `hermes-webui` commit pinned in [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA). Upstream does not yet guarantee API stability (its README declares version skew unsupported pending their stable-API work), so newer or older server versions may break individual features — please include your server version in bug reports. The app decodes tolerantly (unknown fields never crash it) and endpoint shapes are verified against upstream source, never invented; see [`CONTRACT_TESTS.md`](CONTRACT_TESTS.md) for the contract-testing approach.
 
 ## Documentation map
+- [`android/README.md`](android/README.md): Android build, signing, feature-parity, foldable and trifold behavior.
 
 - [`PROJECT_SPEC.md`](PROJECT_SPEC.md): source of truth for product scope, API behavior, dependencies, and architecture decisions.
 - [`PROJECT_INTENT.md`](PROJECT_INTENT.md): short orientation; useful for product tradeoffs, not implementation details.

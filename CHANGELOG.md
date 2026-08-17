@@ -7,6 +7,19 @@ Security sections per release.
 
 ## [Unreleased]
 
+### Added
+- Native Android client built with Kotlin and Jetpack Compose, with feature
+  parity for streaming chat, sessions/projects, model/profile/reasoning
+  selection, editable scheduled tasks, skills, workspace files, memory,
+  insights, settings, and offline cache.
+- Adaptive phone, tablet, foldable, and Samsung Galaxy Trifold layouts:
+  compact cover-screen navigation, two-pane tablet/fold layouts, and
+  hinge-aligned three-pane sessions/transcript/composer and file-browser
+  surfaces.
+- Native file/image attachment picker, camera capture, voice dictation, slash
+  command autocomplete, approval/clarification prompts, stop/steer, and SSE
+  stream recovery on Android.
+
 ## [1.5.0] - TBA
 
 ### Added

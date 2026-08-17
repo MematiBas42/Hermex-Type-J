@@ -1,0 +1,838 @@
+package io.github.jcartu.hermex.net
+
+import io.github.jcartu.hermex.core.prefs.ServerConfig
+import io.github.jcartu.hermex.model.ApprovalChoice
+import io.github.jcartu.hermex.model.ApprovalPendingResponse
+import io.github.jcartu.hermex.model.ApprovalRespondResponse
+import io.github.jcartu.hermex.model.AuthStatusResponse
+import io.github.jcartu.hermex.model.BackgroundStartResponse
+import io.github.jcartu.hermex.model.BackgroundStatusResponse
+import io.github.jcartu.hermex.model.BtwStartResponse
+import io.github.jcartu.hermex.model.ChatCancelResponse
+import io.github.jcartu.hermex.model.ChatStartResponse
+import io.github.jcartu.hermex.model.ChatStreamStatusResponse
+import io.github.jcartu.hermex.model.ChatSteerResponse
+import io.github.jcartu.hermex.model.ClarificationPendingResponse
+import io.github.jcartu.hermex.model.ClarificationRespondResponse
+import io.github.jcartu.hermex.model.CommandsResponse
+import io.github.jcartu.hermex.model.CronJobsResponse
+import io.github.jcartu.hermex.model.CronDeliveryOptionsResponse
+import io.github.jcartu.hermex.model.CronMutationResponse
+import io.github.jcartu.hermex.model.CronOutputResponse
+import io.github.jcartu.hermex.model.CronStatusResponse
+import io.github.jcartu.hermex.model.DefaultModelResponse
+import io.github.jcartu.hermex.model.DirectoryListResponse
+import io.github.jcartu.hermex.model.FileResponse
+import io.github.jcartu.hermex.model.HealthResponse
+import io.github.jcartu.hermex.model.LoginResponse
+import io.github.jcartu.hermex.model.GoalSubmissionResponse
+import io.github.jcartu.hermex.model.MemoryResponse
+import io.github.jcartu.hermex.model.ModelsResponse
+import io.github.jcartu.hermex.model.ModelsLiveResponse
+import io.github.jcartu.hermex.model.SessionYoloResponse
+import io.github.jcartu.hermex.model.PersonalitiesResponse
+import io.github.jcartu.hermex.model.PersonalitySetResponse
+import io.github.jcartu.hermex.model.ProfileSwitchResponse
+import io.github.jcartu.hermex.model.ProfilesResponse
+import io.github.jcartu.hermex.model.ProjectMutationResponse
+import io.github.jcartu.hermex.model.ProjectsResponse
+import io.github.jcartu.hermex.model.ProvidersResponse
+import io.github.jcartu.hermex.model.ReasoningStatusResponse
+import io.github.jcartu.hermex.model.SessionBranchResponse
+import io.github.jcartu.hermex.model.SessionCompressResponse
+import io.github.jcartu.hermex.model.SessionMutationResponse
+import io.github.jcartu.hermex.model.SessionResponse
+import io.github.jcartu.hermex.model.SessionSearchResponse
+import io.github.jcartu.hermex.model.SessionRetryResponse
+import io.github.jcartu.hermex.model.SessionUndoResponse
+import io.github.jcartu.hermex.model.ToggleSkillRequest
+import io.github.jcartu.hermex.model.ToggleSkillResponse
+import io.github.jcartu.hermex.model.SessionStatusResponse
+import io.github.jcartu.hermex.model.SessionsResponse
+import io.github.jcartu.hermex.model.SessionExportFile
+import io.github.jcartu.hermex.model.SessionExportFormat
+import io.github.jcartu.hermex.model.SettingsResponse
+import io.github.jcartu.hermex.model.SkillDetailResponse
+import io.github.jcartu.hermex.model.SkillsResponse
+import io.github.jcartu.hermex.model.UploadResponse
+import io.github.jcartu.hermex.model.WorkspaceSuggestionsResponse
+import io.github.jcartu.hermex.model.WorkspacesResponse
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.math.max
+
+/**
+ * Port of `Networking/APIClient.swift` and its in-scope extensions
+ * (`+Sessions`, `+Projects`, `+Chat`, `+Cron`, `+Skills`, `+Memory`,
+ * `+ServerPanels`, `+Workspace`, `+Upload`, `+SessionExport`).
+ *
+ * Wire contract, mirrored from Swift:
+ * - Request bodies encode with snake_case keys and omit null fields
+ *   (Swift `convertToSnakeCase` + `encodeIfPresent`; here `@SerialName`
+ *   + `explicitNulls = false` on the shared [json]).
+ * - HTTP 401 maps to [ApiError.Unauthorized]; any other non-2xx maps to
+ *   [ApiError.Http] carrying the raw body; transport failures map to
+ *   [ApiError.Network]; undecodable 2xx bodies map to [ApiError.Decoding].
+ * - `Origin`/`Referer` are NEVER set — the upstream CSRF check treats
+ *   requests without them as non-browser clients (PROJECT_SPEC.md §6.1).
+ *
+ * Auth is cookie-based via the shared cookie jar on [httpClient]. The base
+ * URL is read from [configProvider] per request so a server switch applies
+ * without rebuilding the client.
+ */
+class HermesApi(
+    httpClient: OkHttpClient,
+    private val json: Json,
+    private val configProvider: suspend () -> ServerConfig,
+    private val customHeaderProvider: () -> List<CustomHeader> = { CustomHeaderStore.shared.snapshot() },
+) {
+    /**
+     * Last successfully resolved base URL, read by the redirect guard — the
+     * network interceptor runs mid-request, after [resolveBaseUrl] stored it.
+     */
+    @Volatile
+    private var lastBaseUrl: HttpUrl? = null
+
+    /**
+     * The caller's client plus the cross-origin redirect guard (#277): when the
+     * server redirects a same-origin request off-origin, the user's custom
+     * headers (which may be secrets) are stripped from the follow-up hop.
+     */
+    private val client: OkHttpClient = httpClient.newBuilder()
+        .addNetworkInterceptor(
+            CrossOriginHeaderStripper(
+                baseUrlProvider = { lastBaseUrl },
+                customHeaderProvider = customHeaderProvider,
+            ),
+        )
+        .build()
+
+    // MARK: Auth (APIClient.swift)
+
+    suspend fun health(): HealthResponse = get(Endpoint.Health)
+
+    suspend fun authStatus(): AuthStatusResponse = get(Endpoint.AuthStatus)
+
+    suspend fun login(password: String): LoginResponse =
+        post(Endpoint.Login, LoginRequest(password))
+
+    suspend fun logout(): LoginResponse = post(Endpoint.Logout, EmptyBody())
+
+    // MARK: Sessions (APIClient+Sessions.swift)
+
+    /**
+     * Fetches the session list. [includeArchived] opts in to archived rows
+     * (merged with the visible ones; each row carries an `archived` flag) and
+     * [archivedLimit] optionally caps how many archived rows the server
+     * appends (issue #17). Defaults keep the request byte-identical to the
+     * plain list fetch.
+     */
+    suspend fun sessions(includeArchived: Boolean = false, archivedLimit: Int? = null): SessionsResponse =
+        get(Endpoint.Sessions(includeArchived, archivedLimit))
+
+    suspend fun searchSessions(query: String, content: Boolean = true, depth: Int = 5): SessionSearchResponse =
+        get(Endpoint.SessionsSearch(query, content, depth))
+
+    suspend fun session(
+        id: String,
+        includeMessages: Boolean = true,
+        messageLimit: Int? = 50,
+        messageBefore: Int? = null,
+        expandRenderable: Boolean = false,
+    ): SessionResponse =
+        get(Endpoint.Session(id, includeMessages, messageLimit, messageBefore, expandRenderable))
+
+    suspend fun sessionStatus(id: String): SessionStatusResponse =
+        get(Endpoint.SessionStatus(id))
+
+    suspend fun createSession(
+        workspace: String?,
+        model: String?,
+        modelProvider: String?,
+        profile: String?,
+    ): SessionResponse =
+        post(Endpoint.NewSession, NewSessionRequest(workspace, model, modelProvider, profile))
+
+    suspend fun renameSession(id: String, title: String): SessionMutationResponse =
+        post(Endpoint.RenameSession, RenameSessionRequest(id, title))
+
+    suspend fun deleteSession(id: String): SessionMutationResponse =
+        post(Endpoint.DeleteSession, SessionIdRequest(id))
+
+    suspend fun pinSession(id: String, pinned: Boolean): SessionMutationResponse =
+        post(Endpoint.PinSession, PinSessionRequest(id, pinned))
+
+    suspend fun archiveSession(id: String, archived: Boolean): SessionMutationResponse =
+        post(Endpoint.ArchiveSession, ArchiveSessionRequest(id, archived))
+
+    suspend fun branchSession(id: String, keepCount: Int? = null, title: String? = null): SessionBranchResponse =
+        post(Endpoint.BranchSession, BranchSessionRequest(id, keepCount, title))
+
+    suspend fun truncateSession(id: String, keepCount: Int): SessionResponse =
+        post(Endpoint.TruncateSession, TruncateSessionRequest(id, keepCount))
+
+    suspend fun compressSession(id: String, focusTopic: String? = null): SessionCompressResponse =
+        post(Endpoint.CompressSession, CompressSessionRequest(id, focusTopic))
+
+    suspend fun undoSession(id: String): SessionUndoResponse =
+        post(Endpoint.UndoSession, SessionIdRequest(id))
+
+    suspend fun retrySession(id: String): SessionRetryResponse =
+        post(Endpoint.RetrySession, SessionIdRequest(id))
+
+    suspend fun updateSession(
+        id: String,
+        workspace: String?,
+        model: String?,
+        modelProvider: String?,
+    ): SessionResponse = post(
+        Endpoint.UpdateSession,
+        UpdateSessionRequest(
+            sessionId = id,
+            workspace = workspace,
+            model = model,
+            modelProvider = modelProvider,
+        ),
+    )
+
+    suspend fun moveSession(id: String, projectId: String?): SessionMutationResponse =
+        post(Endpoint.MoveSession, MoveSessionRequest(id, projectId))
+
+    suspend fun sessionYolo(sessionId: String): SessionYoloResponse =
+        get(Endpoint.SessionYolo(sessionId))
+
+    suspend fun setSessionYolo(sessionId: String, enabled: Boolean): SessionYoloResponse =
+        post(Endpoint.SessionYolo(sessionId = null), SessionYoloRequest(sessionId, enabled))
+
+    /**
+     * Downloads a session transcript via `GET /api/session/export`
+     * (`session_id` + `format` query params). The response is a file download
+     * (`text/html` or `application/json`), not a JSON envelope, so this
+     * bypasses the decoding helpers like the Swift client does.
+     *
+     * The filename comes from the server's `Content-Disposition` header
+     * (upstream sends `attachment; filename="hermes-<sid>.<ext>"`); if that
+     * header is missing or unparsable, it falls back to a sanitized
+     * `<title-or-id>.<ext>`. Errors reuse the standard mapping: 401 →
+     * [ApiError.Unauthorized], other non-2xx (400 missing param, 404 unknown/
+     * foreign-profile session) → [ApiError.Http] carrying the error body.
+     */
+    suspend fun exportSession(
+        id: String,
+        format: SessionExportFormat,
+        fallbackTitle: String? = null,
+    ): SessionExportFile {
+        val builder = Request.Builder()
+            .url(Endpoint.ExportSession(id, format).url(resolveBaseUrl()))
+            .get()
+        customHeaderProvider().applyTo(builder)
+        // The 2xx response is a file download (text/html or application/json),
+        // so don't claim we only accept JSON.
+        builder.header("Accept", "*/*")
+
+        execute(builder.build()).use { response ->
+            val bytes = try {
+                response.body?.bytes() ?: ByteArray(0)
+            } catch (error: IOException) {
+                throw ApiError.Network(error)
+            }
+
+            if (response.code == 401) throw ApiError.Unauthorized
+            if (response.code !in 200..299) {
+                throw ApiError.Http(response.code, bytes.toString(Charsets.UTF_8))
+            }
+
+            return SessionExportFile(
+                data = bytes,
+                filename = SessionExportFile.filename(
+                    contentDisposition = response.header("Content-Disposition"),
+                    fallbackTitle = fallbackTitle,
+                    sessionId = id,
+                    format = format,
+                ),
+            )
+        }
+    }
+
+    // MARK: Projects (APIClient+Projects.swift)
+
+    suspend fun projects(): ProjectsResponse = get(Endpoint.Projects)
+
+    suspend fun createProject(name: String, color: String?): ProjectMutationResponse =
+        post(Endpoint.CreateProject, CreateProjectRequest(name, color))
+
+    suspend fun renameProject(id: String, name: String, color: String?): ProjectMutationResponse =
+        post(Endpoint.RenameProject, RenameProjectRequest(id, name, color))
+
+    suspend fun deleteProject(id: String): ProjectMutationResponse =
+        post(Endpoint.DeleteProject, ProjectIdRequest(id))
+
+    // MARK: Chat (APIClient+Chat.swift)
+
+    suspend fun startChat(
+        sessionId: String,
+        message: String,
+        workspace: String?,
+        model: String?,
+        modelProvider: String? = null,
+        profile: String? = null,
+        explicitModelPick: Boolean = false,
+        attachments: List<JsonElement>? = null,
+    ): ChatStartResponse = post(
+        Endpoint.ChatStart,
+        ChatStartRequest(
+            sessionId = sessionId,
+            message = message,
+            workspace = workspace,
+            model = model,
+            modelProvider = modelProvider,
+            profile = profile,
+            explicitModelPick = if (explicitModelPick) true else null,
+            attachments = attachments,
+        ),
+    )
+
+    /**
+     * URL for the chat SSE stream. With [replayAfterSeq] the server replays
+     * buffered events after that sequence number before going live
+     * (`replay=1&after_seq=N`), so a reconnect never re-sends the user message.
+     */
+    suspend fun chatStreamUrl(streamId: String, replayAfterSeq: Int? = null): HttpUrl {
+        val url = Endpoint.ChatStream(streamId).url(resolveBaseUrl())
+        if (replayAfterSeq == null) return url
+        return url.newBuilder()
+            .addQueryParameter("replay", "1")
+            .addQueryParameter("after_seq", "${max(0, replayAfterSeq)}")
+            .build()
+    }
+
+    suspend fun cancelChat(streamId: String): ChatCancelResponse =
+        get(Endpoint.ChatCancel(streamId))
+
+    suspend fun chatStreamStatus(streamId: String): ChatStreamStatusResponse =
+        get(Endpoint.ChatStreamStatus(streamId))
+
+    /**
+     * Steers the running turn. The server either injects the steer text into
+     * the active stream (`accepted: true`) or reports how it fell back
+     * (`fallback`, e.g. queued as a follow-up message).
+     */
+    suspend fun steerChat(sessionId: String, text: String): ChatSteerResponse =
+        post(Endpoint.ChatSteer, ChatSteerRequest(sessionId, text))
+
+    suspend fun approvalPending(sessionId: String): ApprovalPendingResponse =
+        get(Endpoint.ApprovalPending(sessionId))
+
+    suspend fun respondApproval(
+        sessionId: String,
+        choice: ApprovalChoice,
+        approvalId: String?,
+    ): ApprovalRespondResponse =
+        post(Endpoint.ApprovalRespond, ApprovalRespondRequest(sessionId, choice, approvalId))
+
+    suspend fun clarifyPending(sessionId: String): ClarificationPendingResponse =
+        get(Endpoint.ClarifyPending(sessionId))
+
+    suspend fun respondClarification(
+        sessionId: String,
+        response: String,
+        clarifyId: String?,
+    ): ClarificationRespondResponse =
+        post(Endpoint.ClarifyRespond, ClarificationRespondRequest(sessionId, response, clarifyId))
+
+    suspend fun startBtw(sessionId: String, question: String): BtwStartResponse =
+        post(Endpoint.Btw, BtwRequest(sessionId, question))
+
+    suspend fun submitGoal(
+        sessionId: String,
+        args: String,
+        workspace: String?,
+        model: String?,
+        modelProvider: String?,
+        profile: String?,
+    ): GoalSubmissionResponse = post(
+        Endpoint.SubmitGoal,
+        GoalSubmissionRequest(
+            sessionId = sessionId,
+            args = args,
+            workspace = workspace,
+            model = model,
+            modelProvider = modelProvider,
+            profile = profile,
+        ),
+    )
+
+    suspend fun startBackground(sessionId: String, prompt: String): BackgroundStartResponse =
+        post(Endpoint.Background, BackgroundRequest(sessionId, prompt))
+
+    suspend fun backgroundStatus(sessionId: String): BackgroundStatusResponse =
+        get(Endpoint.BackgroundStatus(sessionId))
+
+    // MARK: Crons (APIClient+Cron.swift)
+
+    suspend fun crons(): CronJobsResponse = get(Endpoint.Crons)
+
+    suspend fun createCron(
+        prompt: String,
+        schedule: String,
+        name: String?,
+        deliver: String?,
+        skills: List<String>,
+        model: String?,
+        provider: String?,
+        profile: String?,
+        toastNotifications: Boolean,
+    ): CronMutationResponse = post(
+        Endpoint.CronCreate,
+        CronCreateRequest(
+            prompt = prompt,
+            schedule = schedule,
+            name = name,
+            deliver = deliver,
+            skills = skills,
+            model = model,
+            provider = provider,
+            profile = profile,
+            toastNotifications = toastNotifications,
+        ),
+    )
+
+    suspend fun updateCron(
+        jobId: String,
+        prompt: String?,
+        schedule: String?,
+        name: String?,
+        deliver: String?,
+        skills: List<String>?,
+        model: String?,
+        provider: String?,
+        profile: String?,
+        toastNotifications: Boolean?,
+    ): CronMutationResponse = post(
+        Endpoint.CronUpdate,
+        CronUpdateRequest(
+            jobId = jobId,
+            prompt = prompt,
+            schedule = schedule,
+            name = name,
+            deliver = deliver,
+            skills = skills,
+            model = model,
+            provider = provider,
+            profile = profile,
+            toastNotifications = toastNotifications,
+        ),
+    )
+
+    suspend fun deleteCron(jobId: String): CronMutationResponse =
+        post(Endpoint.CronDelete, CronJobIdRequest(jobId, reason = null))
+
+    suspend fun runCron(jobId: String): CronMutationResponse =
+        post(Endpoint.CronRun, CronJobIdRequest(jobId, reason = null))
+
+    suspend fun pauseCron(jobId: String, reason: String? = null): CronMutationResponse =
+        post(Endpoint.CronPause, CronJobIdRequest(jobId, reason))
+
+    suspend fun resumeCron(jobId: String): CronMutationResponse =
+        post(Endpoint.CronResume, CronJobIdRequest(jobId, reason = null))
+
+    suspend fun cronDeliveryOptions(): CronDeliveryOptionsResponse =
+        get(Endpoint.CronDeliveryOptions)
+
+    suspend fun cronStatus(jobId: String? = null): CronStatusResponse =
+        get(Endpoint.CronStatus(jobId))
+
+    suspend fun cronOutput(jobId: String, limit: Int? = 5): CronOutputResponse =
+        get(Endpoint.CronOutput(jobId, limit))
+
+    // MARK: Skills (APIClient+Skills.swift)
+
+    suspend fun skills(): SkillsResponse = get(Endpoint.Skills)
+
+    suspend fun skillContent(name: String, file: String? = null): SkillDetailResponse =
+        get(Endpoint.SkillContent(name, file))
+
+    suspend fun toggleSkill(name: String, enabled: Boolean): ToggleSkillResponse =
+        post(Endpoint.ToggleSkill, ToggleSkillRequest(name, enabled))
+
+    // MARK: Memory (APIClient+Memory.swift)
+
+    suspend fun memory(): MemoryResponse = get(Endpoint.Memory)
+
+    // MARK: Server panels (APIClient+ServerPanels.swift)
+
+    suspend fun models(): ModelsResponse = get(Endpoint.Models)
+
+    /**
+     * Live (uncached) model list for the active provider. The server resolves
+     * the provider itself when no `provider` param is sent and echoes it back,
+     * so callers can match the result against the cached catalog's groups.
+     */
+    suspend fun modelsLive(): ModelsLiveResponse = get(Endpoint.ModelsLive)
+
+    suspend fun commands(): CommandsResponse = get(Endpoint.Commands)
+
+    suspend fun saveDefaultModel(model: String): DefaultModelResponse =
+        post(Endpoint.DefaultModel, DefaultModelRequest(model))
+
+    /**
+     * Reasoning status for a specific model/provider (`GET /api/reasoning`).
+     * Passing the session's current model + provider makes `supported_efforts`
+     * model-accurate (mirrors the upstream WebUI composer chip, issue #18);
+     * with no params the server resolves the config default model instead.
+     */
+    suspend fun reasoning(model: String? = null, provider: String? = null): ReasoningStatusResponse =
+        get(Endpoint.Reasoning(model, provider))
+
+    suspend fun saveReasoningEffort(effort: String): ReasoningStatusResponse =
+        post(Endpoint.Reasoning(), ReasoningEffortRequest(effort))
+
+    suspend fun saveReasoningDisplay(display: String): ReasoningStatusResponse =
+        post(Endpoint.Reasoning(), ReasoningDisplayRequest(display))
+
+    suspend fun personalities(): PersonalitiesResponse = get(Endpoint.Personalities)
+
+    suspend fun setPersonality(sessionId: String, name: String): PersonalitySetResponse =
+        post(Endpoint.SetPersonality, PersonalitySetRequest(sessionId, name))
+
+    suspend fun profiles(): ProfilesResponse = get(Endpoint.Profiles)
+
+    suspend fun switchProfile(name: String): ProfileSwitchResponse =
+        post(Endpoint.SwitchProfile, ProfileSwitchRequest(name))
+
+    suspend fun providers(): ProvidersResponse = get(Endpoint.Providers)
+
+    suspend fun settings(): SettingsResponse = get(Endpoint.Settings)
+
+    // MARK: Workspace + files (APIClient+Workspace.swift)
+
+    suspend fun workspaces(): WorkspacesResponse = get(Endpoint.Workspaces)
+
+    suspend fun workspaceSuggestions(prefix: String): WorkspaceSuggestionsResponse =
+        get(Endpoint.WorkspaceSuggestions(prefix))
+
+    suspend fun directoryList(sessionId: String, path: String? = null): DirectoryListResponse =
+        get(Endpoint.DirectoryList(sessionId, path))
+
+    suspend fun file(sessionId: String, path: String): FileResponse =
+        get(Endpoint.File(sessionId, path))
+
+    /**
+     * Authenticated URL for `GET /api/file/raw` — hand it to an image loader
+     * (Coil) that shares [client]'s cookie jar rather than buffering bytes here.
+     */
+    suspend fun rawFileUrl(sessionId: String, path: String): HttpUrl =
+        Endpoint.RawFile(sessionId, path).url(resolveBaseUrl())
+
+    // MARK: Upload (APIClient+Upload.swift + MultipartFormData.swift)
+
+    suspend fun uploadFile(sessionId: String, data: ByteArray, filename: String): UploadResponse {
+        val baseUrl = resolveBaseUrl()
+        val form = MultipartFormData()
+        form.appendTextField("session_id", sessionId)
+        form.appendFileField("file", filename, data)
+        val body = form.build().toRequestBody(form.contentType.toMediaType())
+
+        // Custom headers first, then built-ins so the multipart Content-Type
+        // always wins. Without them the upload is rejected by auth reverse
+        // proxies that every other request path already passes (#61).
+        val builder = Request.Builder()
+            .url(Endpoint.Upload.url(baseUrl))
+            .post(body)
+        customHeaderProvider().applyTo(builder)
+
+        val response = execute(builder.build())
+        return decode(readSuccessBody(response))
+    }
+
+    // MARK: Plumbing
+
+    private suspend inline fun <reified R> get(endpoint: Endpoint): R =
+        decode(sendForBody(endpoint, method = "GET", body = null))
+
+    private suspend inline fun <reified R, reified B> post(endpoint: Endpoint, body: B): R {
+        val encoded = json.encodeToString(body)
+        return decode(sendForBody(endpoint, method = "POST", body = encoded.toRequestBody(JSON_MEDIA_TYPE)))
+    }
+
+    private inline fun <reified R> decode(body: String): R = try {
+        json.decodeFromString<R>(body)
+    } catch (error: IllegalArgumentException) {
+        throw ApiError.Decoding(error)
+    }
+
+    private suspend fun sendForBody(endpoint: Endpoint, method: String, body: RequestBody?): String {
+        // Custom headers first, then built-ins so Accept always wins.
+        val builder = Request.Builder()
+            .url(endpoint.url(resolveBaseUrl()))
+            .method(method, body)
+        customHeaderProvider().applyTo(builder)
+        builder.header("Accept", "application/json")
+        return readSuccessBody(execute(builder.build()))
+    }
+
+    private suspend fun execute(request: Request): Response =
+        client.newCall(request).await()
+
+    /** 401 → [ApiError.Unauthorized]; other non-2xx → [ApiError.Http] with the raw body. */
+    private fun readSuccessBody(response: Response): String = response.use {
+        val bodyText = try {
+            it.body?.string().orEmpty()
+        } catch (error: IOException) {
+            throw ApiError.Network(error)
+        }
+
+        if (it.code == 401) throw ApiError.Unauthorized
+        if (it.code !in 200..299) throw ApiError.Http(it.code, bodyText)
+        bodyText
+    }
+
+    /**
+     * Parses the stored base URL fresh on every request so live config edits
+     * apply immediately; an unparseable or blank URL fails the call with
+     * [ApiError.InvalidServerUrl] before anything touches the network.
+     */
+    private suspend fun resolveBaseUrl(): HttpUrl {
+        val raw = configProvider().baseUrl.trim()
+        val url = raw.takeIf { it.isNotEmpty() }?.toHttpUrlOrNull() ?: throw ApiError.InvalidServerUrl
+        lastBaseUrl = url
+        return url
+    }
+
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isCancelled) return
+                continuation.resumeWithException(ApiError.Network(e))
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                continuation.resume(response)
+            }
+        })
+        continuation.invokeOnCancellation { cancel() }
+    }
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json".toMediaType()
+    }
+}
+
+// MARK: Request bodies (wire keys are snake_case, mirroring Swift convertToSnakeCase)
+
+@Serializable
+private data class LoginRequest(val password: String)
+
+@Serializable
+private class EmptyBody
+
+@Serializable
+private data class NewSessionRequest(
+    val workspace: String?,
+    val model: String?,
+    @SerialName("model_provider") val modelProvider: String?,
+    val profile: String?,
+)
+
+@Serializable
+private data class RenameSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    val title: String,
+)
+
+@Serializable
+private data class SessionIdRequest(
+    @SerialName("session_id") val sessionId: String,
+)
+
+@Serializable
+private data class PinSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    val pinned: Boolean,
+)
+
+@Serializable
+private data class ArchiveSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    val archived: Boolean,
+)
+
+@Serializable
+private data class BranchSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("keep_count") val keepCount: Int?,
+    val title: String?,
+)
+
+@Serializable
+private data class TruncateSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("keep_count") val keepCount: Int,
+)
+
+@Serializable
+private data class CompressSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("focus_topic") val focusTopic: String?,
+)
+
+@Serializable
+private data class CronCreateRequest(
+    val prompt: String,
+    val schedule: String,
+    val name: String?,
+    val deliver: String?,
+    val skills: List<String>,
+    val model: String?,
+    val provider: String?,
+    val profile: String?,
+    @SerialName("toast_notifications") val toastNotifications: Boolean,
+)
+
+@Serializable
+private data class CronUpdateRequest(
+    @SerialName("job_id") val jobId: String,
+    val prompt: String?,
+    val schedule: String?,
+    val name: String?,
+    val deliver: String?,
+    val skills: List<String>?,
+    val model: String?,
+    val provider: String?,
+    val profile: String?,
+    @SerialName("toast_notifications") val toastNotifications: Boolean?,
+)
+
+@Serializable
+private data class CronJobIdRequest(
+    @SerialName("job_id") val jobId: String,
+    val reason: String?,
+)
+
+@Serializable
+private data class MoveSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("project_id") val projectId: String?,
+)
+
+@Serializable
+private data class UpdateSessionRequest(
+    @SerialName("session_id") val sessionId: String,
+    val workspace: String?,
+    val model: String?,
+    @SerialName("model_provider") val modelProvider: String?,
+)
+
+@Serializable
+private data class SessionYoloRequest(
+    @SerialName("session_id") val sessionId: String,
+    val enabled: Boolean,
+)
+
+@Serializable
+private data class CreateProjectRequest(
+    val name: String,
+    val color: String?,
+)
+
+@Serializable
+private data class RenameProjectRequest(
+    @SerialName("project_id") val projectId: String,
+    val name: String,
+    val color: String?,
+)
+
+@Serializable
+private data class ProjectIdRequest(
+    @SerialName("project_id") val projectId: String,
+)
+
+@Serializable
+private data class ChatStartRequest(
+    @SerialName("session_id") val sessionId: String,
+    val message: String,
+    val workspace: String?,
+    val model: String?,
+    @SerialName("model_provider") val modelProvider: String?,
+    val profile: String?,
+    @SerialName("explicit_model_pick") val explicitModelPick: Boolean?,
+    val attachments: List<JsonElement>?,
+)
+
+@Serializable
+private data class ChatSteerRequest(
+    @SerialName("session_id") val sessionId: String,
+    val text: String,
+)
+
+@Serializable
+private data class ApprovalRespondRequest(
+    @SerialName("session_id") val sessionId: String,
+    val choice: ApprovalChoice,
+    @SerialName("approval_id") val approvalId: String?,
+)
+
+@Serializable
+private data class ClarificationRespondRequest(
+    @SerialName("session_id") val sessionId: String,
+    val response: String,
+    @SerialName("clarify_id") val clarifyId: String?,
+)
+
+@Serializable
+private data class BtwRequest(
+    @SerialName("session_id") val sessionId: String,
+    val question: String,
+)
+
+@Serializable
+private data class BackgroundRequest(
+    @SerialName("session_id") val sessionId: String,
+    val prompt: String,
+)
+
+@Serializable
+private data class GoalSubmissionRequest(
+    @SerialName("session_id") val sessionId: String,
+    val args: String,
+    val workspace: String?,
+    val model: String?,
+    @SerialName("model_provider") val modelProvider: String?,
+    val profile: String?,
+)
+
+@Serializable
+private data class DefaultModelRequest(val model: String)
+
+@Serializable
+private data class ReasoningEffortRequest(val effort: String)
+
+@Serializable
+private data class ReasoningDisplayRequest(val display: String)
+
+@Serializable
+private data class PersonalitySetRequest(
+    @SerialName("session_id") val sessionId: String,
+    val name: String,
+)
+
+@Serializable
+private data class ProfileSwitchRequest(val name: String)
