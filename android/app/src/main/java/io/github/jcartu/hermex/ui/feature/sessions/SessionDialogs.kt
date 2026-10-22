@@ -72,6 +72,7 @@ fun RenameSessionDialog(
     isSaving: Boolean,
     onCancel: () -> Unit,
     onSave: (String) -> Unit,
+    errorMessage: String? = null,
 ) {
     var title by rememberSaveable(initialTitle) { mutableStateOf(initialTitle) }
     val trimmedTitle = title.trim()
@@ -86,6 +87,8 @@ fun RenameSessionDialog(
                 label = { Text("Session title") },
                 singleLine = true,
                 enabled = !isSaving,
+                isError = errorMessage != null,
+                supportingText = errorMessage?.let { message -> { Text(message) } },
                 modifier = Modifier.fillMaxWidth(),
             )
         },
@@ -183,15 +186,12 @@ fun ConfirmDeleteSessionDialog(onCancel: () -> Unit, onDelete: () -> Unit) {
 
 /** Port of the "Delete Project?" alert from `SessionListActionConfirmations.swift`. */
 @Composable
-fun ConfirmDeleteProjectDialog(onCancel: () -> Unit, onDelete: () -> Unit) {
+fun ConfirmDeleteProjectDialog(onCancel: () -> Unit, onDelete: () -> Unit, message: String = "Sessions in this project will be moved to No project. The sessions themselves will not be deleted.") {
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("Delete Project?") },
         text = {
-            Text(
-                "Sessions in this project will be moved to No project. " +
-                    "The sessions themselves will not be deleted.",
-            )
+            Text(message)
         },
         confirmButton = {
             TextButton(onClick = onDelete) {
@@ -223,6 +223,9 @@ fun ProjectFormDialog(
     saveLabel: String,
     onCancel: () -> Unit,
     onSave: (name: String, colorHex: String) -> Unit,
+    errorMessage: String? = null,
+    extraFields: @Composable () -> Unit = {},
+    canSave: Boolean = true,
 ) {
     var name by rememberSaveable(initialName) { mutableStateOf(initialName) }
     var colorHex by rememberSaveable(initialColorHex) { mutableStateOf(initialColorHex) }
@@ -241,6 +244,8 @@ fun ProjectFormDialog(
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                extraFields()
+                errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ProjectCreationPalette.approvedColors.forEach { option ->
@@ -278,7 +283,7 @@ fun ProjectFormDialog(
         confirmButton = {
             TextButton(
                 onClick = { onSave(trimmedName, colorHex) },
-                enabled = trimmedName.isNotEmpty() && !isSaving,
+                enabled = trimmedName.isNotEmpty() && !isSaving && canSave,
             ) {
                 if (isSaving) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -306,6 +311,7 @@ fun MoveToProjectSheet(
     onCreateProject: () -> Unit,
     onRefreshProjects: () -> Unit,
     onDismiss: () -> Unit,
+    offersNoProject: Boolean = true,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(bottom = 24.dp)) {
@@ -315,6 +321,7 @@ fun MoveToProjectSheet(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
 
+            if (offersNoProject) {
             MoveSheetRow(
                 label = "No project",
                 icon = {
@@ -327,6 +334,7 @@ fun MoveToProjectSheet(
                 enabled = !isMovingSession && session.projectId != null,
                 onClick = { onMove(null) },
             )
+            }
 
             if (projects.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))

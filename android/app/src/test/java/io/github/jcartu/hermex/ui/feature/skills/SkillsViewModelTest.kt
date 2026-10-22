@@ -4,7 +4,6 @@ import io.github.jcartu.hermex.model.SkillSummary
 import io.github.jcartu.hermex.model.SkillsResponse
 import io.github.jcartu.hermex.model.ToggleSkillResponse
 import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -47,9 +46,9 @@ class SkillsViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun makeApi(skills: List<SkillSummary>): HermesApi =
-        mockk<HermesApi>().also { api ->
-            coEvery { api.skills() } returns SkillsResponse(skills = skills)
+    private fun makeClient(skills: List<SkillSummary>): SkillsDataClient =
+        mockk<SkillsDataClient>().also { client ->
+            coEvery { client.skills() } returns skills
         }
 
     @Test
@@ -61,7 +60,7 @@ class SkillsViewModelTest {
             SkillSummary(name = "orphan", category = "  "),
             SkillSummary(name = null, category = null),
         )
-        val viewModel = SkillsViewModel(makeApi(skills))
+        val viewModel = SkillsViewModel(makeClient(skills))
         advanceUntilIdle()
 
         val groups = viewModel.uiState.value.groups
@@ -87,7 +86,7 @@ class SkillsViewModelTest {
             description = "Editing helper",
             tags = listOf("markdown", "style"),
         )
-        val viewModel = SkillsViewModel(makeApi(listOf(git, prose)))
+        val viewModel = SkillsViewModel(makeClient(listOf(git, prose)))
         advanceUntilIdle()
 
         viewModel.setSearchText("GIT")
@@ -111,10 +110,10 @@ class SkillsViewModelTest {
 
     @Test
     fun `load failure surfaces error message`() = runTest(dispatcher) {
-        val api = mockk<HermesApi>()
-        coEvery { api.skills() } throws ApiError.Http(500, null)
+        val client = mockk<SkillsDataClient>()
+        coEvery { client.skills() } throws ApiError.Http(500, null)
 
-        val viewModel = SkillsViewModel(api)
+        val viewModel = SkillsViewModel(client)
         advanceUntilIdle()
 
         assertNotNull(viewModel.uiState.value.errorMessage)
@@ -125,15 +124,15 @@ class SkillsViewModelTest {
     fun `toggle optimistically flips then reloads from the server`() = runTest(dispatcher) {
         val enabled = SkillSummary(name = "git", category = "Coding", disabled = false)
         val disabledFromServer = enabled.copy(disabled = true)
-        val api = mockk<HermesApi>()
-        coEvery { api.skills() } returnsMany listOf(
-            SkillsResponse(skills = listOf(enabled)),
-            SkillsResponse(skills = listOf(disabledFromServer)),
+        val client = mockk<SkillsDataClient>()
+        coEvery { client.skills() } returnsMany listOf(
+            listOf(enabled),
+            listOf(disabledFromServer),
         )
-        coEvery { api.toggleSkill("git", false) } returns
+        coEvery { client.toggleSkill("git", false) } returns
             ToggleSkillResponse(ok = true, name = "git", enabled = false)
 
-        val viewModel = SkillsViewModel(api)
+        val viewModel = SkillsViewModel(client)
         advanceUntilIdle()
         assertEquals(false, viewModel.uiState.value.skills.single().disabled)
 
@@ -145,18 +144,18 @@ class SkillsViewModelTest {
         advanceUntilIdle()
         assertEquals(true, viewModel.uiState.value.skills.single().disabled)
         assertTrue(viewModel.uiState.value.togglingSkillNames.isEmpty())
-        coVerify { api.toggleSkill("git", false) }
-        coVerify(exactly = 2) { api.skills() }
+        coVerify { client.toggleSkill("git", false) }
+        coVerify(exactly = 2) { client.skills() }
     }
 
     @Test
     fun `toggle failure rolls back and surfaces the error`() = runTest(dispatcher) {
         val enabled = SkillSummary(name = "git", category = "Coding", disabled = false)
-        val api = mockk<HermesApi>()
-        coEvery { api.skills() } returns SkillsResponse(skills = listOf(enabled))
-        coEvery { api.toggleSkill("git", false) } throws ApiError.Http(500, null)
+        val client = mockk<SkillsDataClient>()
+        coEvery { client.skills() } returns listOf(enabled)
+        coEvery { client.toggleSkill("git", false) } throws ApiError.Http(500, null)
 
-        val viewModel = SkillsViewModel(api)
+        val viewModel = SkillsViewModel(client)
         advanceUntilIdle()
 
         viewModel.setSkill(enabled, enabled = false)
@@ -171,14 +170,14 @@ class SkillsViewModelTest {
     @Test
     fun `toggle ignores skills without a usable name`() = runTest(dispatcher) {
         val nameless = SkillSummary(name = "  ", disabled = false)
-        val api = makeApi(listOf(nameless))
-        val viewModel = SkillsViewModel(api)
+        val client = makeClient(listOf(nameless))
+        val viewModel = SkillsViewModel(client)
         advanceUntilIdle()
 
         viewModel.setSkill(nameless, enabled = false)
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { api.toggleSkill(any(), any()) }
+        coVerify(exactly = 0) { client.toggleSkill(any(), any()) }
     }
 
     @Test
@@ -202,9 +201,9 @@ class SkillsViewModelTest {
         """.trimIndent()
         val response = json.decodeFromString<SkillsResponse>(fixture)
 
-        val api = mockk<HermesApi>()
-        coEvery { api.skills() } returns response
-        val viewModel = SkillsViewModel(api)
+        val client = mockk<SkillsDataClient>()
+        coEvery { client.skills() } returns response.skills.orEmpty()
+        val viewModel = SkillsViewModel(client)
         advanceUntilIdle()
 
         val skill = viewModel.uiState.value.skills.single()

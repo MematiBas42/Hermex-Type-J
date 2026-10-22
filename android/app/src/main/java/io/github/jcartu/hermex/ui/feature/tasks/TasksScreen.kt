@@ -77,7 +77,11 @@ private const val COMPACT_RECENT_RUN_COUNT = 3
  * detail; 3 panes → list | detail | run history.
  */
 @Composable
-fun TasksRoute(client: CronDataClient, modifier: Modifier = Modifier) {
+fun TasksRoute(
+    client: CronDataClient,
+    modifier: Modifier = Modifier,
+    newTaskProfile: String? = null,
+) {
     val tasksViewModel: TasksViewModel = viewModel(
         factory = viewModelFactory { initializer { TasksViewModel(client) } },
     )
@@ -185,7 +189,7 @@ fun TasksRoute(client: CronDataClient, modifier: Modifier = Modifier) {
     if (showCreateSheet) {
         CronJobEditorSheet(
             title = "New Task",
-            initialDraft = CronJobEditorDraft(),
+            initialDraft = CronJobEditorDraft(profile = newTaskProfile.orEmpty()),
             saveTitle = "Create",
             isSaving = state.isMutating,
             errorMessage = state.actionErrorMessage,

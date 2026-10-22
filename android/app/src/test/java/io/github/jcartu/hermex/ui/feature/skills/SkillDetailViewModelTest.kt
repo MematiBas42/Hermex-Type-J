@@ -54,7 +54,7 @@ class SkillDetailViewModelTest {
             linkedFiles = listOf("usage.md", "advanced.md"),
         )
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
 
         val state = viewModel.uiState.value
@@ -69,7 +69,7 @@ class SkillDetailViewModelTest {
         val api = mockk<HermesApi>()
         coEvery { api.skillContent("git") } throws ApiError.Http(500, null)
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
 
         assertNotNull(viewModel.uiState.value.errorMessage)
@@ -79,7 +79,7 @@ class SkillDetailViewModelTest {
     @Test
     fun `blank skill name never hits the network`() = runTest(dispatcher) {
         val api = mockk<HermesApi>()
-        val viewModel = SkillDetailViewModel(api, "")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "")
         advanceUntilIdle()
 
         assertEquals(SkillDetailUiState(), viewModel.uiState.value)
@@ -99,7 +99,7 @@ class SkillDetailViewModelTest {
             content = "## Usage details",
         )
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
 
         viewModel.openFile("usage.md")
@@ -119,7 +119,7 @@ class SkillDetailViewModelTest {
         coEvery { api.skillContent("git") } returns SkillDetailResponse(name = "git", content = "x")
         coEvery { api.skillContent("git", "gone.md") } throws ApiError.Http(404, null)
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
 
         viewModel.openFile("gone.md")
@@ -138,7 +138,7 @@ class SkillDetailViewModelTest {
         coEvery { api.skillContent("git", "usage.md") } returns
             SkillDetailResponse(name = "git", content = "y")
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
         viewModel.openFile("usage.md")
         advanceUntilIdle()
@@ -167,7 +167,7 @@ class SkillDetailViewModelTest {
         val api = mockk<HermesApi>()
         coEvery { api.skillContent("git") } returns response
 
-        val viewModel = SkillDetailViewModel(api, "git")
+        val viewModel = SkillDetailViewModel(WebuiSkillsDataClient(api), "git")
         advanceUntilIdle()
 
         assertEquals("# Git\nUse branches.", viewModel.uiState.value.content)

@@ -43,6 +43,10 @@ data class GitWorkspaceUiState(
     val isActing: Boolean = false,
     val errorMessage: String? = null,
     val actionMessage: String? = null,
+    /** Direct Hermes gates Fetch, Pull, and New branch on companion `/capabilities`. */
+    val supportsSync: Boolean = true,
+    /** Direct Hermes never offers stash-checkout. */
+    val isHermes: Boolean = false,
 ) {
     val selectedSession: SessionSummary? get() = sessions.firstOrNull { it.sessionId == selectedSessionId }
     val files: List<GitFile> get() = status?.trackedFiles.orEmpty()

@@ -357,7 +357,7 @@ class HermesSessionListViewModel(
                     val keyed = rows.mapNotNull { row ->
                         // Hosts that name a Profile let identical stored keys stay separate.
                         val matching = items.filter { it["session_key"].text == row.row.id && (it["profile"].text == null || it["profile"].text == row.profile) }
-                        val value = if (matching.size == items.count) states[row.row.id] else HermesSessionRowStates.from(matching)[row.row.id]
+                        val value = if (matching.size == items.size) states[row.row.id] else HermesSessionRowStates.from(matching)[row.row.id]
                         value?.let { row.key to if (it == HermesSessionRowState.INPUT) SessionRowAttentionState.INPUT else SessionRowAttentionState.WORKING }
                     }.toMap()
                     _state.update { it.copy(attentionStates = keyed) }

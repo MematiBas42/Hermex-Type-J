@@ -80,6 +80,7 @@ fun ChatComposer(
     hapticsEnabled: Boolean = true,
     attachmentCacheNamespace: String? = null,
     uploadAttachmentWithPreview: ((ByteArray, String, ByteArray?) -> Unit)? = null,
+    /** Direct Hermes supplies a Profile-bound host-STT importer; webui keeps [ChatComposerActions.importVoiceNote]. */
     importVoiceNote: ((ByteArray, String) -> Unit)? = null,
     loadMentionSuggestions: (suspend (String) -> List<ComposerMentionSuggestion>)? = null,
     mentionReferences: Map<String, ComposerMentionSuggestion> = emptyMap(),

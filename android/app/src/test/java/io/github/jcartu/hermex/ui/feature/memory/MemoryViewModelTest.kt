@@ -50,7 +50,7 @@ class MemoryViewModelTest {
             projectContextMtime = 400.0,
             projectContextShadowed = true,
         )
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
 
         viewModel.load()
 
@@ -71,7 +71,7 @@ class MemoryViewModelTest {
     @Test
     fun `missing sections render as empty content`() {
         coEvery { api.memory() } returns MemoryResponse()
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
 
         viewModel.load()
 
@@ -87,7 +87,7 @@ class MemoryViewModelTest {
     @Test
     fun `blank project context hides the section`() {
         coEvery { api.memory() } returns MemoryResponse(projectContext = "   \n")
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
 
         viewModel.load()
 
@@ -101,7 +101,7 @@ class MemoryViewModelTest {
             projectContextName = "  ",
             projectContextWorkspace = "/srv/app",
         )
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
 
         viewModel.load()
 
@@ -111,7 +111,7 @@ class MemoryViewModelTest {
     @Test
     fun `failure surfaces an error and keeps hasLoaded false`() {
         coEvery { api.memory() } throws ApiError.Unauthorized
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
 
         viewModel.load()
 
@@ -124,7 +124,7 @@ class MemoryViewModelTest {
     @Test
     fun `loadIfNeeded fetches once and refresh clears a stale error`() {
         coEvery { api.memory() } throws ApiError.Http(500, null)
-        val viewModel = MemoryViewModel(api)
+        val viewModel = MemoryViewModel(WebuiMemoryDataClient(api))
         viewModel.loadIfNeeded()
         assertEquals(ApiError.Http(500, null).message, viewModel.uiState.value.errorMessage)
 

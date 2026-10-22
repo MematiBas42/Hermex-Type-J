@@ -38,6 +38,7 @@ internal fun ComposerVoiceNoteButton(
     enabled: Boolean,
     isProcessing: Boolean,
     actions: ChatComposerActions,
+    importVoiceNote: ((ByteArray, String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -84,7 +85,7 @@ internal fun ComposerVoiceNoteButton(
                                     note.file.delete()
                                     return@launch
                                 }
-                            actions.importVoiceNote(bytes, note.filename)
+                            (importVoiceNote ?: actions::importVoiceNote)(bytes, note.filename)
                             note.file.delete()
                         }
                     }.onFailure { actions.setUploadAttachmentError(it.message ?: "Could not finish voice note.") }
