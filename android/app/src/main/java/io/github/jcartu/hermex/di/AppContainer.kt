@@ -168,6 +168,12 @@ class AppContainer(context: Context) {
                 }
             },
             scope = appScope,
+            botConnections = botConnectionStore,
+            hermesConnections = hermesConnections,
+            discardHermesData = { server, _ ->
+                cacheStore.clearCache(server)
+                cacheStore.chatDraftStore.discardDrafts(server)
+            },
         )
     }
 
@@ -191,7 +197,21 @@ class AppContainer(context: Context) {
      * connection keeps its own ephemeral cookie jar.
      */
     val hermesConnections: io.github.jcartu.hermex.net.hermes.HermesConnections by lazy {
-        io.github.jcartu.hermex.net.hermes.HermesConnections(httpClient = { okHttpClient })
+        io.github.jcartu.hermex.net.hermes.HermesConnections(httpClient = { okHttpClient }, store = botConnectionStore).also { connections ->
+            connections.onSignInRejected = { server, failure ->
+                // Transport callbacks run on HermesActor, not the UI dispatcher.
+                appScope.launch(Dispatchers.Main.immediate) { authManager.hermesSignInRejected(server, failure) }
+            }
+        }
+    }
+
+    /** Swift `bot_connection::<server id>` records; a synchronous encrypted commit point. */
+    val botConnectionStore: io.github.jcartu.hermex.core.prefs.BotConnectionRecordStore by lazy {
+        io.github.jcartu.hermex.core.prefs.BotConnectionRecordStore(
+            appContext.getSharedPreferences(io.github.jcartu.hermex.core.prefs.BotConnectionRecordStore.PREFERENCES_NAME, Context.MODE_PRIVATE),
+            cipher, json,
+            retire = { server, record -> hermesConnections.retire(server, record) },
+        )
     }
 
     val modelFavorites: io.github.jcartu.hermex.model.ModelFavoritesStore by lazy {
