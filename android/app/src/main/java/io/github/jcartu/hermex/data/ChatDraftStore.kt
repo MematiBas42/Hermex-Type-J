@@ -631,11 +631,12 @@ class ChatDraftStore(
         discardDrafts { it.serverId == serverId }
     }
 
-    /** Port of Swift's scoped Bot/Hermes purge: a replaced connection never deletes webui or another connection's drafts. */
-    suspend fun discardHermesDrafts(serverId: String, connectionID: String? = null) {
+    /** Port of Swift's `discardBotDrafts`: scope by server, optional connection, and optional deleted bot/Profile. */
+    suspend fun discardHermesDrafts(serverId: String, connectionID: String? = null, profile: String? = null) {
         loadIfNeeded()
         discardDrafts { it.serverId == serverId && it.hermesConnectionID != null &&
-            (connectionID == null || it.hermesConnectionID == connectionID) }
+            (connectionID == null || it.hermesConnectionID == connectionID) &&
+            (profile == null || it.hermesProfile == profile) }
     }
 
     /** Port of `setBotSubmissionUncertain`: callers flush before sending to the host. */

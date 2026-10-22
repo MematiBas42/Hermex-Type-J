@@ -99,14 +99,20 @@ class ChatDraftStoreTest {
             val new = ChatDraftKey.hermesSession("server", "connection", "", null)
             val bot = ChatDraftKey.bot("server", "connection", "")
             val other = ChatDraftKey.hermesSession("server", "other", "", "same")
+            val otherProfile = ChatDraftKey.bot("server", "connection", "different-bot")
             persistence.write(mapOf(webui to ChatDraft(text = "webui"), hermes to ChatDraft(text = "hermes", attachments = listOf(
                 ChatDraftAttachment("f", "owned.txt", "text/plain", 5, false, ownedFile))),
-                new to ChatDraft(text = "new"), bot to ChatDraft(botSubmissionUncertain = true), other to ChatDraft(text = "other")))
+                new to ChatDraft(text = "new"), bot to ChatDraft(botSubmissionUncertain = true), other to ChatDraft(text = "other"),
+                otherProfile to ChatDraft(text = "keep other bot")))
             val store = ChatDraftStore(persistence, files, backgroundScope, dispatcher)
             assertTrue(store.draft(bot)!!.botSubmissionUncertain)
             assertEquals("new", store.draft(new)?.text)
             assertFalse(bot.isNewChat)
             assertTrue(new.isNewChat)
+            store.discardHermesDrafts("server", "connection", profile = "")
+            store.flush()
+            assertEquals(setOf(webui, other, otherProfile), persistence.load().keys)
+            assertFalse(files.file(ownedFile).exists())
             store.discardHermesDrafts("server", "connection")
             store.flush()
             val remaining = persistence.load()

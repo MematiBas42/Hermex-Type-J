@@ -171,6 +171,8 @@ working and get fixes, and new features go to Hermes.
   session on tap. Approvals use a high-importance channel; stopped runs stay
   silent. The first accepted run claims the one-time permission offer, and
   Send Test Notification uses the production reply channel.
+- Android: deleting a bot can purge its Profile's Hermes drafts without
+  removing other bots, connections, or legacy webui drafts.
 
 [#713]: https://github.com/uzairansaruzi/hermex/issues/713
 [#1020]: https://github.com/uzairansaruzi/hermex/pull/1020
