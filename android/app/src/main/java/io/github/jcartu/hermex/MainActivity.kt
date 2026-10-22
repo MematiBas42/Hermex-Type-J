@@ -112,7 +112,12 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             container.sharedImports.ingest(intent)
             if (intent.action == Intent.ACTION_VIEW) {
-                container.deepLinks.submit(intent.data)
+                // A run-notification tap carries its destination in typed extras
+                // (authority) and as a grammar-valid data URI (fallback); both
+                // parse through the one deep-link grammar (#1190, #1192).
+                container.deepLinks.submit(
+                    io.github.jcartu.hermex.core.navigation.NotificationDeepLink.uriFrom(intent),
+                )
             }
         }
     }

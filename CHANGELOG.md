@@ -8,6 +8,21 @@ Security sections per release.
 ## [2.0.0] - 2026-08-17
 
 ### Added
+- Android direct-Hermes home now has retained Bots/Sessions sides and a floating
+  Profile/filter/new-chat bar, with hinge-aware list/chat layouts. Sessions use
+  host paging, read marks, live states, FTS snippets, folder projects and row
+  actions; Profile-scoped cached rows paint before the connection answers.
+- Android direct-Hermes connection flow: dashboard-first detection, password,
+  browser PKCE and open-dashboard sign-in, encrypted per-server connection
+  records and refresh-token rotation, host identity checks, and explicit
+  replacement of a saved webui server at the same address.
+- Hermes server Settings: editable sign-in and connection headers, public
+  host/gateway status, companion capability presence, and Update Hermes with
+  receipt-based restart recovery. Sign-out keeps the server and opens its own
+  locked-address sign-in form; removing a server also removes its local data.
+- The Android onboarding/connect flow follows the selected Tokyo Night or
+  Classic palette in both light and dark modes, including fields, overlays,
+  hero glow, feature icons and primary actions.
 - Renamed the Android fork to **Hermex-Type-J** (`jcartu/Hermex-Type-J`,
   package ID unchanged for in-place upgrades) and expanded it with:
 - Kanban boards: boards/columns/cards, card detail (comments, activity,

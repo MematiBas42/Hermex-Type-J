@@ -45,8 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.model.ServerAccount
-import io.github.jcartu.hermex.model.ServerKind
 import io.github.jcartu.hermex.core.navigation.AppDeepLink
+import io.github.jcartu.hermex.core.navigation.DeepLinkRouter
+import io.github.jcartu.hermex.core.navigation.LinkRoutingContext
+import io.github.jcartu.hermex.core.navigation.MovedSessionLookup
+import io.github.jcartu.hermex.core.share.ShareRouting
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.FirstPaneSplitRow
 import io.github.jcartu.hermex.ui.adaptive.FoldState
@@ -70,6 +73,7 @@ import io.github.jcartu.hermex.ui.feature.memory.HermesMemoryDataClient
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingRoute
+import io.github.jcartu.hermex.ui.feature.onboarding.account
 import io.github.jcartu.hermex.ui.feature.kanban.KanbanRoute
 import io.github.jcartu.hermex.ui.feature.kanban.HermesKanbanDataSource
 import io.github.jcartu.hermex.ui.feature.kanban.WebuiKanbanDataSource
@@ -135,6 +139,92 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     val selected = navigation.selectedDestination
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
+    val linkAuthState by container.authManager.state.collectAsStateWithLifecycle()
+    val linkServers by container.authManager.servers.collectAsStateWithLifecycle()
+
+    /**
+     * Routes one shared import (the share target's durable inbox, or the share
+     * extension's `share` link) by the active server's kind (#1181): the webui
+     * New Chat composer, or a new chat on the active Hermes server. The
+     * [SharedImportRepository] inbox clears only after the receiving draft
+     * holds the share.
+     */
+    suspend fun routeSharedImport(import: io.github.jcartu.hermex.core.share.SharedImport) {
+        val account = (linkAuthState as? AuthState.LoggedIn)?.account ?: return
+        when (val route = ShareRouting.route(account)) {
+            ShareRouting.Route.WebuiNewChat -> {
+                navigation.selectDestination(HermexDestination.CHATS)
+                navigation.startNewChat()
+            }
+            is ShareRouting.Route.HermesNewChat -> {
+                // The Hermes home opens a new-session chat and claims the import into
+                // that draft; this branch calls HermesSessionsHome's
+                // `HermesSessionLookup.openNewChat(route.serverId)` once that lookup is
+                // merged onto this branch (the import stays queued meanwhile).
+            }
+        }
+    }
+
+    LaunchedEffect(pendingDeepLink?.first) {
+        val pending = pendingDeepLink ?: return@LaunchedEffect
+        val context = LinkRoutingContext(
+            activeServerId = linkAuthState.account?.id,
+            signedIn = linkAuthState is AuthState.LoggedIn,
+            servers = linkServers,
+            isBotModeEnabled = false,
+            botConnectionId = { serverId -> runCatching { container.botConnectionStore.load(serverId)?.id }.getOrNull() },
+            movedSessions = MovedSessionLookup.NONE,
+        )
+        when (val route = DeepLinkRouter.dispatch(pending.second, context)) {
+            // The link names another server: activate it and hold the link —
+            // the rebuilt tree re-dispatches it (Swift `PendingLinks`).
+            is DeepLinkRouter.Route.SwitchServer -> container.authManager.switchActiveServer(route.account)
+            // Held until its server signs in; the shell recomposes on LoggedIn and re-dispatches.
+            DeepLinkRouter.Route.HoldForSignIn -> Unit
+            DeepLinkRouter.Route.Drop -> container.deepLinks.acknowledge(pending.first)
+            is DeepLinkRouter.Route.OpenWebuiSession -> {
+                navigation.selectDestination(HermexDestination.CHATS)
+                navigation.selectSession(route.sessionId)
+                container.deepLinks.acknowledge(pending.first)
+            }
+            is DeepLinkRouter.Route.OpenWebuiNewChat -> {
+                navigation.selectDestination(HermexDestination.CHATS)
+                navigation.startNewChat(
+                    profileName = route.profileName,
+                    autoStartsVoiceInput = route.autoStartsVoiceInput,
+                )
+                container.deepLinks.acknowledge(pending.first)
+            }
+            is DeepLinkRouter.Route.OpenKanban -> {
+                navigation.openKanban(route.boardSlug, route.cardId)
+                container.deepLinks.acknowledge(pending.first)
+            }
+            is DeepLinkRouter.Route.OpenGit -> {
+                navigation.openGit(route.sessionId)
+                container.deepLinks.acknowledge(pending.first)
+            }
+            is DeepLinkRouter.Route.OpenHermesSession -> {
+                // Handed to HermesSessionsHome's `HermesSessionLookup.open(route.destination)`
+                // once that lookup is merged onto this branch; the link stays queued meanwhile.
+            }
+            is DeepLinkRouter.Route.OpenHermesNewChat -> {
+                // Handed to HermesSessionsHome's `HermesSessionLookup.openNewChat(...)`
+                // once that lookup is merged onto this branch; the link stays queued meanwhile.
+            }
+            is DeepLinkRouter.Route.OpenBot -> {
+                // Posted to BotMode's `BotLinkMailbox.post(...)` once that mailbox is
+                // merged onto this branch; the link stays queued meanwhile.
+            }
+            DeepLinkRouter.Route.OpenShare -> {
+                sharedImport?.let { routeSharedImport(it) }
+                container.deepLinks.acknowledge(pending.first)
+            }
+        }
+    }
+    LaunchedEffect(sharedImport?.id) {
+        val import = sharedImport ?: return@LaunchedEffect
+        routeSharedImport(import)
+    }
     val workspaceFileRequest by WorkspaceFileNavigation.request.collectAsStateWithLifecycle()
     val hermesWorkspaceContext by HermesWorkspaceNavigation.context.collectAsStateWithLifecycle()
     LaunchedEffect(workspaceFileRequest?.id) {
@@ -202,7 +292,9 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     ) {
         val destinationContent: @Composable (HermexDestination) -> Unit = { destination ->
             when (destination) {
-                HermexDestination.CHATS -> ChatsArea(navigation)
+                HermexDestination.CHATS -> if (account.kind == ServerKind.HERMES) {
+                    io.github.jcartu.hermex.ui.feature.hermes.home.HermesHome(account, container, navigation::openSettings)
+                } else ChatsArea(navigation)
                 HermexDestination.KANBAN -> {
                     val source = kanbanDataSource
                     if (source == null) {

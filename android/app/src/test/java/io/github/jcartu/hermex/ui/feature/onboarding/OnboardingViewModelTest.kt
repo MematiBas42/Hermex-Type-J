@@ -125,7 +125,7 @@ class OnboardingViewModelTest {
     @Test
     fun `header rows without a value are never sent or saved`() = runBlocking {
         fixture.stubHealthy(serverA, authEnabled = false)
-        val viewModel = OnboardingViewModel(authManager)
+        val viewModel = webuiForm()
         viewModel.onServerUrlChange("a.example.com")
         viewModel.setConnectionMode(ConnectionMode.CLOUDFLARE_TUNNEL)
         viewModel.onCustomHeadersChange(viewModel.uiState.value.customHeaders + CustomHeader("X-Api-Key", "token"))
@@ -142,7 +142,7 @@ class OnboardingViewModelTest {
     @Test
     fun `will connect to preview follows the parser and clears for unparseable text`() {
         val viewModel = OnboardingViewModel(authManager)
-        viewModel.onServerUrlChange("A.example.com/path")
+        viewModel.onServerUrlChange("A.example.com/chat")
         assertEquals("https://a.example.com", viewModel.uiState.value.addressPreview)
         viewModel.onServerUrlChange("ftp://nope")
         assertNull(viewModel.uiState.value.addressPreview)
@@ -152,7 +152,7 @@ class OnboardingViewModelTest {
     @Test
     fun `testConnection reports the server's password needs and edits invalidate the probe`() {
         fixture.stubHealthy(serverA, authEnabled = true)
-        val viewModel = OnboardingViewModel(authManager)
+        val viewModel = webuiForm()
         viewModel.onServerUrlChange("a.example.com")
 
         viewModel.testConnection()
@@ -174,7 +174,7 @@ class OnboardingViewModelTest {
     @Test
     fun `connect demands a password only when the server requires one`() {
         fixture.stubHealthy(serverA, authEnabled = true)
-        val viewModel = OnboardingViewModel(authManager)
+        val viewModel = webuiForm()
         viewModel.onServerUrlChange("a.example.com")
 
         viewModel.connect()
@@ -192,7 +192,7 @@ class OnboardingViewModelTest {
     @Test
     fun `connect surfaces unreachable servers`() {
         coEvery { fixture.client(serverA).health() } throws ApiError.Network(RuntimeException("unreachable"))
-        val viewModel = OnboardingViewModel(authManager)
+        val viewModel = webuiForm()
         viewModel.onServerUrlChange("a.example.com")
 
         viewModel.connect()
@@ -208,7 +208,7 @@ class OnboardingViewModelTest {
         fixture.stubLogin(serverA, "pw-a", ok = true)
         authManager.configure("a.example.com", "pw-a")
 
-        val duplicate = OnboardingViewModel(authManager, entry = ConnectFormEntry.ADD_SERVER)
+        val duplicate = webuiForm(ConnectFormEntry.ADD_SERVER)
         duplicate.onServerUrlChange("https://A.example.com/")
         duplicate.connect()
         assertEquals(AuthManager.ALREADY_CONFIGURED_MESSAGE, duplicate.uiState.value.errorMessage)
@@ -218,7 +218,7 @@ class OnboardingViewModelTest {
         val serverB = "https://b.example.com"
         fixture.stubHealthy(serverB, authEnabled = true)
         fixture.stubLogin(serverB, "pw-b", ok = true)
-        val form = OnboardingViewModel(authManager, entry = ConnectFormEntry.ADD_SERVER)
+        val form = webuiForm(ConnectFormEntry.ADD_SERVER)
         form.onServerUrlChange("b.example.com")
         assertFalse(form.uiState.value.showsPasswordField)
 
@@ -241,4 +241,9 @@ class OnboardingViewModelTest {
         assertNull(OnboardingViewModel.passwordValidationMessage(requires.copy(passwordAuthEnabled = false), ""))
         assertNull(OnboardingViewModel.passwordValidationMessage(null, ""))
     }
+
+    private fun webuiForm(entry: ConnectFormEntry = ConnectFormEntry.ONBOARDING) = OnboardingViewModel(
+        authManager, entry = entry,
+        readHermesStatus = { _, _ -> throw io.github.jcartu.hermex.model.hermes.BotFailure.NotDashboard },
+    )
 }

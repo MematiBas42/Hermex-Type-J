@@ -13,6 +13,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import io.github.jcartu.hermex.model.hermes.BotConnection
+import io.github.jcartu.hermex.model.hermes.BotConnectionAdvice
+import io.github.jcartu.hermex.model.hermes.BotFailure
+import io.github.jcartu.hermex.net.hermes.HermesAddress
+import io.github.jcartu.hermex.net.hermes.HermesBrowserSignIn
+import io.github.jcartu.hermex.net.hermes.HermesConnection
+import io.github.jcartu.hermex.net.hermes.HermesHeaders
+import io.github.jcartu.hermex.net.hermes.HermesSignInMethod
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+
+/** Port of `OnboardingViewModel.MoveSource`: adds a Hermes destination without activating it. */
+data class ConnectFormMoveSource(val name: String, val headers: List<CustomHeader>)
 
 /**
  * Port of `OnboardingViewModel.ConnectionMode` (#900): how this phone reaches
@@ -59,15 +76,18 @@ enum class ConnectFormEntry { ONBOARDING, ADD_SERVER }
 data class OnboardingUiState(
     val entry: ConnectFormEntry = ConnectFormEntry.ONBOARDING,
     val serverUrl: String = "",
+    val username: String = "",
+    val signInMethod: HermesSignInMethod = HermesSignInMethod.PASSWORD,
+    val savedSignIns: List<AuthManager.SavedHermesSignIn> = emptyList(),
+    val reusedSignIn: AuthManager.SavedHermesSignIn? = null,
+    val offersWebuiReplace: Boolean = false,
+    val moveSource: ConnectFormMoveSource? = null,
+    val usedMoveSourceHeaders: Boolean = false,
     val password: String = "",
     val customHeaders: List<CustomHeader> = emptyList(),
     val connectionMode: ConnectionMode = ConnectionMode.PRIVATE_NETWORK,
     val authStatus: AuthStatusResponse? = null,
-    /**
-     * What answered at the typed address: `.webui` once the webui path got an
-     * answer. Null until then, and again after an edit changes the address or
-     * the headers sent. (A Hermes dashboard's detection is Wave 2's.)
-     */
+    /** Null before detection; Hermes is probed first, with webui fall-through on other answers. */
     val detectedKind: ServerKind? = null,
     /** Add Server's webui answered that it needs a password, so its field shows. */
     val webuiNeedsPassword: Boolean = false,
@@ -101,17 +121,25 @@ data class OnboardingUiState(
             return authStatus?.passwordAuthEnabled != false
         }
 
-    /** The webui's password field: onboarding shows it until a webui says it needs none, Add Server once a webui asks for one. */
+    val showsHermesSignIn: Boolean get() = detectedKind == ServerKind.HERMES
+    val showsHermesCredentials: Boolean get() = showsHermesSignIn && signInMethod == HermesSignInMethod.PASSWORD
     val showsPasswordField: Boolean
-        get() = if (entry == ConnectFormEntry.ONBOARDING) isPasswordRequired else webuiNeedsPassword
-
-    /** Off without an address. */
+        get() = if (showsHermesSignIn) showsHermesCredentials else if (entry == ConnectFormEntry.ONBOARDING) isPasswordRequired else webuiNeedsPassword
+    val headerRejection: String?
+        get() = if (!showsHermesSignIn) null else runCatching {
+            HermesHeaders.admit(customHeaders.sanitizedForStorage().filter { it.sanitizedValue.isNotEmpty() }, signInMethod == HermesSignInMethod.BROWSER)
+        }.exceptionOrNull()?.message
     val canSubmit: Boolean
-        get() = serverUrl.isNotBlank()
-
-    /** The root Connect will use, for the "Will connect to" line. Null while the text doesn't parse. */
+        get() = serverUrl.isNotBlank() && headerRejection == null &&
+            (!showsHermesCredentials || (username.isNotBlank() && password.isNotEmpty()))
+    val submitTitle: String
+        get() = if (showsHermesSignIn && signInMethod == HermesSignInMethod.BROWSER) "Sign In with Browser" else "Connect"
+    val offersMoveSourceHeaders: Boolean get() = !usedMoveSourceHeaders && !moveSource?.headers.isNullOrEmpty()
     val addressPreview: String?
-        get() = runCatching { AuthManager.normalizedServerUrl(serverUrl) }.getOrNull()
+        get() = runCatching {
+            if (detectedKind == ServerKind.WEBUI) AuthManager.normalizedServerUrl(serverUrl)
+            else HermesAddress.serverID(HermesAddress.parse(serverUrl))
+        }.getOrNull()
 }
 
 /**
@@ -126,11 +154,19 @@ class OnboardingViewModel(
     savedServer: ServerAccount? = null,
     savedHeaders: List<CustomHeader> = emptyList(),
     initialErrorMessage: String? = null,
+    private val hermesHttpClient: OkHttpClient = OkHttpClient(),
+    moveSource: ConnectFormMoveSource? = null,
+    private val readHermesStatus: suspend (HttpUrl, HermesHeaders) -> io.github.jcartu.hermex.model.hermes.BotJSON = { address, headers ->
+        val probe = HermesConnection(BotConnection(name = "", address = address, username = "", password = "",
+            headers = headers.values.takeIf { it.isNotEmpty() }), hermesHttpClient)
+        try { probe.status() } finally { probe.retire() }
+    },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
         OnboardingUiState(
             entry = entry,
+            moveSource = moveSource,
             serverUrl = savedServer?.urlString.orEmpty(),
             customHeaders = savedHeaders,
             errorMessage = if (savedServer == null) null else initialErrorMessage,
@@ -145,23 +181,32 @@ class OnboardingViewModel(
     private var probedConnectionIdentity: String? = null
     private var operationGeneration = 0
     private var isSyncingAccessRows = false
+    private var operation: Job? = null
+    private var candidateConnection: HermesConnection? = null
 
     // MARK: - Edits
 
     fun onServerUrlChange(value: String) {
+        if (_uiState.value.isConnectionLocked) return
         _uiState.update { it.copy(serverUrl = value) }
         invalidateProbedAuthStatusIfNeeded()
+        val reused = _uiState.value.reusedSignIn
+        if (reused != null && runCatching { HermesAddress.parse(value) }.getOrNull() !=
+            runCatching { HermesAddress.parse(reused.connection.address.toString()) }.getOrNull()) dropReusedSignIn()
     }
 
-    fun onPasswordChange(value: String) = _uiState.update { it.copy(password = value) }
+    fun onUsernameChange(value: String) { if (!_uiState.value.isConnectionLocked) _uiState.update { it.copy(username = value) } }
+    fun onPasswordChange(value: String) { if (!_uiState.value.isConnectionLocked) _uiState.update { it.copy(password = value) } }
 
     fun onCustomHeadersChange(headers: List<CustomHeader>) {
+        if (_uiState.value.isConnectionLocked) return
         _uiState.update { it.copy(customHeaders = headers) }
         invalidateProbedAuthStatusIfNeeded()
     }
 
     /** Cloudflare Tunnel opens Access's two header rows, empty; leaving it removes those rows that are still empty. */
     fun setConnectionMode(mode: ConnectionMode) {
+        if (_uiState.value.isConnectionLocked) return
         val old = _uiState.value.connectionMode
         if (old == mode) return
         isSyncingAccessRows = true
@@ -268,8 +313,11 @@ class OnboardingViewModel(
 
     internal fun currentConnectionIdentity(): String {
         val serverUrl = _uiState.value.serverUrl
-        val urlPart = runCatching { AuthManager.normalizedServerUrl(serverUrl).lowercase() }
+        var urlPart = runCatching { AuthManager.normalizedServerUrl(serverUrl).lowercase() }
             .getOrDefault(serverUrl.trim().lowercase())
+        if (_uiState.value.detectedKind == ServerKind.HERMES) {
+            urlPart += " hermes:" + runCatching { HermesAddress.parse(serverUrl).toString() }.getOrDefault("")
+        }
         // Escape delimiters so distinct header sets cannot collide, then sort canonical keys for stable serialization.
         val headerPart = effectiveHeaderMap()
             .map { (name, value) -> "${escapeForIdentity(name)}:${escapeForIdentity(value)}" }
@@ -300,7 +348,8 @@ class OnboardingViewModel(
     /** Drops what the last probe found, which no longer describes the typed address. */
     private fun forgetProbe() {
         probedConnectionIdentity = null
-        _uiState.update { it.copy(authStatus = null, detectedKind = null) }
+        _uiState.update { it.copy(authStatus = null, detectedKind = null, offersWebuiReplace = false,
+            signInMethod = HermesSignInMethod.PASSWORD, savedSignIns = emptyList()) }
     }
 
     /** Begins a tracked async operation and returns its generation token used to fence settlement against newer overlapping operations. */
@@ -317,75 +366,191 @@ class OnboardingViewModel(
 
     // MARK: - Actions
 
-    fun testConnection() {
-        if (_uiState.value.isConnectionLocked) return
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(errorMessage = null, connectionMessage = null, isWorking = true, isConnectionLocked = true)
-            }
-            val token = beginOperation()
-            val identityAtStart = currentConnectionIdentity()
-            try {
-                val status = authManager.testConnection(_uiState.value.serverUrl, sentHeaders)
-                if (token != operationGeneration || identityAtStart != currentConnectionIdentity()) return@launch
-                probedConnectionIdentity = identityAtStart
-                val unsupported = AuthManager.unsupportedSignInMessage(status)
-                val message = when {
-                    unsupported != null -> null
-                    status.isAlreadySignedIn -> "Connection ok. Already signed in by this server."
-                    status.authEnabled == true -> "Connection ok. Password required."
-                    else -> "Connection ok. Password not required."
-                }
-                _uiState.update {
-                    it.copy(
-                        authStatus = status,
-                        detectedKind = ServerKind.WEBUI,
-                        connectionMessage = message,
-                        errorMessage = unsupported,
-                    )
-                }
-            } catch (error: ApiError) {
-                if (token != operationGeneration || identityAtStart != currentConnectionIdentity()) return@launch
-                // A failed re-probe invalidates the prior successful status: the old
-                // capability result no longer describes this identity.
-                forgetProbe()
-                _uiState.update { it.copy(errorMessage = error.message) }
-            } finally {
-                endOperation(token)
-            }
+    /** Port of `useSavedSignIn`: copies only an offered exact-address password sign-in. */
+    fun useSavedSignIn(signIn: AuthManager.SavedHermesSignIn) {
+        val state = _uiState.value
+        if (state.isConnectionLocked || !state.showsHermesCredentials || signIn !in state.savedSignIns) return
+        dropReusedSignIn()
+        _uiState.update { it.copy(customHeaders = signIn.connection.headers.orEmpty(),
+            username = signIn.connection.username, password = signIn.connection.password,
+            reusedSignIn = signIn, detectedKind = ServerKind.HERMES, savedSignIns = state.savedSignIns) }
+        probedConnectionIdentity = currentConnectionIdentity()
+    }
+
+    private fun dropReusedSignIn() {
+        val state = _uiState.value
+        val reused = state.reusedSignIn?.connection ?: return
+        val secrets = reused.headers.orEmpty().map { it.sanitizedValue }.filter { it.isNotEmpty() }.toSet()
+        val kept = state.customHeaders.filterNot { it.sanitizedValue in secrets }
+        _uiState.update { it.copy(reusedSignIn = null,
+            username = if (it.username == reused.username) "" else it.username,
+            password = if (it.password == reused.password) "" else it.password,
+            customHeaders = if (it.connectionMode == ConnectionMode.CLOUDFLARE_TUNNEL) withAccessRows(kept) else kept) }
+    }
+
+    fun useMoveSourceHeaders() {
+        val state = _uiState.value
+        if (state.isConnectionLocked) return
+        val headers = state.moveSource?.headers?.takeIf { it.isNotEmpty() } ?: return
+        val names = headers.map { it.sanitizedName.lowercase() }.toSet()
+        onCustomHeadersChange(state.customHeaders.filter { it.sanitizedValue.isNotEmpty() && it.sanitizedName.lowercase() !in names } + headers)
+        _uiState.update { it.copy(usedMoveSourceHeaders = true) }
+    }
+
+    private sealed interface Detection {
+        data class Hermes(val address: HttpUrl, val method: HermesSignInMethod) : Detection
+        data class Refused(val advice: String) : Detection
+        data object NotHermes : Detection
+    }
+
+    /**
+     * Port of `detectHermes`: use the transport's status classifier, which distinguishes
+     * Hermes' own Host-header 400 from another server's 400 and a JSON webui 401 from a proxy.
+     * The form's own connection never carries saved cookies or another server's credentials.
+     */
+    private suspend fun detectHermes(): Detection {
+        val address = runCatching { HermesAddress.parse(_uiState.value.serverUrl) }.getOrNull() ?: return Detection.NotHermes
+        val headers = runCatching { HermesHeaders.admit(sentHeaders) }.getOrNull() ?: return Detection.NotHermes
+        // The injected read is the same own-connection status read in production and in wire tests.
+        return try {
+            val method = HermesSignInMethod.from(readHermesStatus(address, headers)) ?: return Detection.NotHermes
+            Detection.Hermes(address, method)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (error === BotFailure.Blocked || error == BotFailure.Rejected(400))
+                Detection.Refused(BotConnectionAdvice.message(error, address)) else Detection.NotHermes
         }
     }
 
-    /** Connect in onboarding, Add in Settings. */
-    fun connect() {
-        if (_uiState.value.isConnectionLocked) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(errorMessage = null, connectionMessage = null) }
+    private fun foundHermes(found: Detection.Hermes) {
+        _uiState.update { it.copy(authStatus = null, detectedKind = ServerKind.HERMES, signInMethod = found.method,
+            savedSignIns = if (found.method == HermesSignInMethod.PASSWORD) authManager.savedHermesSignIns(found.address) else emptyList()) }
+        probedConnectionIdentity = currentConnectionIdentity()
+    }
 
+    fun testConnection() {
+        if (_uiState.value.isConnectionLocked) return
+        operation = viewModelScope.launch {
+            _uiState.update { it.copy(errorMessage = null, connectionMessage = null, isWorking = true, isConnectionLocked = true) }
+            val token = beginOperation()
+            var identity = currentConnectionIdentity()
+            try {
+                val detection = detectHermes()
+                if (token != operationGeneration || identity != currentConnectionIdentity()) return@launch
+                when (detection) {
+                    is Detection.Hermes -> { foundHermes(detection); return@launch }
+                    is Detection.Refused -> { forgetProbe(); _uiState.update { it.copy(errorMessage = detection.advice) }; return@launch }
+                    Detection.NotHermes -> { dropReusedSignIn(); identity = currentConnectionIdentity() }
+                }
+                if (_uiState.value.moveSource != null) throw BotFailure.NotDashboard
+                val status = authManager.testConnection(_uiState.value.serverUrl, sentHeaders)
+                if (token != operationGeneration || identity != currentConnectionIdentity()) return@launch
+                probedConnectionIdentity = identity
+                val unsupported = AuthManager.unsupportedSignInMessage(status)
+                _uiState.update { it.copy(authStatus = status, detectedKind = ServerKind.WEBUI, errorMessage = unsupported,
+                    connectionMessage = when {
+                        unsupported != null -> null
+                        status.isAlreadySignedIn -> "Connection ok. Already signed in by this server."
+                        status.authEnabled == true -> "Connection ok. Password required."
+                        else -> "Connection ok. Password not required."
+                    }) }
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                if (token == operationGeneration && identity == currentConnectionIdentity()) {
+                    forgetProbe()
+                    _uiState.update { it.copy(errorMessage = error.message) }
+                }
+            } finally { endOperation(token) }
+        }
+    }
+
+    /** Port of `connect`: first read the dashboard's method; the next Connect performs one sign-in. */
+    fun connect(replacingWebuiServer: Boolean = false, browser: HermesBrowserSignIn.Presenter = HermesBrowserSignIn.Presenter.unavailable) {
+        if (_uiState.value.isConnectionLocked) return
+        operation = viewModelScope.launch {
+            _uiState.update { it.copy(errorMessage = null, connectionMessage = null, offersWebuiReplace = false) }
             val state = _uiState.value
-            if (state.entry == ConnectFormEntry.ONBOARDING) {
+            if (state.entry == ConnectFormEntry.ONBOARDING && !state.showsHermesSignIn) {
                 passwordValidationMessage(state.authStatus, state.password)?.let { message ->
-                    _uiState.update { it.copy(errorMessage = message) }
-                    return@launch
+                    _uiState.update { it.copy(errorMessage = message) }; return@launch
                 }
             }
-
-            // Inputs stay frozen across probe AND configure: AuthManager.configure
-            // persists credentials and activates the captured URL/headers as a side
-            // effect, so accepting edits mid-operation would let the old server be
-            // configured under a form now showing a different one (PR #294 re-gate).
             _uiState.update { it.copy(isWorking = true, isConnectionLocked = true) }
             val token = beginOperation()
             try {
-                when (state.entry) {
+                if (state.detectedKind == null && state.authStatus == null) {
+                    val identity = currentConnectionIdentity()
+                    val detection = detectHermes()
+                    if (token != operationGeneration || identity != currentConnectionIdentity()) return@launch
+                    when (detection) {
+                        is Detection.Hermes -> { foundHermes(detection); return@launch }
+                        is Detection.Refused -> { forgetProbe(); _uiState.update { it.copy(errorMessage = detection.advice) }; return@launch }
+                        Detection.NotHermes -> dropReusedSignIn()
+                    }
+                }
+                if (_uiState.value.moveSource != null && !_uiState.value.showsHermesSignIn) {
+                    val address = runCatching { HermesAddress.parse(_uiState.value.serverUrl) }.getOrNull()
+                    _uiState.update { it.copy(errorMessage = address?.let { BotConnectionAdvice.message(BotFailure.NotDashboard, it) } ?: BotFailure.NotDashboard.message) }
+                } else if (_uiState.value.showsHermesSignIn) {
+                    addHermesServer(token, replacingWebuiServer, browser)
+                } else when (state.entry) {
                     ConnectFormEntry.ONBOARDING -> configureWebui(token)
                     ConnectFormEntry.ADD_SERVER -> addWebuiServer(token)
                 }
-            } finally {
-                endOperation(token)
-            }
+            } finally { endOperation(token) }
         }
     }
+
+    private suspend fun addHermesServer(token: Int, replacingWebui: Boolean, browser: HermesBrowserSignIn.Presenter) {
+        val state = _uiState.value
+        val identity = currentConnectionIdentity()
+        var http: HermesConnection? = null
+        var address: HttpUrl? = null
+        try {
+            address = HermesAddress.parse(state.serverUrl)
+            val headers = HermesHeaders.admit(sentHeaders, state.signInMethod == HermesSignInMethod.BROWSER)
+            val existing = authManager.servers.value.firstOrNull { it.id == HermesAddress.serverID(address) }
+            if (existing != null && !(replacingWebui && existing.kind == ServerKind.WEBUI && state.moveSource == null)) {
+                val offer = existing.kind == ServerKind.WEBUI && state.moveSource == null
+                _uiState.update { it.copy(offersWebuiReplace = offer, errorMessage = if (offer)
+                    AuthManager.WEBUI_SAVED_AT_ADDRESS_MESSAGE else AuthManager.ALREADY_CONFIGURED_MESSAGE) }
+                return
+            }
+            val open = state.signInMethod == HermesSignInMethod.OPEN
+            val candidate = BotConnection(name = address.host, address = address,
+                username = if (open) "" else state.username.trim(), password = if (open) "" else state.password,
+                installID = state.reusedSignIn?.connection?.installID, headers = headers.values.takeIf { it.isNotEmpty() })
+            http = HermesConnection(candidate, hermesHttpClient)
+            candidateConnection = http
+            if (state.signInMethod == HermesSignInMethod.BROWSER) HermesBrowserSignIn.signIn(http, browser) else http.signIn()
+            currentCoroutineContext().ensureActive()
+            if (token != operationGeneration || identity != currentConnectionIdentity()) return
+            val record = http.connection.copy(hermesVersion = http.serverVersion, installID = http.serverInstallID ?: candidate.installID)
+            val added = if (existing == null) authManager.addHermesServer(record, activate = state.moveSource == null)
+                else authManager.replaceWebuiServer(record)
+            _uiState.update { it.copy(addedAccount = added) }
+        } catch (error: CancellationException) { throw error
+        } catch (error: Exception) {
+            if (token == operationGeneration && identity == currentConnectionIdentity()) {
+                _uiState.update { it.copy(errorMessage = address?.let { BotConnectionAdvice.message(error, it) } ?: error.message) }
+            }
+        } finally {
+            http?.retire()
+            if (candidateConnection === http) candidateConnection = null
+        }
+    }
+
+    /** Closing the sheet invalidates attempts before late replies may persist anything. */
+    fun cancel() {
+        operationGeneration += 1
+        operation?.cancel()
+        candidateConnection?.retire()
+        candidateConnection = null
+        _uiState.update { it.copy(isWorking = false, isConnectionLocked = false) }
+    }
+
+    override fun onCleared() { cancel(); super.onCleared() }
 
     /** Onboarding's webui path: probe unless a probe for these inputs already answered, check the password, then `configure`. */
     private suspend fun configureWebui(token: Int) {
