@@ -109,7 +109,8 @@ class AuthTestFixture(tmpFolder: TemporaryFolder) {
     /** A new registry each time, loaded from [keychain] like a process start. */
     fun registry(): ServerRegistry = ServerRegistry(keychain, identityDefaults, now = { 1_000.0 })
 
-    fun manager(registry: ServerRegistry = registry(), logoutTimeoutMillis: Long = 5_000): AuthManager {
+    fun manager(registry: ServerRegistry = registry(), logoutTimeoutMillis: Long = 5_000,
+        hermesConnections: io.github.jcartu.hermex.net.hermes.HermesConnections = io.github.jcartu.hermex.net.hermes.HermesConnections()): AuthManager {
         runBlocking { customHeaders.load(serverConfig.current().baseUrl) }
         return AuthManager(
             clientFactory = { url, headers ->
@@ -123,6 +124,7 @@ class AuthTestFixture(tmpFolder: TemporaryFolder) {
             cookies = cookies,
             scope = scope,
             botConnections = botConnections,
+            hermesConnections = hermesConnections,
             discardHermesData = { server, connectionID -> discardedHermesData += server to connectionID },
             logoutTimeoutMillis = logoutTimeoutMillis,
         )

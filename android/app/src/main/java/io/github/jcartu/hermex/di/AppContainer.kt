@@ -26,6 +26,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import io.github.jcartu.hermex.ui.feature.bots.discardBotData
 
 private val Context.dataStore by preferencesDataStore(name = "hermex_prefs")
 
@@ -177,9 +178,11 @@ class AppContainer(context: Context) {
             scope = appScope,
             botConnections = botConnectionStore,
             hermesConnections = hermesConnections,
-            discardHermesData = { server, _ ->
+            discardHermesData = { server, connectionID ->
                 cacheStore.clearCache(server)
                 cacheStore.chatDraftStore.discardDrafts(server)
+                io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesProfilePreference.clear(appContext, server)
+                discardBotData(server, connectionID)
             },
         )
     }
@@ -245,6 +248,34 @@ class AppContainer(context: Context) {
     val hermesCacheStore: io.github.jcartu.hermex.data.HermesCacheStore by lazy {
         io.github.jcartu.hermex.data.HermesCacheStore(java.io.File(appContext.filesDir, "offline-cache"), json)
     }
+
+    /** BotConnectionSetup's old-UUID cleanup; a side connection never deletes webui drafts. */
+    suspend fun discardHermesConnectionData(server: String, connectionID: String) {
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            hermesCacheStore.removeHermesBotChats(server, connectionID)
+            // A replacement on a Hermes server also invalidates its ordinary session cache.
+            if (authManager.kind(server) == io.github.jcartu.hermex.model.ServerKind.HERMES) hermesCacheStore.clearCache(server)
+            cacheStore.chatDraftStore.discardHermesDrafts(server, connectionID)
+        }
+        discardBotData(server, connectionID)
+    }
+
+    private val hermesUpdateModels = mutableMapOf<String, io.github.jcartu.hermex.ui.feature.settings.HermesUpdateModel>()
+
+    /** Settings updates outlive their screen, like Swift `HermesUpdateModel.for(server:)`. */
+    fun hermesUpdates(server: String): io.github.jcartu.hermex.ui.feature.settings.HermesUpdateModel =
+        hermesUpdateModels.getOrPut(server) {
+            io.github.jcartu.hermex.ui.feature.settings.HermesUpdateModel(server, appScope,
+                makeClient = {
+                    val active = authManager.state.value as? io.github.jcartu.hermex.ui.feature.onboarding.AuthState.LoggedIn
+                    if (active?.account?.id != server) null else runCatching { botConnectionStore.load(server) }.getOrNull()?.let {
+                        io.github.jcartu.hermex.net.hermes.HermesUpdateClient(hermesConnections.connection(it, server))
+                    }
+                },
+                onUpdated = { authManager.hermesServerUpdated(server, it) },
+                reconnectGateway = { hermesConnections.reconnectGateway(server) },
+            )
+        }
 
     val sharedImports: io.github.jcartu.hermex.core.share.SharedImportRepository by lazy {
         io.github.jcartu.hermex.core.share.SharedImportRepository(appContext, json).also { repository ->

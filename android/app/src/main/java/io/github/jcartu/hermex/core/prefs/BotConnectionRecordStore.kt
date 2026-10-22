@@ -49,7 +49,7 @@ class BotConnectionRecordStore(
     private val preferences: SharedPreferences,
     private val cipher: StringCipher,
     private val json: Json,
-    private val retire: (server: String, unlessStill: BotConnection?) -> Unit = { _, _ -> },
+    private val retire: (server: String, unlessStill: BotConnection?) -> Unit,
 ) : BotConnectionRecords, HermesConnections.BotConnectionStore {
 
     override fun load(server: String): BotConnection? = synchronized(preferences) {
