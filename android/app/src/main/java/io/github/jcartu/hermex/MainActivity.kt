@@ -6,11 +6,17 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
@@ -29,7 +35,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        val transparentBars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = transparentBars, navigationBarStyle = transparentBars)
         val container = (application as HermexApplication).container
         ingestIncomingIntent(intent)
 
@@ -57,20 +64,32 @@ class MainActivity : ComponentActivity() {
                 SettingsRepository.Theme.LIGHT -> false
                 SettingsRepository.Theme.DARK -> true
             }
+            val configuration = LocalConfiguration.current
+            LaunchedEffect(darkTheme, configuration) {
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.isAppearanceLightStatusBars = !darkTheme
+                controller.isAppearanceLightNavigationBars = !darkTheme
+            }
             HermexTheme(
                 darkTheme = darkTheme,
                 palette = settings.palette,
                 accentHex = settings.headerLogoColorHex,
             ) {
-                Box(Modifier.fillMaxSize()) {
-                    HermexApp(container)
-                    // Web links open here, above every screen and below the lock.
-                    InAppBrowserHost()
-                    // The lock is a cover, not a gate: the app stays composed
-                    // behind it, so streams and reconnects keep running.
-                    val lockState by appLock.state.collectAsStateWithLifecycle()
-                    if (lockState.showsLockOverlay) {
-                        AppLockOverlay(appLock)
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                    contentColor = MaterialTheme.colorScheme.onBackground,
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        HermexApp(container)
+                        // Web links open here, above every screen and below the lock.
+                        InAppBrowserHost()
+                        // The lock is a cover, not a gate: the app stays composed
+                        // behind it, so streams and reconnects keep running.
+                        val lockState by appLock.state.collectAsStateWithLifecycle()
+                        if (lockState.showsLockOverlay) {
+                            AppLockOverlay(appLock)
+                        }
                     }
                 }
             }

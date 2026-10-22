@@ -100,7 +100,8 @@ class HermesRunMonitor internal constructor(
         reconnectDelay = reconnectDelay,
     )
 
-    private val _updates = MutableStateFlow(HermesRunMonitorUpdate())
+    private var currentUpdate = HermesRunMonitorUpdate()
+    private val _updates = MutableStateFlow(currentUpdate)
     val updates: StateFlow<HermesRunMonitorUpdate> = _updates.asStateFlow()
 
     private val finished = CompletableDeferred<Unit>()
@@ -149,7 +150,7 @@ class HermesRunMonitor internal constructor(
      * A lost reply is never retried and [close] never calls this method implicitly.
      */
     suspend fun interrupt() = withContext(dispatcher) {
-        if (closed || interruptClaimed || _updates.value.outcome != null || !_updates.value.active) return@withContext
+        if (closed || interruptClaimed || currentUpdate.outcome != null || !currentUpdate.active) return@withContext
         if (engine.connectionState != HermesConversation.ConnectionState.CONNECTED) throw BotFailure.Transport
         val runtime = engine.runtime ?: throw BotFailure.Transport
         val attempt = engine.generation
@@ -159,7 +160,7 @@ class HermesRunMonitor internal constructor(
         publish()
         try {
             engine.write(HermesCall.SessionInterrupt(runtime), attempt, runtime) {
-                if (closed || engine.runtime != runtime || engine.generation != attempt || !_updates.value.active) {
+                if (closed || engine.runtime != runtime || engine.generation != attempt || !currentUpdate.active) {
                     throw BotFailure.Stale
                 }
             }
@@ -183,7 +184,7 @@ class HermesRunMonitor internal constructor(
             closed = true
             reattachTask?.cancel()
             reattachTask = null
-            if (stoppedStatus != null && _updates.value.outcome == null) {
+            if (stoppedStatus != null && currentUpdate.outcome == null) {
                 connectionStatus = stoppedStatus
                 publish(checkFinished = false)
             }
@@ -244,8 +245,8 @@ class HermesRunMonitor internal constructor(
         if (request.sessionID != engine.runtime) return
         requestRevision += 1
         openRequests[request.id] = request
-        val update = _updates.value
-        _updates.value = when (val pending = request.pending) {
+        val update = currentUpdate
+        currentUpdate = when (val pending = request.pending) {
             is BotPendingRequest.Approval -> update.copy(
                 approval = approvalPrompt(pending),
                 approvalsConfirmedClear = false,
@@ -299,16 +300,16 @@ class HermesRunMonitor internal constructor(
             "message.start" -> {
                 pendingOutcome = null
                 interruptRequested = false
-                _updates.value = _updates.value.copy(active = true, outcome = null)
+                currentUpdate = currentUpdate.copy(active = true, outcome = null)
             }
-            "message.complete" -> if (_updates.value.outcome == null) {
+            "message.complete" -> if (currentUpdate.outcome == null) {
                 pendingOutcome = when (frame["payload"]["status"].text) {
                     "interrupted" -> RunNotificationOutcome.CANCELLED
                     "error" -> RunNotificationOutcome.FAILED
                     else -> RunNotificationOutcome.COMPLETED
                 }
             }
-            "error" -> if (_updates.value.outcome == null) {
+            "error" -> if (currentUpdate.outcome == null) {
                 pendingOutcome = RunNotificationOutcome.FAILED
             }
             "session.info" -> frame["payload"]["running"].flag?.let { running ->
@@ -325,7 +326,7 @@ class HermesRunMonitor internal constructor(
             markActive()
             return
         }
-        if (_updates.value.outcome != null) return
+        if (currentUpdate.outcome != null) return
         val ending = pendingOutcome
             ?: HermesTurnOutcome.fromInflight(snapshot["inflight"])?.let { RunNotificationOutcome.FAILED }
             ?: if (interruptRequested) RunNotificationOutcome.CANCELLED else RunNotificationOutcome.COMPLETED
@@ -333,18 +334,18 @@ class HermesRunMonitor internal constructor(
     }
 
     private fun markActive() {
-        val update = _updates.value
+        val update = currentUpdate
         if (update.outcome != null) {
             pendingOutcome = null
             interruptRequested = false
         }
-        _updates.value = update.copy(active = true, outcome = null)
+        currentUpdate = update.copy(active = true, outcome = null)
     }
 
     private fun settleRun(ending: RunNotificationOutcome = terminalCandidate()) {
-        if (_updates.value.outcome != null) return
+        if (currentUpdate.outcome != null) return
         pendingOutcome = ending
-        _updates.value = _updates.value.copy(active = false, outcome = ending)
+        currentUpdate = currentUpdate.copy(active = false, outcome = ending)
     }
 
     private fun terminalCandidate(): RunNotificationOutcome =
@@ -396,8 +397,8 @@ class HermesRunMonitor internal constructor(
                 else -> Unit
             }
         }
-        val update = _updates.value
-        _updates.value = update.copy(
+        val update = currentUpdate
+        currentUpdate = update.copy(
             approval = approval?.let(::approvalPrompt) ?: if (approvalUnreadable) update.approval else null,
             question = question?.let(::questionPrompt) ?: if (questionUnreadable) update.question else null,
             approvalsConfirmedClear = !approvalUnreadable && approval == null,
@@ -411,7 +412,7 @@ class HermesRunMonitor internal constructor(
         requestRevision += 1
         val request = openRequests[id]?.takeIf { it.method == method } ?: return
         openRequests.remove(id)
-        val update = _updates.value
+        val update = currentUpdate
         when (request.pending) {
             is BotPendingRequest.Approval -> {
                 var next: BotPendingRequest.Approval? = null
@@ -419,7 +420,7 @@ class HermesRunMonitor internal constructor(
                     next = remaining.pending as? BotPendingRequest.Approval ?: continue
                     break
                 }
-                _updates.value = update.copy(
+                currentUpdate = update.copy(
                     approval = next?.let(::approvalPrompt),
                     approvalsConfirmedClear = next == null,
                 )
@@ -430,7 +431,7 @@ class HermesRunMonitor internal constructor(
                     next = remaining.pending as? BotPendingRequest.Question ?: continue
                     break
                 }
-                _updates.value = update.copy(
+                currentUpdate = update.copy(
                     question = next?.let(::questionPrompt),
                     questionsConfirmedClear = next == null,
                 )
@@ -460,7 +461,7 @@ class HermesRunMonitor internal constructor(
 
     /** Recomputes presentation copy without changing any host-derived state. */
     private fun publish(checkFinished: Boolean = true) {
-        val update = _updates.value
+        val update = currentUpdate
         val status = when {
             update.outcome != null && update.approval != null && update.question != null -> "Approval and answer required"
             update.outcome != null && update.approval != null -> "Approval required"
@@ -477,12 +478,20 @@ class HermesRunMonitor internal constructor(
             update.active -> "Running"
             else -> "Connecting"
         }
-        if (status != update.status) _updates.value = update.copy(status = status)
+        if (status != update.status) currentUpdate = update.copy(status = status)
+        // Replay can include an older idle/complete event before the current turn.
+        // Do not let notification collectors observe it before the snapshot reconciles it.
+        if (snapshotReady) {
+            _updates.value = currentUpdate
+        } else {
+            val waiting = connectionStatus ?: "Connecting"
+            if (_updates.value.status != waiting) _updates.value = _updates.value.copy(status = waiting)
+        }
         if (checkFinished) finishIfSafe()
     }
 
     private fun finishIfSafe() {
-        val update = _updates.value
+        val update = currentUpdate
         if (snapshotReady && !interruptInFlight &&
             update.outcome != null && update.approval == null && update.question == null
         ) {

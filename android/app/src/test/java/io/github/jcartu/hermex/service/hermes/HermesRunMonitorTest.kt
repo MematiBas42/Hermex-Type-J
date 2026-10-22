@@ -12,6 +12,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -109,6 +111,26 @@ class HermesRunMonitorTest {
         assertNull(fixture.monitor.updates.value.question)
         assertTrue(fixture.monitor.updates.value.approvalsConfirmedClear)
         assertTrue(fixture.monitor.updates.value.questionsConfirmedClear)
+        assertTrue(job.isCompleted)
+    }
+
+    @Test
+    fun `historical idle replay cannot announce completion before the current snapshot`() = runTest {
+        val fixture = fixture(requests = listOf(approval("approval-envelope", "approval-1", RUNTIME)))
+        fixture.wire.replayFrames = listOf(
+            BotJSON.parse("""{"type":"session.info","session_id":"$RUNTIME","seq":1,"payload":{"running":false}}"""),
+            BotJSON.parse("""{"type":"message.start","session_id":"$RUNTIME","seq":2,"payload":{}}"""),
+        )
+        val published = mutableListOf<HermesRunMonitorUpdate>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            fixture.monitor.updates.collect { published += it }
+        }
+        val job = start(fixture)
+        assertTrue(fixture.monitor.updates.value.active)
+        assertEquals("approval-1", fixture.monitor.updates.value.approval?.id)
+        assertFalse(published.any { it.outcome != null })
+        fixture.monitor.close()
+        runCurrent()
         assertTrue(job.isCompleted)
     }
 
@@ -253,6 +275,7 @@ class HermesRunMonitorTest {
         var runtime = RUNTIME
         var running = true
         var openRequests: List<BotJSON>? = requests
+        var replayFrames: List<BotJSON> = emptyList()
         var connects = 0
         var closes = 0
         private var sequence = 0
@@ -317,10 +340,10 @@ class HermesRunMonitorTest {
 
         private fun replay(): BotJSON {
             val fields = linkedMapOf(
-                "latest_seq" to BotJSON.number(sequence),
+                "latest_seq" to BotJSON.number(maxOf(sequence, replayFrames.maxOfOrNull { it["seq"].integer ?: 0 } ?: 0)),
                 "epoch" to BotJSON.string("epoch"),
                 "truncated" to BotJSON.bool(false),
-                "events" to BotJSON.array(emptyList()),
+                "events" to BotJSON.array(replayFrames),
             )
             openRequests?.let { fields["open_requests"] = BotJSON.array(it) }
             return BotJSON.objectOf(fields)

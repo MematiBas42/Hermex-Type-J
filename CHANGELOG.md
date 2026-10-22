@@ -4,7 +4,7 @@ Release notes for the Hermex-Type-J Android fork and the retained upstream
 Hermex iOS history. Android and upstream version numbers are independent.
 Entries use Added / Changed / Fixed / Security sections.
 
-## [Type-J 3.0.0] - Unreleased
+## [Type-J 3.0.0] - 2026-10-22
 
 ### Added
 - Tokyo Night is the default palette, with Day/Night variants, Tokyo accent
@@ -60,6 +60,17 @@ Entries use Added / Changed / Fixed / Security sections.
 - Android-only startup crash caused by JVM-only Unicode regex flags.
 - Chat Markdown uses readable heading sizes and renders formatting inside tables;
   Hermes context-only warning footers no longer leak into user messages.
+- Rapid typing no longer loses characters to stale Compose draft echoes; delayed
+  autocomplete caret requests cannot rewind newer edits.
+- Adaptive navigation keeps one live content composition when folding or changing
+  window width, preserving the selected chat and unsent draft. Nested Files/Git
+  screens use only the panes available beside the session sidebar.
+- Background observers reconcile replay before publishing outcomes, preventing
+  historical completion events from becoming premature notifications.
+- The app root supplies theme background/content colors in every layout, with
+  system-bar contrast following the app's appearance rather than only the OS.
+- App-level Files/Git entries retain the active Hermes workspace; commit-message
+  suggestions remain usable when the chat screen is parked.
 
 ### Security
 - Credential-bearing HTTP redirects are refused before crossing origins;

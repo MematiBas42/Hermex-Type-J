@@ -15,7 +15,7 @@ Built for phones, tablets, foldables, and the Samsung Galaxy Trifold. Tokyo Nigh
 
 [Android guide](android/README.md) · [Upstream iOS project](https://github.com/uzairansaruzi/hermex) · [Hermes WebUI](https://github.com/nesquena/hermes-webui) · [Type-J issues](https://github.com/jcartu/Hermex-Type-J/issues)
 
-<img src="docs/assets/android/android-hero.png" alt="Hermex-Type-J running on a compact cover display and fully unfolded trifold" width="100%" />
+<img src="docs/assets/android/android-hero.png" alt="Hermex-Type-J 3.0 Tokyo Night appearance and native three-pane workspace, captured on Android emulators" width="100%" />
 
 </div>
 
@@ -89,6 +89,9 @@ separate native `android/` application:
 ## One app, every posture
 
 <img src="docs/assets/android/android-postures.png" alt="Hermex-Type-J shown on cover screen, standard phone, tablet fold, and trifold layouts" width="100%" />
+
+The posture and feature galleries retain Type-J 2.0 captures; the current
+Tokyo Night appearance is shown in the updated hero above.
 
 The layout is selected from the **actual window and hinge state**, not from a
 hard-coded portrait/landscape switch.
@@ -171,7 +174,8 @@ system falls back to measured window width.
 - persistent goal controls
 - Android document picker with multiple file types
 - camera capture through the native activity-result API
-- attachment previews, removal, upload state, and a 20 MB client-side limit
+- attachment previews, removal, and upload state; WebUI keeps its 20 MB limit,
+  while Hermes accepts up to 8 files, 25 MiB per file and 50 MiB total
 - Android speech recognition for voice dictation
 - layout that separates from the transcript on a trifold
 
@@ -428,6 +432,10 @@ For a signed local release:
 
 Signing credentials live in a gitignored `android/keystore.properties`; see
 [`android/README.md`](android/README.md) for the exact format and toolchain.
+
+For an in-place upgrade from Type-J 2.0, use a release APK signed with the
+original key. Keep the existing installation and app data; debug and unsigned
+CI builds are not interchangeable with a signed release.
 
 ## Verification
 

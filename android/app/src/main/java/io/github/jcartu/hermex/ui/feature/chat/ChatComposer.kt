@@ -165,6 +165,7 @@ fun ChatComposer(
         }?.text
     }
     val currentCompleteHostSlash by rememberUpdatedState(onCompleteHostSlashArgument)
+    val readCurrentDraft = remember(actions) { { actions.currentDraftText } }
 
     LaunchedEffect(state.sendErrorMessage) {
         if (state.sendErrorMessage == null) dismissedSendError = null
@@ -178,7 +179,7 @@ fun ChatComposer(
 
     fun moveCaret(caret: Int) {
         caretRequestSequence += 1
-        caretRequest = ComposerCaretRequest(caretRequestSequence, caret)
+        caretRequest = ComposerCaretRequest(caretRequestSequence, caret, actions.currentDraftText)
         selection = TextRange(caret)
     }
 
@@ -442,6 +443,7 @@ fun ChatComposer(
 
                     ChatComposerTextInput(
                         draft = state.draft,
+                        readDraft = readCurrentDraft,
                         draftTokens = effectiveTokens,
                         enabled = !isOfflineReadOnly,
                         keyboardSendEnabled = actionButtonEnabled && !showsStopButton,

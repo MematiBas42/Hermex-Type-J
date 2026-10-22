@@ -1,5 +1,10 @@
 # Hermex
 
+> **Fork scope:** this checkout is `jcartu/Hermex-Type-J`. Its native Android
+> application lives in `android/`; read `android/AGENTS.md` before editing it.
+> The Swift sources and the upstream iOS working agreement below are retained.
+> A Git merge of Swift changes does not by itself update the Kotlin application.
+
 Hermex is a native SwiftUI iPhone app for a self-hosted Hermes agent. It talks directly to the user's Hermes host over HTTPS (or, for legacy servers, their `hermes-webui`) and gives them a phone-native control surface: start and steer sessions, watch streaming work, browse the workspace, and recover from wherever they are. The Xcode target and scheme are `HermesMobile`; the App Store name is `Hermex`.
 
 You can think of Hermex as an open source "bring-your-own-server" iPhone client for Hermes. The phone is the control and review plane; the server owns execution, tools, models, and the user's data.

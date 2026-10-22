@@ -97,6 +97,17 @@ $ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner \
 The source tree ignores `keystore.properties`, `*.jks`, `local.properties`,
 APKs, Gradle output, IDE metadata, and local SDK state.
 
+## Upgrade an existing installation
+
+Version 3 keeps `io.github.jcartu.hermex` and the existing release signing key.
+Install a release APK signed by that key over the old app with `adb install -r`;
+do not uninstall or clear app storage. Saved WebUI credentials and local data
+migrate in place, and moving to a Hermes host is a separate, explicit workflow.
+
+A debug APK or the unsigned CI artifact is **not** a drop-in replacement for
+an installed signed release. A signature mismatch is not a reason to delete
+the existing installation; sign the release with its original key instead.
+
 ## Connect to a server
 
 Hermex is a client; it does not embed the Hermes Python runtime.
@@ -250,6 +261,12 @@ the packaging/static gate, then install and exercise the actual app.
 
 GitHub Actions runs the same test task, builds the release variant, and uploads
 an unsigned APK for every Android change.
+
+For an isolated real-Hermes smoke, run `python3 scripts/local-hermes --port 19199`
+from the repository root. The launcher uses the pinned host and a scripted model
+in a temporary home. Forward that port with `adb -s <emulator> reverse tcp:19199 tcp:19199`
+and connect the app to `http://127.0.0.1:19199` using the launcher's test credentials.
+Choosing **Deny** exercises approval handling without executing its sample command.
 
 ## Screenshots
 

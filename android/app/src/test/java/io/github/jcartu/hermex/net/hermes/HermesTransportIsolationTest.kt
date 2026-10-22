@@ -132,6 +132,30 @@ class HermesTransportIsolationTest {
         }
     }
 
+    @Test
+    fun mutationSucceedsWithoutDependingOnAnIdleReadConnection() = runBlocking {
+        val origin = MockWebServer()
+        origin.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path == "/api/status" -> MockResponse().setBody("{\"auth_required\":true}")
+                request.sequenceNumber > 0 -> MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                else -> MockResponse().setBody("accepted once")
+            }
+        }
+        origin.start()
+        try {
+            val connection = connection(origin)
+            connection.status()
+            val mutation = Request.Builder().url(origin.url("/trigger")).post("operation".toRequestBody()).build()
+            connection.client.newCall(mutation).execute().use {
+                assertEquals("accepted once", it.body.string())
+            }
+            assertEquals(2, origin.requestCount)
+        } finally {
+            origin.shutdown()
+        }
+    }
+
     private fun connection(server: MockWebServer) = HermesConnection(
         BotConnection(
             name = "Fixture",

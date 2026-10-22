@@ -42,7 +42,9 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.InAppBrowser
 import io.github.jcartu.hermex.ui.feature.chat.*
 import io.github.jcartu.hermex.ui.feature.git.hermes.HermesGitWorkspaceRoute
+import io.github.jcartu.hermex.ui.feature.git.hermes.HermesGitNavigation
 import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceRoute
+import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceNavigation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -103,6 +105,17 @@ fun HermesChatPane(
     val state by model.uiState.collectAsStateWithLifecycle()
     val presentation by model.presentation.collectAsStateWithLifecycle()
     val workspace by model.workspace.collectAsStateWithLifecycle()
+    val workspaceGit = remember(model, workspace) { model.workspaceGit { model.uiState.value.isViewingCachedData } }
+    LaunchedEffect(model, workspace, workspaceGit) {
+        val currentWorkspace = workspace
+        if (currentWorkspace == null) {
+            HermesWorkspaceNavigation.clear(account.id)
+            HermesGitNavigation.clear(account.id)
+        } else {
+            HermesWorkspaceNavigation.open(currentWorkspace)
+            workspaceGit?.let(HermesGitNavigation::open)
+        }
+    }
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings())
     val turn = presentation.coordinator
     val scope = rememberCoroutineScope()
@@ -162,21 +175,26 @@ fun HermesChatPane(
             if (result is io.github.jcartu.hermex.core.media.DocumentPreviewOpenResult.Rejected) actionError = result.message
         }
     } }
+    val toolPaneCount = maxOf(1, LocalPaneCount.current - 1)
     if (filesOpen && workspace != null) {
         BackHandler { filesOpen = false }
         Column(modifier.fillMaxSize()) {
             TextButton(onClick = { filesOpen = false }) { Text("Back to chat") }
-            HermesWorkspaceRoute(workspace!!, model.http, Modifier.weight(1f))
+            CompositionLocalProvider(LocalPaneCount provides toolPaneCount) {
+                HermesWorkspaceRoute(workspace!!, model.http, Modifier.weight(1f))
+            }
         }
         return
     }
     if (gitOpen) {
-        val client = remember(workspace) { model.workspaceGit { model.uiState.value.isViewingCachedData } }
+        val client = workspaceGit
         if (client != null) {
             BackHandler { gitOpen = false }
             Column(modifier.fillMaxSize()) {
                 TextButton(onClick = { gitOpen = false }) { Text("Back to chat") }
-                HermesGitWorkspaceRoute(client)
+                CompositionLocalProvider(LocalPaneCount provides toolPaneCount) {
+                    HermesGitWorkspaceRoute(client)
+                }
             }
             return
         }

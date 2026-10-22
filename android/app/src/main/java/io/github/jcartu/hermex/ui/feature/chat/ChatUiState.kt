@@ -296,6 +296,9 @@ data class ChatUiState(
  * interface (and [ChatUiState]) so the two files compile independently.
  */
 interface ChatComposerActions {
+    /** Latest authoritative text, including edits newer than the last collected Compose frame. */
+    val currentDraftText: String
+
     /** Replaces the typed draft; [ChatUiState.draftTokens] is re-derived from it. */
     fun updateDraft(text: String)
 

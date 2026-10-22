@@ -2,6 +2,8 @@ package io.github.jcartu.hermex.ui.feature.chat
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
@@ -170,6 +172,29 @@ class ComposerUpgradesTest {
         assertTrue(canRecallLastUserMessage(""))
         assertFalse(canRecallLastUserMessage(" "))
         assertFalse(canRecallLastUserMessage("draft"))
+    }
+
+    @Test
+    fun `delayed editor synchronization preserves newer text caret and IME composition`() {
+        var authoritative = "Monit"
+        val readDraft = { authoritative }
+        val pending = { value: TextFieldValue -> reconcileComposerText(value, readDraft, null) }
+        authoritative = "Monitor check"
+        val edited = TextFieldValue(authoritative, TextRange(8), TextRange(8, 13))
+        val synchronized = pending(edited)
+        assertEquals("Monitor check", synchronized.text)
+        assertEquals(TextRange(8), synchronized.selection)
+        assertEquals(TextRange(8, 13), synchronized.composition)
+    }
+
+    @Test
+    fun `autocomplete caret cannot rewind typing added after the completion`() {
+        val request = ComposerCaretRequest(1, 6, "/goal ")
+        val typed = TextFieldValue("/goal new work", TextRange(14))
+        assertEquals(typed, reconcileComposerText(typed, { typed.text }, request))
+        val replaced = reconcileComposerText(TextFieldValue("/go"), { "/goal " }, request)
+        assertEquals("/goal ", replaced.text)
+        assertEquals(TextRange(6), replaced.selection)
     }
 
     @Test

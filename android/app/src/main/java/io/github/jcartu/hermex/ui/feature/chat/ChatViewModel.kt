@@ -670,6 +670,8 @@ class ChatViewModel(
 
     // MARK: - ChatComposerActions
 
+    override val currentDraftText: String get() = _uiState.value.draft
+
     override fun updateDraft(text: String) {
         composerRevision += 1
         _uiState.update { it.copy(draft = text, draftTokens = parseComposerTokens(text), steerFailureMessage = null) }

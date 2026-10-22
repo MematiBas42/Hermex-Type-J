@@ -274,6 +274,8 @@ class HermesChatViewModel(
         drafts.setAttachments(records(), key)
     }
 
+    override val currentDraftText: String get() = _uiState.value.draft
+
     override fun updateDraft(text: String) {
         _uiState.update { it.copy(draft = text, draftTokens = parseComposerTokens(text, knownSkills = it.skillSuggestions.associate { skill -> skill.slashName to skill.name }), sendErrorMessage = null, steerFailureMessage = null) }
         saveDraft()
@@ -628,7 +630,7 @@ class HermesChatViewModel(
     val workspaceFiles: HermesWorkspaceFileClient? get() = workspace.value?.let { HermesWorkspaceFileClient(it, http) }
     fun workspaceGit(showsCachedData: () -> Boolean): HermesGitClient? {
         val own = workspace.value ?: return null
-        return HermesGitClient(own, http, writeMessage = ::commitMessage, writeOwner = {
+        return HermesGitClient(own, http, writeMessage = { diff, recent, avoid -> commitMessage(own, diff, recent, avoid) }, writeOwner = {
             val generation = coordinator?.engine?.generation ?: throw BotFailure.Stale
             val validate: () -> Unit = {
                 val turn = coordinator ?: throw BotFailure.Stale
@@ -638,9 +640,25 @@ class HermesChatViewModel(
             validate(); validate
         })
     }
-    suspend fun commitMessage(diff: String, recent: String, avoid: String?): String {
+    private suspend fun commitMessage(owner: HermesWorkspaceContext, diff: String, recent: String, avoid: String?): String {
         val turn = coordinator ?: throw BotFailure.Stale
-        return turn.engine.request(HermesCall.CommitMessage(diff, recent, avoid, turn.engine.runtime, profile), turn.engine.generation)["text"].text.orEmpty()
+        val generation = turn.engine.generation
+        val validate: () -> Unit = {
+            if (coordinator !== turn || generation != turn.engine.generation || workspace.value != owner) throw BotFailure.Stale
+        }
+        validate()
+        if (turn.engine.connectionState == HermesConversation.ConnectionState.CONNECTED) {
+            return turn.engine.request(HermesCall.CommitMessage(diff, recent, avoid, turn.engine.runtime, owner.profile), generation)["text"].text.orEmpty()
+        }
+        // More → Git can outlive the chat's screen. The protocol supports the Profile's
+        // stateless task backend when no live conversation runtime is attached.
+        val client = BotClient(http)
+        return try {
+            client.connect()
+            client.call(HermesCall.CommitMessage(diff, recent, avoid, null, owner.profile), validate)["text"].text.orEmpty()
+        } finally {
+            client.close()
+        }
     }
     suspend fun completeFilePaths(query: String): List<ComposerFileSuggestion> {
         val turn = coordinator ?: return emptyList()

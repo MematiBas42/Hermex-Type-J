@@ -40,7 +40,20 @@ import androidx.compose.ui.unit.dp
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 
 /** One-shot caret move requested after accepting an autocomplete row. */
-internal data class ComposerCaretRequest(val id: Long, val caret: Int)
+internal data class ComposerCaretRequest(val id: Long, val caret: Int, val draft: String)
+
+/** Reads at execution time so a delayed composition cannot restore an older local edit. */
+internal fun reconcileComposerText(
+    current: TextFieldValue,
+    readDraft: () -> String,
+    requestedCaret: ComposerCaretRequest?,
+): TextFieldValue {
+    val latest = readDraft()
+    val selection = requestedCaret?.takeIf { it.draft == latest }
+        ?.caret?.coerceIn(0, latest.length)?.let(::TextRange)
+    return if (latest == current.text && selection == null) current
+    else TextFieldValue(latest, selection ?: TextRange(latest.length))
+}
 
 /**
  * Native multiline composer editor.
@@ -53,6 +66,7 @@ internal data class ComposerCaretRequest(val id: Long, val caret: Int)
 @Composable
 internal fun ChatComposerTextInput(
     draft: String,
+    readDraft: () -> String,
     draftTokens: List<ComposerToken>,
     enabled: Boolean,
     keyboardSendEnabled: Boolean,
@@ -71,16 +85,14 @@ internal fun ChatComposerTextInput(
     val currentRecall by rememberUpdatedState(recallLastUserMessage)
     val currentOnDraftChange by rememberUpdatedState(onDraftChange)
     val currentOnSelectionChange by rememberUpdatedState(onSelectionChange)
+    val readCurrentDraft by rememberUpdatedState(readDraft)
 
     LaunchedEffect(draft, requestedCaret?.id) {
         val pendingRequest = requestedCaret?.takeIf { it.id != appliedCaretRequestId }
-        val requestedSelection = pendingRequest?.caret
-            ?.coerceIn(0, draft.length)
-            ?.let(::TextRange)
-        if (draft != fieldValue.text || requestedSelection != null) {
-            val nextSelection = requestedSelection ?: TextRange(draft.length)
-            fieldValue = TextFieldValue(text = draft, selection = nextSelection)
-            currentOnSelectionChange(nextSelection)
+        val next = reconcileComposerText(fieldValue, readCurrentDraft, pendingRequest)
+        if (next != fieldValue) {
+            fieldValue = next
+            currentOnSelectionChange(next.selection)
         }
         if (pendingRequest != null) appliedCaretRequestId = pendingRequest.id
     }

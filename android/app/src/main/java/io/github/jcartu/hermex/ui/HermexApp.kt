@@ -34,7 +34,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -363,6 +365,14 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
             }
         }
 
+        val currentDestination by rememberUpdatedState(selected)
+        val currentDestinationContent by rememberUpdatedState(destinationContent)
+        val hostedContent = remember(destinationStateHolder) {
+            movableContentOf {
+                DestinationHost(currentDestination, destinationStateHolder, currentDestinationContent)
+            }
+        }
+
         if (paneCount == 1) {
             Scaffold(
                 bottomBar = {
@@ -382,7 +392,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 },
             ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
-                    DestinationHost(selected, destinationStateHolder, destinationContent)
+                    hostedContent()
                 }
             }
         } else {
@@ -401,7 +411,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                     }
                 }
                 Box(Modifier.fillMaxSize().systemBarsPadding()) {
-                    DestinationHost(selected, destinationStateHolder, destinationContent)
+                    hostedContent()
                 }
             }
         }
@@ -409,7 +419,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     }
 }
 
-/** Keeps each destination's Compose state alive across pane-count changes. */
+/** Saves destination state across tab changes; movable root content preserves it during folds. */
 @Composable
 private fun DestinationHost(
     selected: HermexDestination,

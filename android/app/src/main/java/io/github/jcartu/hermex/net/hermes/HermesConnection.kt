@@ -184,6 +184,9 @@ class HermesConnection(
         val jar = HermesCookieJar()
         client = httpClient.newBuilder()
             .cookieJar(jar)
+            // A proxy can retain a closed idle socket. Start writes on a fresh connection
+            // rather than retrying an operation whose outcome could already be committed.
+            .connectionPool(okhttp3.ConnectionPool(0, 5, TimeUnit.MINUTES))
             // A dropped reply may follow a committed mutation or consumed refresh token.
             .retryOnConnectionFailure(false)
             .addNetworkInterceptor(headers.redirectGuard(address))
@@ -199,8 +202,10 @@ class HermesConnection(
             .writeTimeout(120, TimeUnit.SECONDS)
             .callTimeout(180, TimeUnit.SECONDS)
             .build()
-        readClient = client.newBuilder().retryOnConnectionFailure(true).build()
-        provisioningReadClient = provisioningClient.newBuilder().retryOnConnectionFailure(true).build()
+        readClient = client.newBuilder().connectionPool(httpClient.connectionPool)
+            .retryOnConnectionFailure(true).build()
+        provisioningReadClient = provisioningClient.newBuilder().connectionPool(httpClient.connectionPool)
+            .retryOnConnectionFailure(true).build()
         socketClient = client.newBuilder()
             // OkHttp omits network interceptors for WebSocket calls; never follow upgrades.
             .followRedirects(false)
