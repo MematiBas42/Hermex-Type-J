@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -55,7 +56,7 @@ class SseChatStream(
         .readTimeout(0, TimeUnit.SECONDS)
         .build()
 
-    /** Last non-blank SSE `id:` seen on the current connection (the server's replay cursor). */
+    /** Last SSE id delivered to the chat collector, never a frame still buffered on the IO reader. */
     @Volatile
     var lastEventId: String? = null
         private set
@@ -68,7 +69,7 @@ class SseChatStream(
      * closes the connection.
      */
     fun connect(streamId: String, replayAfterSeq: Int? = null): Flow<ChatStreamEvent> =
-        openEventStream { api.chatStreamUrl(streamId, replayAfterSeq) }
+        openEventStream(tracksCursor = true) { api.chatStreamUrl(streamId, replayAfterSeq) }
 
     /** `GET /api/approval/stream?session_id=…` — the per-session approval feed (`approvalStreamURL`). */
     fun connectApprovalStream(sessionId: String): Flow<ChatStreamEvent> =
@@ -78,13 +79,15 @@ class SseChatStream(
     fun connectClarifyStream(sessionId: String): Flow<ChatStreamEvent> =
         openEventStream { api.clarifyStreamUrl(sessionId) }
 
-    private fun openEventStream(url: suspend () -> HttpUrl): Flow<ChatStreamEvent> = callbackFlow {
-        lastEventId = null
+    private data class ReceivedEvent(val event: ChatStreamEvent, val cursor: String?)
+
+    private fun openEventStream(tracksCursor: Boolean = false, url: suspend () -> HttpUrl): Flow<ChatStreamEvent> = callbackFlow {
+        if (tracksCursor) lastEventId = null
 
         val resolvedUrl = try {
             url()
         } catch (error: ApiError) {
-            trySend(ChatStreamEvent.TransportError(error.message))
+            trySend(ReceivedEvent(ChatStreamEvent.TransportError(error.message), null))
             close()
             awaitClose { }
             return@callbackFlow
@@ -106,7 +109,7 @@ class SseChatStream(
         val call = client.newCall(builder.build())
         val reader = launch(Dispatchers.IO) {
             try {
-                readEvents(call) { event -> trySend(event) }
+                readEvents(call) { event, cursor -> trySend(ReceivedEvent(event, cursor)) }
             } finally {
                 close()
             }
@@ -116,36 +119,44 @@ class SseChatStream(
             call.cancel()
             reader.cancel()
         }
-    }.buffer(Channel.UNLIMITED)
+    }.buffer(Channel.UNLIMITED).map { received ->
+        if (tracksCursor && received.cursor != null) lastEventId = received.cursor
+        received.event
+    }
 
     /** Executes [call] and feeds every frame through [emit]; returns at EOF, failure or cancellation. */
-    private fun readEvents(call: Call, emit: (ChatStreamEvent) -> Unit) {
+    private fun readEvents(call: Call, emit: (ChatStreamEvent, String?) -> Unit) {
         val response = try {
             call.execute()
         } catch (error: IOException) {
-            if (!call.isCanceled()) emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."))
+            if (!call.isCanceled()) emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."), null)
             return
         }
         response.use {
             if (!it.isSuccessful) {
-                emit(ChatStreamEvent.TransportError("The stream returned HTTP ${it.code}."))
+                emit(ChatStreamEvent.TransportError("The stream returned HTTP ${it.code}."), null)
                 return
             }
             val source = it.body?.source()
             if (source == null) {
-                emit(ChatStreamEvent.TransportError("The stream connection failed."))
+                emit(ChatStreamEvent.TransportError("The stream connection failed."), null)
                 return
             }
+            var frameId: String? = null
+            var deliveredId: String? = null
             val parser = SseFrameParser(
-                onComment = { emit(ChatStreamEvent.Heartbeat) },
-                onEventId = { id -> lastEventId = id },
-                onFrame = { type, data -> emit(SseEventDecoder.decode(json, type, data)) },
+                onComment = { emit(ChatStreamEvent.Heartbeat, deliveredId) },
+                onEventId = { id -> frameId = id },
+                onFrame = { type, data ->
+                    deliveredId = frameId
+                    emit(SseEventDecoder.decode(json, type, data), deliveredId)
+                },
             )
             try {
                 readLines(source, parser)
             } catch (error: IOException) {
                 if (!call.isCanceled()) {
-                    emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."))
+                    emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."), null)
                 }
             }
         }
@@ -240,7 +251,7 @@ sealed class ChatStreamEvent {
     data class Error(val message: String) : ChatStreamEvent()
     data class TransportError(val message: String) : ChatStreamEvent()
 
-    /** Parity with Swift; okhttp-sse consumes comment lines, so never emitted by [SseChatStream]. */
+    /** Swift `onComment`: transport liveness without semantic progress. */
     object Heartbeat : ChatStreamEvent()
     object Ignored : ChatStreamEvent()
 }

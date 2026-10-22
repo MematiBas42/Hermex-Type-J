@@ -64,6 +64,16 @@ data class ChatStreamLoadPreparation(
     val shouldPrepareSuspendedStreamResume: Boolean,
 )
 
+/** Port of `ChatStreamSnapshotRestoreResult`: whether a run's snapshot was adopted, and the SSE cursor it carried. */
+data class ChatStreamSnapshotRestoreResult(
+    val didRestoreSnapshot: Boolean,
+    val lastEventId: String?,
+) {
+    companion object {
+        val notRestored = ChatStreamSnapshotRestoreResult(didRestoreSnapshot = false, lastEventId = null)
+    }
+}
+
 /** Port of `ChatRunEnding`: span of a finished run and how it ended (epoch seconds). */
 data class ChatRunEndingRecord(
     val startedAt: Double,
@@ -72,9 +82,12 @@ data class ChatRunEndingRecord(
 )
 
 /**
- * Port of `ChatStreamCoordinatorDelegate` (minus the iOS Live Activity and
- * cross-process snapshot-store hooks — the ViewModel outlives backgrounding,
- * so "save snapshot" reduces to flushing the pending streamed content).
+ * Port of `ChatStreamCoordinatorDelegate` (minus the iOS Live Activity
+ * hooks). The snapshot trio mirrors Swift exactly: the coordinator asks the
+ * view model to save the live run at every boundary it may lose the
+ * connection (suspend, transport error, stale reconnect, session reload),
+ * to restore it when a load adopts the same run, and to drop it once the run
+ * ends.
  */
 interface ChatStreamCoordinatorDelegate {
     val streamCoordinatorSessionId: String?
@@ -89,7 +102,9 @@ interface ChatStreamCoordinatorDelegate {
     fun streamCoordinatorLatestAssistantMessageId(): String?
     fun streamCoordinatorStartAuxiliaryMonitoring()
     fun streamCoordinatorStopAuxiliaryMonitoring(clearPrompt: Boolean)
-    fun streamCoordinatorFlushPendingStreamingContent()
+    fun streamCoordinatorSaveSnapshotIfNeeded()
+    fun streamCoordinatorRestoreSnapshotIfAvailable(streamId: String): ChatStreamSnapshotRestoreResult
+    fun streamCoordinatorRemoveSnapshot(streamId: String?)
     fun streamCoordinatorFlushPinnedLocalNoticesToTranscript()
     fun streamCoordinatorDrainQueuedSlashMessageIfIdle()
     fun streamCoordinatorRefreshCompletedResponseTitleIfNeeded()
@@ -276,7 +291,7 @@ class ChatStreamCoordinator(
         if (activeStreamId == null || hasCompletedCurrentResponse || isConnectionSuspended) return
 
         lastEventId = sse.lastEventId ?: lastEventId
-        delegate?.streamCoordinatorFlushPendingStreamingContent()
+        delegate?.streamCoordinatorSaveSnapshotIfNeeded()
         hasInMemorySnapshotForActiveStream = true
         isConnectionSuspended = true
         stopConnection()
@@ -288,7 +303,7 @@ class ChatStreamCoordinator(
         setLiveTokensPerSecondIfChanged(null)
         val activeStreamIdBeforeLoad = activeStreamId
         if (activeStreamIdBeforeLoad != null && !hasCompletedCurrentResponse) {
-            delegate?.streamCoordinatorFlushPendingStreamingContent()
+            delegate?.streamCoordinatorSaveSnapshotIfNeeded()
         }
 
         return ChatStreamLoadPreparation(
@@ -345,7 +360,7 @@ class ChatStreamCoordinator(
                     delegate?.streamCoordinatorStreamingAssistantMessageId =
                         delegate?.streamCoordinatorLatestAssistantMessageId()
                     isConnectionSuspended = true
-                    restoreLoadedStreamCursor(trimmedLoadedStreamId, preparation)
+                    restoreLoadedStreamSnapshot(trimmedLoadedStreamId, preparation)
                 } else {
                     setActiveStreamId(null)
                     hasInMemorySnapshotForActiveStream = false
@@ -363,7 +378,11 @@ class ChatStreamCoordinator(
                     seedActiveRunStart(runStartedAt)
                     delegate?.streamCoordinatorStreamingAssistantMessageId =
                         delegate?.streamCoordinatorLatestAssistantMessageId()
-                    restoreLoadedStreamCursor(streamId, preparation)
+                    restoreLoadedStreamSnapshot(streamId, preparation)
+                    if (delegate?.streamCoordinatorStreamingAssistantMessageId == null) {
+                        delegate?.streamCoordinatorStreamingAssistantMessageId =
+                            delegate?.streamCoordinatorLatestAssistantMessageId()
+                    }
                 }
                 isConnectionSuspended = false
             }
@@ -443,6 +462,9 @@ class ChatStreamCoordinator(
                         val completedLoad = loadMessagesForReconnect(reconnectTaskId)
                         if (!completedLoad || !reconnectTaskIsCurrent(reconnectTaskId, streamId, runGeneration)) return
 
+                        if (delegate?.streamCoordinatorStreamingAssistantMessageId == null) {
+                            restoreSnapshotIfAvailable(streamId)
+                        }
                         if (delegate?.streamCoordinatorStreamingAssistantMessageId == null) {
                             delegate?.streamCoordinatorStreamingAssistantMessageId =
                                 delegate?.streamCoordinatorLatestAssistantMessageId()
@@ -795,7 +817,7 @@ class ChatStreamCoordinator(
         if (isConnectionSuspended) return
 
         lastEventId = sse.lastEventId ?: lastEventId
-        delegate?.streamCoordinatorFlushPendingStreamingContent()
+        delegate?.streamCoordinatorSaveSnapshotIfNeeded()
         hasInMemorySnapshotForActiveStream = true
         isConnectionSuspended = true
         stopConnection()
@@ -878,7 +900,7 @@ class ChatStreamCoordinator(
 
         lastEventId = sse.lastEventId ?: lastEventId
         val replayAfterSeq = if (usesReplay) runJournalReplayAfterSeq(lastEventId) ?: 0 else null
-        delegate?.streamCoordinatorFlushPendingStreamingContent()
+        delegate?.streamCoordinatorSaveSnapshotIfNeeded()
         setRecoveryStateIfChanged(ActiveStreamRecoveryState.RECONNECTING)
         stopConnection()
         delegate?.streamCoordinatorStopAuxiliaryMonitoring(clearPrompt = true)
@@ -890,6 +912,7 @@ class ChatStreamCoordinator(
     private fun completeCurrentResponse(needsTranscriptRefresh: Boolean, completedStreamId: String? = null) {
         runGeneration += 1
         invalidateReconnectTask()
+        delegate?.streamCoordinatorRemoveSnapshot(activeStreamId ?: completedStreamId)
         delegate?.streamCoordinatorStopAuxiliaryMonitoring(clearPrompt = true)
         recordRunEndingIfRunning(ChatRunEnding.COMPLETED)
         setActiveStreamId(null)
@@ -905,6 +928,7 @@ class ChatStreamCoordinator(
 
     private fun completeResponseFromRefreshedTranscriptAndFinishStream(completedStreamId: String?) {
         completeCurrentResponse(needsTranscriptRefresh = false, completedStreamId = completedStreamId)
+        delegate?.streamCoordinatorRemoveSnapshot(completedStreamId)
         finishStream()
     }
 
@@ -949,6 +973,7 @@ class ChatStreamCoordinator(
         stopWatchdog()
         delegate?.streamCoordinatorStopAuxiliaryMonitoring(clearPrompt = true)
         delegate?.streamCoordinatorFlushPinnedLocalNoticesToTranscript()
+        delegate?.streamCoordinatorRemoveSnapshot(activeStreamId)
         setActiveStreamId(null)
         hasInMemorySnapshotForActiveStream = false
         lastEventId = null
@@ -1099,15 +1124,21 @@ class ChatStreamCoordinator(
         }
     }
 
-    /**
-     * Restores the resume cursor while a session load adopts [streamId].
-     * Adopting a different stream first drops the previous stream's cursor, so
-     * its seq is never sent as `after_seq` for the new run (#599).
-     */
-    private fun restoreLoadedStreamCursor(streamId: String, preparation: ChatStreamLoadPreparation) {
-        if (preparation.activeStreamIdBeforeLoad == streamId) return
+    /** Port of `restoreLoadedStreamSnapshot`: a different run never inherits the old run's cursor (#599). */
+    private fun restoreLoadedStreamSnapshot(streamId: String, preparation: ChatStreamLoadPreparation) {
+        if (preparation.activeStreamIdBeforeLoad == streamId) {
+            restoreSnapshotIfAvailable(streamId)
+            return
+        }
         lastEventId = null
-        hasInMemorySnapshotForActiveStream = false
+        hasInMemorySnapshotForActiveStream = restoreSnapshotIfAvailable(streamId)
+    }
+
+    private fun restoreSnapshotIfAvailable(streamId: String): Boolean {
+        val result = delegate?.streamCoordinatorRestoreSnapshotIfAvailable(streamId)
+            ?: ChatStreamSnapshotRestoreResult.notRestored
+        if (lastEventId == null) lastEventId = result.lastEventId
+        return result.didRestoreSnapshot
     }
 
     private fun setRecoveryStateIfChanged(next: ActiveStreamRecoveryState) {
