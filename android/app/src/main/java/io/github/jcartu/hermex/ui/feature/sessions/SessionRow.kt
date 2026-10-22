@@ -127,6 +127,9 @@ fun SessionRow(
     forkOrigin: ForkOrigin? = null,
     onOpenForkParent: (() -> Unit)? = null,
     nowEpochSeconds: Long = System.currentTimeMillis() / 1000,
+    displayTitle: String = sessionDisplayTitle(session),
+    profileTag: String? = null,
+    labelsArchived: Boolean = false,
 ) {
     val stateColors = sessionRowStateColors()
 
@@ -135,7 +138,7 @@ fun SessionRow(
         val metadata = sessionMetadataLabel(session, showsMessageCount, showsWorkspace)
         val model = session.model?.trim()?.takeIf { it.isNotEmpty() }
         val showsSupplemental = !isNarrow &&
-            (metadata != null || isViewingCachedData || session.isSessionReadOnly || model != null)
+            (metadata != null || isViewingCachedData || session.isSessionReadOnly || model != null || profileTag != null || (labelsArchived && session.archived == true))
         val showsExcerpt = !isNarrow && searchExcerpt != null
         val showsFork = !isNarrow && forkOrigin != null
 
@@ -148,7 +151,7 @@ fun SessionRow(
                 .fillMaxWidth()
                 .heightIn(min = minHeight.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp)
-                .semantics { contentDescription = sessionRowAccessibilitySummary(session, isViewingCachedData, isUnread, attentionState, searchExcerpt, forkOrigin, metadata) },
+                .semantics { contentDescription = sessionRowAccessibilitySummary(session, isViewingCachedData, isUnread, attentionState, searchExcerpt, forkOrigin, metadata, displayTitle, profileTag, labelsArchived) },
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -169,7 +172,7 @@ fun SessionRow(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = sessionDisplayTitle(session),
+                        text = displayTitle,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
@@ -232,6 +235,8 @@ fun SessionRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
+                        profileTag?.let { SessionRowBadge(it, MaterialTheme.colorScheme.onSurfaceVariant) }
+                        if (labelsArchived && session.archived == true) SessionRowBadge("Archived", MaterialTheme.colorScheme.onSurfaceVariant)
                         if (isViewingCachedData) {
                             SessionRowBadge("Cached", stateColors.cached)
                         }
@@ -303,8 +308,13 @@ private fun sessionRowAccessibilitySummary(
     searchExcerpt: SessionSearchExcerpt?,
     forkOrigin: ForkOrigin?,
     metadataLabel: String?,
+    displayTitle: String,
+    profileTag: String?,
+    labelsArchived: Boolean,
 ): String {
-    val parts = mutableListOf(sessionDisplayTitle(session))
+    val parts = mutableListOf(displayTitle)
+    profileTag?.let { parts.add("Profile: $it") }
+    if (labelsArchived && session.archived == true) parts.add("Archived")
 
     searchExcerpt?.let { parts.add("Matched: ${it.text}") }
     forkOrigin?.let { parts.add(it.title) }
