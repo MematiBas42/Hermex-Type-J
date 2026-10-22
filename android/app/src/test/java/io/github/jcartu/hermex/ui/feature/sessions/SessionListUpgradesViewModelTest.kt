@@ -340,11 +340,13 @@ class SessionListUpgradesViewModelTest {
 
     // MARK: - Idle ticker (1.8.0)
 
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
     @Test
     fun `idle ticker emits immediately then once per wall minute until cancelled`() = runTest {
         val ticks = mutableListOf<Long>()
         var fakeNow = 1_700_000_000L
-        // A minute boundary as the fake wall clock: each tick waits exactly 60 s.
+        // The fake wall clock steps with the fake epoch, staying minute-aligned:
+        // every tick waits exactly 60 virtual seconds.
         var fakeNowMillis = 120_000L
         val job = launch {
             SessionListIdleTicker.run(
@@ -358,8 +360,10 @@ class SessionListUpgradesViewModelTest {
         testScheduler.runCurrent()
         assertEquals(listOf(fakeNow), ticks)
 
+        // 60_001 covers the next tick whether or not the endpoint is inclusive.
         fakeNow += 60
-        advanceTimeBy(60_000)
+        fakeNowMillis += 60_000L
+        advanceTimeBy(60_001)
         assertEquals(listOf(1_700_000_000L, 1_700_000_060L), ticks)
 
         job.cancel()

@@ -53,6 +53,7 @@ class SessionsComposeTest {
     private fun composeAndDump(
         paneCount: Int,
         widthDp: Int,
+        visibleTextOnly: Boolean = false,
         content: @Composable () -> Unit,
     ): List<String> {
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
@@ -65,7 +66,7 @@ class SessionsComposeTest {
         }
         org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
         org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
-        return activity.semanticsDump()
+        return activity.semanticsDump(visibleTextOnly)
     }
 
     private companion object {
@@ -73,9 +74,11 @@ class SessionsComposeTest {
          * Walks the composed semantics tree without the (absent) ui-test
          * artifact: finds the activity's `AndroidComposeView` by class name
          * (the class is compose-internal) and reads its public `semanticsOwner`
-         * reflectively.
+         * reflectively. [visibleTextOnly] drops content descriptions, so layout
+         * assertions measure what is drawn, not what a screen reader announces
+         * (the row's summary always carries the match excerpt and fork title).
          */
-        fun android.app.Activity.semanticsDump(): List<String> {
+        fun android.app.Activity.semanticsDump(visibleTextOnly: Boolean): List<String> {
             val composeView = window.decorView.findComposeView() ?: return emptyList()
             val owner = composeView.javaClass
                 .getMethod("getSemanticsOwner")
@@ -88,8 +91,10 @@ class SessionsComposeTest {
                             @Suppress("UNCHECKED_CAST")
                             (entry.value as? List<AnnotatedString>)?.forEach { out += it.text }
                         SemanticsProperties.ContentDescription ->
-                            @Suppress("UNCHECKED_CAST")
-                            (entry.value as? List<String>)?.let { out += it }
+                            if (!visibleTextOnly) {
+                                @Suppress("UNCHECKED_CAST")
+                                (entry.value as? List<String>)?.let { out += it }
+                            }
                         SemanticsProperties.EditableText ->
                             (entry.value as? AnnotatedString)?.let { out += it.text }
                     }
@@ -217,8 +222,9 @@ class SessionsComposeTest {
         assertTrue(wide.any { it.contains("the budget for Q3 is tight") })
         assertTrue(wide.contains("Forked from Original investigation"))
 
-        // Below ~220dp the excerpt, fork line, supplemental row and time hide.
-        val narrow = composeAndDump(paneCount = 1, widthDp = 160) {
+        // Below ~220dp the excerpt, fork line, supplemental row and time hide
+        // from the LAYOUT (the accessibility summary still announces them).
+        val narrow = composeAndDump(paneCount = 1, widthDp = 160, visibleTextOnly = true) {
             SessionRow(
                 session = fork,
                 showsMessageCount = true,
@@ -305,6 +311,7 @@ class SessionsComposeTest {
 
     // MARK: - Idle ticker (1.8.0): ticks only while resumed
 
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
     @Test
     fun `idle ticker ticks only while the list is resumed`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
@@ -340,7 +347,7 @@ class SessionsComposeTest {
             assertEquals(listOf(fakeNow), ticks)
 
             fakeNow += 60
-            advanceTimeBy(60_000)
+            advanceTimeBy(60_001)
             assertEquals(2, ticks.size)
 
             // Paused: the tick loop is cancelled; advancing time adds nothing.
