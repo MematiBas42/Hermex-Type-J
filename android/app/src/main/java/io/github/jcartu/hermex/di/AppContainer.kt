@@ -201,9 +201,12 @@ class AppContainer(context: Context) {
      */
     val hermesConnections: io.github.jcartu.hermex.net.hermes.HermesConnections by lazy {
         io.github.jcartu.hermex.net.hermes.HermesConnections(httpClient = { okHttpClient }, store = botConnectionStore).also { connections ->
-            connections.onSignInRejected = { server, failure ->
-                // Transport callbacks run on HermesActor, not the UI dispatcher.
-                appScope.launch(Dispatchers.Main.immediate) { authManager.hermesSignInRejected(server, failure) }
+            connections.onSignInRejected = { server, failure, isCurrent ->
+                // Revalidate the emitting connection after the dispatcher hop: the user may
+                // have replaced or re-saved credentials while this event waited for Main.
+                appScope.launch(Dispatchers.Main.immediate) {
+                    if (isCurrent()) authManager.hermesSignInRejected(server, failure)
+                }
             }
         }
     }
