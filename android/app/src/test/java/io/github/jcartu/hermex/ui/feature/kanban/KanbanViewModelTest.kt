@@ -1,6 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.kanban
 
 import io.github.jcartu.hermex.model.KanbanAddCommentResponse
+import io.github.jcartu.hermex.model.KanbanAssigneeHistory
 import io.github.jcartu.hermex.model.KanbanBoard
 import io.github.jcartu.hermex.model.KanbanBoardSnapshot
 import io.github.jcartu.hermex.model.KanbanBoardsResponse
@@ -17,6 +18,7 @@ import io.github.jcartu.hermex.model.KanbanDispatchResult
 import io.github.jcartu.hermex.model.KanbanEvent
 import io.github.jcartu.hermex.model.KanbanEventsEnvelope
 import io.github.jcartu.hermex.model.KanbanStatus
+import io.github.jcartu.hermex.model.KanbanStats
 import io.github.jcartu.hermex.net.HermesApi
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -57,12 +59,14 @@ class KanbanViewModelTest {
             val request = firstArg<io.github.jcartu.hermex.model.KanbanCardDetailRequest>()
             KanbanCardDetailEnvelope(card = card(request.cardId, "todo"))
         }
+        coEvery { api.kanbanStats(any()) } returns KanbanStats(total = 2)
+        coEvery { api.kanbanAssignees(any()) } returns KanbanAssigneeHistory(listOf("reviewer"))
     }
 
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test fun `load resolves active board columns and filters`() = runTest(dispatcher) {
-        val vm = KanbanViewModel(api)
+        val vm = KanbanViewModel(WebuiKanbanDataSource(api))
         vm.load(); advanceUntilIdle()
         val state = vm.uiState.value
         assertEquals("main", state.selectedBoardSlug)
@@ -102,7 +106,7 @@ class KanbanViewModelTest {
         vm.bulk(KanbanBulkActionRequest("main", listOf("c1", "c2"), KanbanBulkActionType.ARCHIVE))
         advanceUntilIdle()
         assertTrue(vm.uiState.value.errorMessage!!.contains("1 card"))
-        assertEquals(setOf("c1", "c2"), vm.uiState.value.selectedCardIds)
+        assertEquals(setOf("c2"), vm.uiState.value.selectedCardIds)
     }
 
     @Test fun `dispatcher preview and run keep separate results`() = runTest(dispatcher) {
@@ -120,7 +124,10 @@ class KanbanViewModelTest {
         coEvery { api.kanbanEvents(any()) } returns KanbanEventsEnvelope(
             events = listOf(KanbanEvent(8, "c1", null, "updated", 1)), latestEventId = 8,
         )
-        val vm = KanbanViewModel(api, livePollMillis = 10)
+        val vm = KanbanViewModel(
+            WebuiKanbanDataSource(api),
+            liveTiming = KanbanLiveTiming(webuiPollingMillis = 10),
+        )
         vm.load(); advanceUntilIdle()
         vm.startLiveUpdates(); advanceTimeBy(11); vm.stopLiveUpdates(); advanceUntilIdle()
         assertEquals(8, vm.uiState.value.latestEventId)
@@ -129,7 +136,7 @@ class KanbanViewModelTest {
     }
 
     private fun loadedViewModel(): KanbanViewModel {
-        val vm = KanbanViewModel(api)
+        val vm = KanbanViewModel(WebuiKanbanDataSource(api))
         vm.load()
         dispatcher.scheduler.advanceUntilIdle()
         return vm
