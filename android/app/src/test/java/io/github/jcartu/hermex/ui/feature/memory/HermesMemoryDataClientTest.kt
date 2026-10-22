@@ -114,14 +114,14 @@ class HermesMemoryDataClientTest {
                     """{"text":${BotJSON.string(memory).encoded},"binary":false,"truncated":false}""",
                 )
                 "/api/fs/write-text" -> {
-                    val body = BotJSON.parse(request.body.readUtf8())
+                    val body = BotJSON.parse(request.body.clone().readUtf8())
                     memory = body["content"].text.orEmpty()
                     json("""{"ok":true}""")
                 }
                 "/api/profiles/default/soul" -> if (request.method == "GET") {
                     json("""{"content":${BotJSON.string(soul).encoded},"exists":true}""")
                 } else {
-                    soul = BotJSON.parse(request.body.readUtf8())["content"].text.orEmpty()
+                    soul = BotJSON.parse(request.body.clone().readUtf8())["content"].text.orEmpty()
                     json("""{"ok":true}""")
                 }
                 else -> MockResponse().setResponseCode(404).setBody("""{"detail":"missing"}""")

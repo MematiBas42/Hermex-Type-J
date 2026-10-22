@@ -184,23 +184,25 @@ internal fun GitWorkspaceScreen(
     state: GitWorkspaceUiState,
     paneCount: Int = LocalPaneCount.current,
     actions: GitWorkspaceActions = GitWorkspaceActions(),
+    showsCommitControls: Boolean = true,
+    showFileIcons: Boolean = true,
 ) {
     Box(Modifier.fillMaxSize()) {
         when {
             paneCount == 1 && state.selectedFilePath != null -> {
                 BackHandler(onBack = actions.closeReview)
-                GitReviewPane(state, actions, Modifier.fillMaxSize(), actions.closeReview)
+                GitReviewPane(state, actions, Modifier.fillMaxSize(), actions.closeReview, showsCommitControls, showFileIcons)
             }
-            paneCount == 1 -> GitStatusPane(state, actions, Modifier.fillMaxSize())
+            paneCount == 1 -> GitStatusPane(state, actions, Modifier.fillMaxSize(), showFileIcons)
             paneCount == 2 -> HingeAwarePaneRow(2) { index, modifier ->
-                if (index == 0) GitStatusPane(state, actions, modifier)
-                else GitReviewPane(state, actions, modifier, null)
+                if (index == 0) GitStatusPane(state, actions, modifier, showFileIcons)
+                else GitReviewPane(state, actions, modifier, null, showsCommitControls, showFileIcons)
             }
             else -> HingeAwarePaneRow(3) { index, modifier ->
                 when (index) {
                     0 -> GitSessionsPane(state, actions.selectSession, modifier)
-                    1 -> GitStatusPane(state, actions, modifier)
-                    else -> GitReviewPane(state, actions, modifier, null)
+                    1 -> GitStatusPane(state, actions, modifier, showFileIcons)
+                    else -> GitReviewPane(state, actions, modifier, null, showsCommitControls, showFileIcons)
                 }
             }
         }
@@ -251,6 +253,7 @@ private fun GitStatusPane(
     state: GitWorkspaceUiState,
     actions: GitWorkspaceActions,
     modifier: Modifier = Modifier,
+    showFileIcons: Boolean,
 ) {
     var menu by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
@@ -319,6 +322,7 @@ private fun GitStatusPane(
                     checked = file.displayPath in state.selectedPaths,
                     onSelect = actions.selectFile,
                     onToggle = actions.togglePath,
+                    showFileIcon = showFileIcons,
                 )
             }
         }
@@ -333,6 +337,7 @@ private fun GitFileRow(
     checked: Boolean,
     onSelect: (GitFile) -> Unit,
     onToggle: (String) -> Unit,
+    showFileIcon: Boolean,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().combinedClickable(
@@ -345,7 +350,7 @@ private fun GitFileRow(
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked, { file.displayPath.takeIf(String::isNotBlank)?.let(onToggle) })
-            FileTypeIcon(file.displayPath, Modifier.padding(2.dp))
+            if (showFileIcon) FileTypeIcon(file.displayPath, Modifier.padding(2.dp))
             Column(Modifier.weight(1f).padding(start = 8.dp)) {
                 Text(file.fileName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 file.parentDirectory?.let { Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
@@ -362,6 +367,8 @@ private fun GitReviewPane(
     actions: GitWorkspaceActions,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)?,
+    showsCommitControls: Boolean,
+    showFileIcons: Boolean,
 ) {
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -379,25 +386,28 @@ private fun GitReviewPane(
             files = state.reviewFiles,
             initialPath = state.selectedFilePath,
             modifier = Modifier.weight(1f),
+            showFileIcons = showFileIcons,
         )
-        HorizontalDivider()
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = state.commitMessage,
-                onValueChange = actions.messageChange,
-                label = { Text("Commit message") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                maxLines = 4,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = actions.generate, enabled = !state.isActing) {
-                    Icon(Icons.Filled.AutoAwesome, null)
-                    Text("Generate", Modifier.padding(start = 4.dp))
-                }
-                Button(onClick = actions.commit, enabled = state.commitMessage.trim().isNotEmpty() && !state.isActing) {
-                    Icon(Icons.Filled.Commit, null)
-                    Text(if (state.selectedPaths.isEmpty()) "Commit staged" else "Commit selected", Modifier.padding(start = 4.dp))
+        if (showsCommitControls) {
+            HorizontalDivider()
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = state.commitMessage,
+                    onValueChange = actions.messageChange,
+                    label = { Text("Commit message") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = actions.generate, enabled = !state.isActing) {
+                        Icon(Icons.Filled.AutoAwesome, null)
+                        Text("Generate", Modifier.padding(start = 4.dp))
+                    }
+                    Button(onClick = actions.commit, enabled = state.commitMessage.trim().isNotEmpty() && !state.isActing) {
+                        Icon(Icons.Filled.Commit, null)
+                        Text(if (state.selectedPaths.isEmpty()) "Commit staged" else "Commit selected", Modifier.padding(start = 4.dp))
+                    }
                 }
             }
         }

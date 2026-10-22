@@ -1,8 +1,10 @@
 package io.github.jcartu.hermex.ui.feature.workspace.hermes
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
@@ -23,7 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,7 +37,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -130,6 +135,7 @@ fun HermesWorkspaceScreen(
     state: HermesWorkspaceUiState,
     paneCount: Int = LocalPaneCount.current,
     actions: HermesWorkspaceActions = HermesWorkspaceActions(),
+    showFileIcons: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val workspaceActions = WorkspaceActions(
@@ -144,13 +150,13 @@ fun HermesWorkspaceScreen(
         paneCount >= 3 -> HingeAwarePaneRow(paneCount = 3, modifier = modifier) { index, paneModifier ->
             when (index) {
                 0 -> HermesFolderPane(state, actions, paneModifier)
-                1 -> HermesFileTreePane(state, workspaceActions, paneModifier)
+                1 -> HermesFileTreePane(state, workspaceActions, paneModifier, showFileIcons)
                 else -> FilePreviewPane(state.workspace, actions.closePreview, paneModifier, showBack = false)
             }
         }
 
         paneCount == 2 -> HingeAwarePaneRow(paneCount = 2, modifier = modifier) { index, paneModifier ->
-            if (index == 0) HermesFileTreePane(state, workspaceActions, paneModifier)
+            if (index == 0) HermesFileTreePane(state, workspaceActions, paneModifier, showFileIcons)
             else FilePreviewPane(state.workspace, actions.closePreview, paneModifier, showBack = false)
         }
 
@@ -159,7 +165,7 @@ fun HermesWorkspaceScreen(
             FilePreviewPane(state.workspace, actions.closePreview, modifier.fillMaxSize(), showBack = true)
         }
 
-        else -> HermesFileTreePane(state, workspaceActions, modifier.fillMaxSize())
+        else -> HermesFileTreePane(state, workspaceActions, modifier.fillMaxSize(), showFileIcons)
     }
 }
 
@@ -168,6 +174,7 @@ private fun HermesFileTreePane(
     state: HermesWorkspaceUiState,
     actions: WorkspaceActions,
     modifier: Modifier,
+    showFileIcons: Boolean,
 ) {
     ConstrainedPane(maxWidth = 620.dp, modifier = modifier) {
         Row(
@@ -187,13 +194,12 @@ private fun HermesFileTreePane(
                 Icon(Icons.Filled.Refresh, contentDescription = "Refresh files")
             }
         }
-        OutlinedTextField(
+        HermesTextField(
             value = state.workspace.searchQuery,
             onValueChange = actions.search,
+            placeholder = "Find a file",
+            leadingIcon = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            placeholder = { Text("Find a file") },
-            singleLine = true,
         )
         HorizontalDivider()
         val tree = state.workspace.tree
@@ -214,7 +220,7 @@ private fun HermesFileTreePane(
                     },
                 )
 
-            else -> WorkspaceTreeRenderSurface(state.workspace, actions)
+            else -> WorkspaceTreeRenderSurface(state.workspace, actions, showFileIcons = showFileIcons)
         }
     }
 }
@@ -243,14 +249,14 @@ private fun HermesFolderPane(
                 }
             }
             HorizontalDivider()
-            OutlinedTextField(
+            HermesTextField(
                 value = state.folderQuery,
                 onValueChange = {
                     selected = it
                     actions.setFolderQuery(it)
                 },
+                placeholder = "Host folder",
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
-                label = { Text("Host folder") },
                 supportingText = {
                     when {
                         state.needsMoreTyping -> Text("Type more of the folder name.")
@@ -258,7 +264,6 @@ private fun HermesFolderPane(
                         else -> Text("Start with / or ~/ to search the host.")
                     }
                 },
-                singleLine = true,
             )
             Button(
                 onClick = { actions.moveFolder(selected) },
@@ -292,6 +297,55 @@ private fun HermesFolderPane(
                         Text(folder, maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Resource-free text field for the Files surface. Material3's OutlinedTextField reads
+ * AAR string resources that this project's resource-free Robolectric lane omits.
+ */
+@Composable
+private fun HermesTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    leadingIcon: Boolean = false,
+    supportingText: (@Composable () -> Unit)? = null,
+) {
+    Column(modifier) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (leadingIcon) Icon(Icons.Filled.Search, contentDescription = null)
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) {
+                        Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.merge(
+                            TextStyle(color = MaterialTheme.colorScheme.onSurface),
+                        ),
+                    )
+                }
+            }
+        }
+        if (supportingText != null) {
+            Box(Modifier.padding(start = 12.dp, top = 4.dp, end = 12.dp)) {
+                supportingText()
             }
         }
     }

@@ -31,7 +31,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35])
 class WorkspaceComposeRenderTest {
     @Test
     fun `tree renders at one two and three panes`() {
@@ -98,7 +98,7 @@ class WorkspaceComposeRenderTest {
             folderChoices = listOf("/work", "/work/next"),
         )
         assertEveryPaneRenders { pane ->
-            HermesWorkspaceScreen(state = state, paneCount = pane)
+            HermesWorkspaceScreen(state = state, paneCount = pane, showFileIcons = false)
         }
     }
 
@@ -125,7 +125,12 @@ class WorkspaceComposeRenderTest {
             supportsSync = false,
         )
         assertEveryPaneRenders { pane ->
-            GitWorkspaceScreen(state = state, paneCount = pane)
+            GitWorkspaceScreen(
+                state = state,
+                paneCount = pane,
+                showsCommitControls = false,
+                showFileIcons = false,
+            )
         }
     }
 
