@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
@@ -297,7 +298,18 @@ private fun renderPdfFirstPage(context: Context, uri: Uri): ByteArray? {
                 .coerceAtMost(480)
             val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
             Canvas(bitmap).drawColor(Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            val scale = minOf(
+                targetWidth / page.width.toFloat(),
+                targetHeight / page.height.toFloat(),
+            )
+            val transform = Matrix().apply {
+                setScale(scale, scale)
+                postTranslate(
+                    (targetWidth - page.width * scale) / 2f,
+                    (targetHeight - page.height * scale) / 2f,
+                )
+            }
+            page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bitmap.toPngBytes()
         }
     }

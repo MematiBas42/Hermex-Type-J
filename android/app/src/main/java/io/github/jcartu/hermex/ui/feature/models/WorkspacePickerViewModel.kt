@@ -3,7 +3,7 @@ package io.github.jcartu.hermex.ui.feature.models
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.model.WorkspaceRoot
-import io.github.jcartu.hermex.net.HermesApi
+import io.github.jcartu.hermex.net.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
