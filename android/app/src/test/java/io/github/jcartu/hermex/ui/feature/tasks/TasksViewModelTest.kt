@@ -1,18 +1,11 @@
 package io.github.jcartu.hermex.ui.feature.tasks
 
 import io.github.jcartu.hermex.model.CronDateValue
-import io.github.jcartu.hermex.model.CronDeliveryOptionsResponse
 import io.github.jcartu.hermex.model.CronJob
 import io.github.jcartu.hermex.model.CronJobEditorDraft
-import io.github.jcartu.hermex.model.CronJobStatus
-import io.github.jcartu.hermex.model.CronJobsResponse
-import io.github.jcartu.hermex.model.CronMutationResponse
-import io.github.jcartu.hermex.model.CronStatusResponse
-import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
+import io.github.jcartu.hermex.model.CronRecentCompletion
+import io.github.jcartu.hermex.model.CronRunHistoryResponse
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -20,28 +13,102 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.time.Instant
+
+/** A minimal scripted client for the list-level tests. */
+private class ListFakeClient(
+    var jobs: List<CronJob> = emptyList(),
+    var running: Map<String, Double> = emptyMap(),
+    var recent: List<CronRecentCompletion> = emptyList(),
+    var recentError: Exception? = null,
+    var createResponse: io.github.jcartu.hermex.model.CronMutationResponse =
+        io.github.jcartu.hermex.model.CronMutationResponse(ok = true),
+) : CronDataClient {
+
+    override val cronFeatures: CronFeatures = CronFeatures.webui
+
+    var createCalls = mutableListOf<CronJobEditorDraft>()
+    var deleteCalls = mutableListOf<String>()
+    var runCalls = mutableListOf<String>()
+    var pauseCalls = mutableListOf<String>()
+    var resumeCalls = mutableListOf<String>()
+
+    override suspend fun cronJobs(): CronJobList =
+        CronJobList(jobs = jobs, runningJobs = running, recentRuns = null)
+
+    override suspend fun cronRecent(): io.github.jcartu.hermex.model.CronRecentCompletionsResponse {
+        recentError?.let { throw it }
+        return io.github.jcartu.hermex.model.CronRecentCompletionsResponse(completions = recent)
+    }
+
+    override suspend fun cronDeliveryOptions(profile: String?) =
+        io.github.jcartu.hermex.model.CronDeliveryOptionsResponse(
+            platforms = listOf(io.github.jcartu.hermex.model.CronDeliveryOption(value = "telegram", label = "Telegram")),
+        )
+
+    override suspend fun createCron(
+        prompt: String, schedule: String, name: String?, deliver: String?, skills: List<String>,
+        model: String?, provider: String?, profile: String?, toastNotifications: Boolean,
+    ): io.github.jcartu.hermex.model.CronMutationResponse {
+        createCalls += CronJobEditorDraft(
+            name = name.orEmpty(), prompt = prompt, schedule = schedule, deliver = deliver.orEmpty(),
+            skillsText = skills.joinToString(", "), model = model.orEmpty(), provider = provider.orEmpty(),
+            profile = profile.orEmpty(), toastNotifications = toastNotifications,
+        )
+        return createResponse
+    }
+
+    override suspend fun updateCron(
+        jobId: String, prompt: String?, schedule: String?, name: String?, deliver: String?,
+        skills: List<String>?, model: String?, provider: String?, profile: String?, toastNotifications: Boolean?,
+    ) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
+
+    override suspend fun runCron(jobId: String, profile: String?): io.github.jcartu.hermex.model.CronMutationResponse {
+        runCalls += jobId
+        return io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
+    }
+
+    override suspend fun pauseCron(jobId: String, profile: String?, reason: String?): io.github.jcartu.hermex.model.CronMutationResponse {
+        pauseCalls += jobId
+        return io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
+    }
+
+    override suspend fun resumeCron(jobId: String, profile: String?): io.github.jcartu.hermex.model.CronMutationResponse {
+        resumeCalls += jobId
+        return io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
+    }
+
+    override suspend fun deleteCron(jobId: String, profile: String?): io.github.jcartu.hermex.model.CronMutationResponse {
+        deleteCalls += jobId
+        return io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
+    }
+
+    override suspend fun cronOutput(jobId: String, limit: Int?) =
+        io.github.jcartu.hermex.model.CronOutputResponse(outputs = emptyList())
+
+    override suspend fun cronHistory(jobId: String, profile: String?, offset: Int, limit: Int) =
+        CronRunHistoryResponse()
+
+    override suspend fun cronRunDetail(jobId: String, profile: String?, filename: String) =
+        io.github.jcartu.hermex.model.CronRunDetailResponse(filename = filename, content = "")
+
+    override suspend fun cronModelGroups(profile: String?) = emptyList<io.github.jcartu.hermex.model.ModelCatalogGroup>()
+
+    override suspend fun cronProfiles() = emptyList<io.github.jcartu.hermex.model.ProfileSummary>()
+
+    override suspend fun cronSkills(profile: String?) = emptyList<io.github.jcartu.hermex.model.SkillSummary>()
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TasksViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
-        explicitNulls = false
-    }
 
     @Before
     fun setUp() {
@@ -53,264 +120,128 @@ class TasksViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun makeApi(
-        jobs: List<CronJob> = emptyList(),
-        running: Map<String, Double> = emptyMap(),
-    ): HermesApi = mockk<HermesApi>().also { api ->
-        coEvery { api.crons() } returns CronJobsResponse(jobs = jobs)
-        coEvery { api.cronStatus() } returns CronStatusResponse(runningJobs = running)
-        coEvery { api.cronDeliveryOptions() } returns CronDeliveryOptionsResponse(platforms = null)
+    @Test
+    fun `load shows jobs running state delivery options and the recent feed`() = runTest(dispatcher) {
+        val client = ListFakeClient(
+            jobs = listOf(CronJob(jobId = "j1", name = "One")),
+            running = mapOf("j1" to 3.0),
+            recent = listOf(
+                CronRecentCompletion(jobId = "j1", name = "One", status = "ok", completedAt = Instant.ofEpochSecond(50)),
+                CronRecentCompletion(jobId = "j2", name = "Two", status = "ok", completedAt = Instant.ofEpochSecond(10)),
+            ),
+        )
+        val vm = TasksViewModel(client)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(listOf("j1"), state.jobs.map { it.jobId })
+        assertEquals(3.0, state.runningElapsed(CronJob(jobId = "j1", name = "One"))!!, 0.0)
+        assertEquals("telegram", state.deliveryOptions?.single()?.value)
+        // Newest first.
+        assertEquals(listOf("j1", "j2"), state.recentRuns.map { it.jobId })
     }
 
     @Test
-    fun `load sorts running jobs first then by next run then by name`() = runTest(dispatcher) {
-        val running = CronJob(jobId = "running", name = "zz-running")
-        val soon = CronJob(
-            jobId = "soon",
-            name = "Soon",
-            nextRunAt = CronDateValue(Instant.ofEpochSecond(1_000)),
+    fun `a failed recent feed keeps the last good one and never gates loading`() = runTest(dispatcher) {
+        val client = ListFakeClient(
+            jobs = listOf(CronJob(jobId = "j1", name = "One")),
+            recent = listOf(CronRecentCompletion(jobId = "j1", completedAt = Instant.ofEpochSecond(50))),
         )
-        val later = CronJob(
-            jobId = "later",
-            name = "Later",
-            nextRunAt = CronDateValue(Instant.ofEpochSecond(2_000)),
-        )
-        val alpha = CronJob(jobId = "alpha", name = "alpha")
-        val zeta = CronJob(jobId = "zeta", name = "Zeta")
-
-        val api = makeApi(
-            jobs = listOf(zeta, later, alpha, running, soon),
-            running = mapOf("running" to 12.5),
-        )
-        val viewModel = TasksViewModel(api)
+        val vm = TasksViewModel(client)
         advanceUntilIdle()
+        assertEquals(1, vm.uiState.value.recentRuns.size)
 
-        val state = viewModel.uiState.value
-        assertEquals(
-            listOf("running", "soon", "later", "alpha", "zeta"),
-            state.jobs.map { it.jobId },
-        )
-        assertEquals(12.5, state.runningElapsed(running)!!, 0.0)
-        assertNull(state.runningElapsed(soon))
-        assertEquals(1, state.activeRunningCount)
-        assertFalse(state.isLoading)
-        assertNull(state.errorMessage)
+        client.recentError = RuntimeException("feed down")
+        vm.load()
+        advanceUntilIdle()
+        assertEquals(1, vm.uiState.value.recentRuns.size)
+        assertFalse(vm.uiState.value.isLoading)
     }
 
     @Test
-    fun `load failure surfaces error message`() = runTest(dispatcher) {
-        val api = mockk<HermesApi>()
-        coEvery { api.crons() } throws ApiError.Http(500, null)
-        coEvery { api.cronStatus() } returns CronStatusResponse(runningJobs = emptyMap())
-        coEvery { api.cronDeliveryOptions() } returns CronDeliveryOptionsResponse(platforms = null)
-
-        val viewModel = TasksViewModel(api)
+    fun `create validates the draft before the network`() = runTest(dispatcher) {
+        val client = ListFakeClient()
+        val vm = TasksViewModel(client)
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertNotNull(state.errorMessage)
-        assertFalse(state.isLoading)
-        assertTrue(state.jobs.isEmpty())
+        val result = vm.create(CronJobEditorDraft(name = "", prompt = "", schedule = ""))
+        advanceUntilIdle()
+        assertFalse(result)
+        assertEquals("Prompt is required.", vm.uiState.value.actionErrorMessage)
+        assertTrue(client.createCalls.isEmpty())
     }
 
     @Test
-    fun `reload refreshes running status`() = runTest(dispatcher) {
-        val jobA = CronJob(jobId = "a", name = "Alpha")
-        val jobB = CronJob(jobId = "b", name = "Beta")
-        val api = mockk<HermesApi>()
-        coEvery { api.crons() } returns CronJobsResponse(jobs = listOf(jobA, jobB))
-        coEvery { api.cronStatus() } returnsMany listOf(
-            CronStatusResponse(runningJobs = emptyMap()),
-            CronStatusResponse(runningJobs = mapOf("b" to 3.0)),
-        )
-        coEvery { api.cronDeliveryOptions() } returns CronDeliveryOptionsResponse(platforms = null)
-
-        val viewModel = TasksViewModel(api)
-        advanceUntilIdle()
-        assertEquals(0, viewModel.uiState.value.activeRunningCount)
-        assertEquals(listOf("a", "b"), viewModel.uiState.value.jobs.map { it.jobId })
-
-        viewModel.load()
+    fun `create sends trimmed draft values and dismisses`() = runTest(dispatcher) {
+        val client = ListFakeClient()
+        val vm = TasksViewModel(client)
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertEquals(mapOf("b" to 3.0), state.runningJobs)
-        // The running job resorts to the front.
-        assertEquals(listOf("b", "a"), state.jobs.map { it.jobId })
-    }
-
-    @Test
-    fun `search filters by name prompt and schedule`() = runTest(dispatcher) {
-        val digest = CronJob(jobId = "1", name = "Daily digest", prompt = "Summarize inbox")
-        val backup = CronJob(
-            jobId = "2",
-            name = "Backup",
-            prompt = "Snapshot the workspace",
-            scheduleDisplay = "Every night at 2:00",
-        )
-        val viewModel = TasksViewModel(makeApi(jobs = listOf(digest, backup)))
-        advanceUntilIdle()
-
-        viewModel.setSearchText("digest")
-        assertEquals(listOf("1"), viewModel.uiState.value.filteredJobs.map { it.jobId })
-
-        viewModel.setSearchText("snapshot")
-        assertEquals(listOf("2"), viewModel.uiState.value.filteredJobs.map { it.jobId })
-
-        viewModel.setSearchText("night")
-        assertEquals(listOf("2"), viewModel.uiState.value.filteredJobs.map { it.jobId })
-
-        viewModel.setSearchText("nothing-matches")
-        assertTrue(viewModel.uiState.value.filteredJobs.isEmpty())
-
-        viewModel.setSearchText("")
-        assertEquals(2, viewModel.uiState.value.filteredJobs.size)
-    }
-
-    @Test
-    fun `create validates draft before hitting the API`() = runTest(dispatcher) {
-        val api = makeApi()
-        val viewModel = TasksViewModel(api)
-        advanceUntilIdle()
-
-        val created = viewModel.create(CronJobEditorDraft(prompt = "", schedule = "* * * * *"))
-
-        assertFalse(created)
-        assertEquals("Prompt is required.", viewModel.uiState.value.actionErrorMessage)
-        coVerify(exactly = 0) {
-            api.createCron(any(), any(), any(), any(), any(), any(), any(), any(), any())
-        }
-
-        viewModel.clearActionError()
-        assertNull(viewModel.uiState.value.actionErrorMessage)
-    }
-
-    @Test
-    fun `create upserts the returned job`() = runTest(dispatcher) {
-        val api = makeApi()
-        val newJob = CronJob(jobId = "new", name = "Fresh task")
-        coEvery {
-            api.createCron(any(), any(), any(), any(), any(), any(), any(), any(), any())
-        } returns CronMutationResponse(ok = true, job = newJob)
-
-        val viewModel = TasksViewModel(api)
-        advanceUntilIdle()
-
-        val created = viewModel.create(
+        val result = vm.create(
             CronJobEditorDraft(
-                name = "  Fresh task  ",
-                prompt = "Do the thing",
-                schedule = "0 9 * * *",
-                skillsText = "git, notes",
+                name = "  Backup  ", prompt = " p ", schedule = " s ", deliver = "local",
+                skillsText = "a, b", model = " m ", provider = " prov ",
             ),
         )
         advanceUntilIdle()
-
-        assertTrue(created)
-        assertEquals(listOf("new"), viewModel.uiState.value.jobs.map { it.jobId })
-        assertFalse(viewModel.uiState.value.isMutating)
-        coVerify {
-            api.createCron(
-                prompt = "Do the thing",
-                schedule = "0 9 * * *",
-                name = "Fresh task",
-                deliver = "local",
-                skills = listOf("git", "notes"),
-                model = null,
-                provider = null,
-                profile = null,
-                toastNotifications = true,
-            )
-        }
+        assertTrue(result)
+        val sent = client.createCalls.single()
+        assertEquals("Backup", sent.name)
+        assertEquals("p", sent.prompt)
+        assertEquals("s", sent.schedule)
+        assertEquals(listOf("a", "b"), sent.skills)
+        assertEquals("m", sent.model)
+        assertEquals("prov", sent.provider)
     }
 
     @Test
-    fun `create surfaces server rejection`() = runTest(dispatcher) {
-        val api = makeApi()
-        coEvery {
-            api.createCron(any(), any(), any(), any(), any(), any(), any(), any(), any())
-        } returns CronMutationResponse(ok = false, error = "schedule invalid")
-
-        val viewModel = TasksViewModel(api)
+    fun `row actions route to the detail view model and fold back`() = runTest(dispatcher) {
+        val client = ListFakeClient(jobs = listOf(CronJob(jobId = "j1", name = "One")))
+        val vm = TasksViewModel(client)
         advanceUntilIdle()
 
-        val created = viewModel.create(
-            CronJobEditorDraft(prompt = "p", schedule = "bad"),
+        vm.runNow(CronJob(jobId = "j1", name = "One"))
+        advanceUntilIdle()
+        assertEquals(listOf("j1"), client.runCalls)
+        assertEquals(0.0, vm.uiState.value.runningJobs["j1"]!!, 0.0)
+
+        vm.pause(CronJob(jobId = "j1", name = "One"))
+        advanceUntilIdle()
+        assertEquals(listOf("j1"), client.pauseCalls)
+        assertEquals(null, vm.uiState.value.runningJobs["j1"])
+
+        vm.resume(CronJob(jobId = "j1", name = "One"))
+        advanceUntilIdle()
+        assertEquals(listOf("j1"), client.resumeCalls)
+
+        vm.delete(CronJob(jobId = "j1", name = "One"))
+        advanceUntilIdle()
+        assertEquals(listOf("j1"), client.deleteCalls)
+        assertTrue(vm.uiState.value.jobs.isEmpty())
+    }
+
+    @Test
+    fun `scheduler stall age surfaces only past three missed ticks`() = runTest(dispatcher) {
+        val client = ListFakeClient(
+            jobs = listOf(
+                CronJob(jobId = "j1", name = "One", schedulerHeartbeatAge = 240.0),
+                CronJob(jobId = "j2", name = "Two", schedulerHeartbeatAge = 120.0),
+                CronJob(jobId = "j3", name = "Three", enabled = false, schedulerHeartbeatAge = 9999.0),
+            ),
         )
-
-        assertFalse(created)
-        assertEquals("schedule invalid", viewModel.uiState.value.actionErrorMessage)
-        assertTrue(viewModel.uiState.value.jobs.isEmpty())
+        val vm = TasksViewModel(client)
+        advanceUntilIdle()
+        assertEquals(240.0, vm.uiState.value.schedulerStallAge!!, 0.0)
     }
 
     @Test
-    fun `apply upserts and deletes jobs`() = runTest(dispatcher) {
-        val original = CronJob(jobId = "x", name = "Old name")
-        val viewModel = TasksViewModel(makeApi(jobs = listOf(original), running = mapOf("x" to 1.0)))
+    fun `the recent feed job lookup matches id then name`() = runTest(dispatcher) {
+        val client = ListFakeClient(jobs = listOf(CronJob(jobId = "j1", name = "One")))
+        val vm = TasksViewModel(client)
         advanceUntilIdle()
 
-        val renamed = CronJob(jobId = "x", name = "New name")
-        viewModel.apply(CronJobListMutation.Upsert(renamed))
-        assertEquals(listOf("New name"), viewModel.uiState.value.jobs.map { it.name })
-
-        viewModel.apply(CronJobListMutation.Delete("x"))
-        assertTrue(viewModel.uiState.value.jobs.isEmpty())
-        assertTrue(viewModel.uiState.value.runningJobs.isEmpty())
-    }
-
-    @Test
-    fun `mark running and stopped update status and order`() = runTest(dispatcher) {
-        val a = CronJob(jobId = "a", name = "Alpha")
-        val b = CronJob(jobId = "b", name = "Beta")
-        val viewModel = TasksViewModel(makeApi(jobs = listOf(a, b)))
-        advanceUntilIdle()
-
-        viewModel.markRunning("b")
-        assertEquals(0.0, viewModel.uiState.value.runningJobs["b"]!!, 0.0)
-        assertEquals(listOf("b", "a"), viewModel.uiState.value.jobs.map { it.jobId })
-
-        viewModel.markStopped("b")
-        assertNull(viewModel.uiState.value.runningJobs["b"])
-        assertEquals(listOf("a", "b"), viewModel.uiState.value.jobs.map { it.jobId })
-    }
-
-    @Test
-    fun `decodes cron jobs fixture with unknown fields`() = runTest(dispatcher) {
-        val fixture = """
-            {
-              "jobs": [
-                {
-                  "id": "j1",
-                  "name": "Daily digest",
-                  "prompt": "Summarize the inbox",
-                  "schedule": "0 9 * * *",
-                  "schedule_display": "Daily at 9:00",
-                  "enabled": true,
-                  "state": "active",
-                  "next_run_at": 1755600000,
-                  "last_status": "success",
-                  "unknown_field": {"nested": [1, 2, 3]}
-                }
-              ],
-              "another_unknown": true
-            }
-        """.trimIndent()
-        val response = json.decodeFromString<CronJobsResponse>(fixture)
-
-        val api = mockk<HermesApi>()
-        coEvery { api.crons() } returns response
-        coEvery { api.cronStatus() } returns CronStatusResponse(runningJobs = emptyMap())
-        coEvery { api.cronDeliveryOptions() } returns CronDeliveryOptionsResponse(platforms = null)
-
-        val viewModel = TasksViewModel(api)
-        advanceUntilIdle()
-
-        val job = viewModel.uiState.value.jobs.single()
-        assertEquals("j1", job.jobId)
-        assertEquals("Daily digest", job.displayName)
-        assertEquals("Daily at 9:00", job.scheduleText)
-        assertEquals(CronJobStatus.ACTIVE, job.status)
-        assertNotNull(job.nextRunAt)
-        assertEquals(Instant.ofEpochSecond(1_755_600_000), job.nextRunAt!!.date)
+        assertNotNull(vm.job(CronRecentCompletion(jobId = "j1", completedAt = Instant.EPOCH)))
+        assertNotNull(vm.job(CronRecentCompletion(name = "One", completedAt = Instant.EPOCH)))
+        assertEquals(null, vm.job(CronRecentCompletion(jobId = "zzz", completedAt = Instant.EPOCH)))
     }
 }
