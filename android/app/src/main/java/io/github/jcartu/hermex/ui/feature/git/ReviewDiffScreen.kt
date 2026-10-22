@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,39 +104,47 @@ internal fun ReviewDiffScreen(
     }
 
     LazyColumn(state = listState, modifier = modifier.fillMaxSize()) {
-        itemsIndexed(rows, key = { _, row -> row.key }) { _, row ->
+        rows.forEach { row ->
             when (row) {
-                is ReviewDisplayRow.FileHeader -> stickyFileHeader(
-                    model = row.model,
-                    collapsed = row.model.file.id in collapsed,
-                    viewed = row.model.file.id in viewed,
-                    showFileIcon = showFileIcons,
-                    onToggle = {
-                        collapsed = if (row.model.file.id in collapsed) collapsed - row.model.file.id
-                        else collapsed + row.model.file.id
-                    },
-                    onViewed = {
-                        val id = row.model.file.id
-                        if (id in viewed) viewed -= id else {
-                            viewed += id
-                            collapsed += id
-                        }
-                    },
-                )
-                is ReviewDisplayRow.Notice -> Text(
-                    row.text,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                is ReviewDisplayRow.Hunk -> Text(
-                    row.value.displayLabel,
-                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    style = CodeTextStyle,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                is ReviewDisplayRow.Line -> DiffLineRow(row.value, horizontal)
+                is ReviewDisplayRow.FileHeader -> stickyHeader(key = row.key) {
+                    stickyFileHeader(
+                        model = row.model,
+                        collapsed = row.model.file.id in collapsed,
+                        viewed = row.model.file.id in viewed,
+                        showFileIcon = showFileIcons,
+                        onToggle = {
+                            collapsed = if (row.model.file.id in collapsed) collapsed - row.model.file.id
+                            else collapsed + row.model.file.id
+                        },
+                        onViewed = {
+                            val id = row.model.file.id
+                            if (id in viewed) viewed -= id else {
+                                viewed += id
+                                collapsed += id
+                            }
+                        },
+                    )
+                }
+                is ReviewDisplayRow.Notice -> item(key = row.key) {
+                    Text(
+                        row.text,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is ReviewDisplayRow.Hunk -> item(key = row.key) {
+                    Text(
+                        row.value.displayLabel,
+                        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = CodeTextStyle,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                is ReviewDisplayRow.Line -> item(key = row.key) {
+                    DiffLineRow(row.value, horizontal)
+                }
             }
         }
     }
