@@ -1,6 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.sessions
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -23,10 +25,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.jcartu.hermex.ui.theme.SuccessDark
 import io.github.jcartu.hermex.model.SessionSummary
 
 /** Port of `SessionRowView.displayTitle(for:)`. */
@@ -97,9 +100,19 @@ fun sessionRelativeTimeLabel(
 }
 
 /**
- * Port of `SessionRowView`. Keeps its content compact in narrow panes: below
- * ~220dp the supplemental line (badges + metadata) and the relative date are
- * hidden, leaving just the ellipsized title.
+ * Port of `SessionRowView` (1.6.0 row states, 1.7.0 unread dot, 1.8.0 "rows no
+ * longer pulse a redundant streaming dot" — streaming carries no dot or badge
+ * at all now; the trailing "Working" label already says it).
+ *
+ * One trailing slot, one meaning: the attention state when the session wants
+ * something, otherwise the relative time. Never both, so the row keeps its
+ * height in every state. Only the time text ticks, once a minute (the caller
+ * passes [nowEpochSeconds] from its resumed-only ticker), so an idle list
+ * stays current without re-rendering whole rows.
+ *
+ * Keeps its content compact in narrow panes: below ~220dp the excerpt, fork
+ * subtitle, supplemental line (badges + metadata) and the relative date are
+ * hidden, leaving the ellipsized title with its attention state.
  */
 @Composable
 fun SessionRow(
@@ -108,28 +121,45 @@ fun SessionRow(
     showsWorkspace: Boolean,
     isViewingCachedData: Boolean,
     modifier: Modifier = Modifier,
+    isUnread: Boolean = false,
+    attentionState: SessionRowAttentionState? = null,
+    searchExcerpt: SessionSearchExcerpt? = null,
+    forkOrigin: ForkOrigin? = null,
+    onOpenForkParent: (() -> Unit)? = null,
+    nowEpochSeconds: Long = System.currentTimeMillis() / 1000,
 ) {
+    val stateColors = sessionRowStateColors()
+
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val isNarrow = maxWidth < 220.dp
-        val streaming = isActiveStreaming(session)
         val metadata = sessionMetadataLabel(session, showsMessageCount, showsWorkspace)
         val model = session.model?.trim()?.takeIf { it.isNotEmpty() }
-        val showsSupplemental = !isNarrow && (metadata != null || streaming || isViewingCachedData || model != null)
+        val showsSupplemental = !isNarrow &&
+            (metadata != null || isViewingCachedData || session.isSessionReadOnly || model != null)
+        val showsExcerpt = !isNarrow && searchExcerpt != null
+        val showsFork = !isNarrow && forkOrigin != null
+
+        val minHeight = (if (showsSupplemental) 54 else 46) +
+            (if (showsExcerpt) 16 else 0) +
+            (if (showsFork) 16 else 0)
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = if (showsSupplemental) 54.dp else 46.dp)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .heightIn(min = minHeight.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .semantics { contentDescription = sessionRowAccessibilitySummary(session, isViewingCachedData, isUnread, attentionState, searchExcerpt, forkOrigin, metadata) },
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (streaming) {
+            // The unread dot shows only when no attention state claims the row
+            // (SessionRowView.body: `isUnread && effectiveAttentionState == nil`).
+            if (isUnread && attentionState == null) {
                 Box(
                     Modifier
                         .padding(top = 7.dp)
-                        .size(9.dp)
-                        .background(SessionRowColors.streaming, CircleShape),
+                        .size(10.dp)
+                        .background(stateColors.unread, CircleShape),
                 )
             }
 
@@ -157,8 +187,18 @@ fun SessionRow(
                         )
                     }
 
-                    if (!isNarrow) {
-                        sessionRelativeTimeLabel(session)?.let { relative ->
+                    // Trailing status slot: attention label or relative time.
+                    if (attentionState != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = attentionState.title,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = attentionState.tint(stateColors),
+                            maxLines = 1,
+                        )
+                    } else if (!isNarrow) {
+                        sessionRelativeTimeLabel(session, nowEpochSeconds)?.let { relative ->
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 text = relative,
@@ -170,16 +210,36 @@ fun SessionRow(
                     }
                 }
 
+                if (showsExcerpt && searchExcerpt != null) {
+                    Text(
+                        text = searchExcerpt.highlighted(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (showsFork && forkOrigin != null) {
+                    ForkOriginSubtitle(
+                        origin = forkOrigin,
+                        onOpen = onOpenForkParent?.takeIf { forkOrigin.parent != null },
+                    )
+                }
+
                 if (showsSupplemental) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        if (streaming) {
-                            SessionRowBadge("Live", SessionRowColors.streaming)
-                        }
                         if (isViewingCachedData) {
-                            SessionRowBadge("Cached", SessionRowColors.cached)
+                            SessionRowBadge("Cached", stateColors.cached)
+                        }
+                        if (session.isSessionReadOnly) {
+                            SessionRowBadge(
+                                "Read-only",
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         model?.let {
                             SessionRowBadge(
@@ -204,6 +264,67 @@ fun SessionRow(
     }
 }
 
+/**
+ * The row's fork subtitle: "Forked from <parent>", tappable when the list
+ * holds the parent. Styled as a quiet one-line metadata row (the transcript's
+ * full-width `ForkOriginRowView` belongs to the chat pane).
+ */
+@Composable
+private fun ForkOriginSubtitle(origin: ForkOrigin, onOpen: (() -> Unit)?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.AltRoute,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(
+            text = origin.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Port of `SessionRowView.accessibilitySummary` (row-level subset). */
+private fun sessionRowAccessibilitySummary(
+    session: SessionSummary,
+    isViewingCachedData: Boolean,
+    isUnread: Boolean,
+    attentionState: SessionRowAttentionState?,
+    searchExcerpt: SessionSearchExcerpt?,
+    forkOrigin: ForkOrigin?,
+    metadataLabel: String?,
+): String {
+    val parts = mutableListOf(sessionDisplayTitle(session))
+
+    searchExcerpt?.let { parts.add("Matched: ${it.text}") }
+    forkOrigin?.let { parts.add(it.title) }
+
+    if (attentionState != null) {
+        parts.add(attentionState.accessibilityLabel)
+    } else if (isUnread) {
+        parts.add("Unread")
+    }
+
+    if (session.pinned == true) parts.add("Pinned")
+    if (isViewingCachedData) parts.add("Cached")
+    if (session.isSessionReadOnly) parts.add("Read-only")
+
+    metadataLabel?.let(parts::add)
+    sessionRelativeTimeLabel(session)?.let(parts::add)
+
+    return parts.joinToString(", ")
+}
+
 @Composable
 private fun SessionRowBadge(text: String, tint: Color, modifier: Modifier = Modifier) {
     Text(
@@ -217,12 +338,4 @@ private fun SessionRowBadge(text: String, tint: Color, modifier: Modifier = Modi
             .background(tint.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
             .padding(horizontal = 5.dp, vertical = 2.dp),
     )
-}
-
-private object SessionRowColors {
-    /** iOS `.green` streaming tint — the theme's success color. */
-    val streaming = SuccessDark
-
-    /** iOS `.orange` cached tint (no theme equivalent). */
-    val cached = Color(0xFFFB923C)
 }

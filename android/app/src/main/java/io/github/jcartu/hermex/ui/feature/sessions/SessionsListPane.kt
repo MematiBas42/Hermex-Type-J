@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +45,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -51,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,12 +74,16 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.jcartu.hermex.HermexApplication
 import io.github.jcartu.hermex.core.prefs.ServerConfig
+import io.github.jcartu.hermex.core.prefs.SettingsRepository
+import io.github.jcartu.hermex.model.ProfileSummary
 import io.github.jcartu.hermex.model.ProjectSummary
 import io.github.jcartu.hermex.model.SessionExportFormat
 import io.github.jcartu.hermex.model.SessionSummary
@@ -81,7 +91,11 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import io.github.jcartu.hermex.ui.feature.settings.AddServerDialog
+import io.github.jcartu.hermex.ui.feature.settings.HeaderLogoColor
+import io.github.jcartu.hermex.ui.feature.settings.ServerSwitcherMenu
 import io.github.jcartu.hermex.ui.theme.parseHexColor
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Internal sub-screens of the sessions pane. */
@@ -94,10 +108,16 @@ private enum class SessionsScreen { LIST, ARCHIVED, SCHEDULED }
 @Composable
 fun SessionsRoute(
     onSessionSelected: (SessionSummary) -> Unit,
-    onNewChat: () -> Unit,
+    onNewChat: (PendingNewChatRequest) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSettings: () -> Unit = {},
 ) {
-    SessionsListPane(onSessionSelected = onSessionSelected, onNewChat = onNewChat, modifier = modifier)
+    SessionsListPane(
+        onSessionSelected = onSessionSelected,
+        onNewChat = onNewChat,
+        onOpenSettings = onOpenSettings,
+        modifier = modifier,
+    )
 }
 
 /**
@@ -109,13 +129,18 @@ fun SessionsRoute(
  * list side of a two/three-pane layout — rows show a selected highlight and
  * selection updates the parent in place. Selection, search, and scroll survive
  * pane-count changes (rememberSaveable + ViewModel).
+ *
+ * @param onNewChat carries the [PendingNewChatRequest] route snapshot: the
+ * project filter at tap time so the new chat joins the project the user sees
+ * (#875), and the list's selected profile (1.8.0).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsListPane(
     onSessionSelected: (SessionSummary) -> Unit,
-    onNewChat: () -> Unit,
+    onNewChat: (PendingNewChatRequest) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val container = remember(context) {
@@ -129,6 +154,7 @@ fun SessionsListPane(
                     api = container.api,
                     cacheStore = container.cacheStore,
                     serverUrlProvider = { container.serverConfig.current().baseUrl },
+                    unreadStore = SessionUnreadStore(sessionListSettingsDataStore(context)),
                 )
             }
         },
@@ -149,6 +175,9 @@ fun SessionsListPane(
     val settings by remember(serverUrl) { settingsRepo.settings(serverUrl) }
         .collectAsStateWithLifecycle(initialValue = SessionListSettings())
 
+    val appSettings by container.settings.settings
+        .collectAsStateWithLifecycle(initialValue = SettingsRepository.Settings())
+
     var screen by rememberSaveable { mutableStateOf(SessionsScreen.LIST) }
 
     when (screen) {
@@ -156,9 +185,11 @@ fun SessionsListPane(
             viewModel = viewModel,
             settings = settings,
             settingsRepo = settingsRepo,
+            appSettings = appSettings,
             serverUrl = serverUrl,
             onSessionSelected = onSessionSelected,
             onNewChat = onNewChat,
+            onOpenSettings = onOpenSettings,
             openArchived = { screen = SessionsScreen.ARCHIVED },
             openScheduled = { screen = SessionsScreen.SCHEDULED },
             modifier = modifier,
@@ -180,7 +211,6 @@ fun SessionsListPane(
             settings = settings,
             onBack = { screen = SessionsScreen.LIST },
             onSessionSelected = onSessionSelected,
-            onNewChat = onNewChat,
             modifier = modifier,
         )
     }
@@ -194,9 +224,11 @@ private fun SessionListScreen(
     viewModel: SessionListViewModel,
     settings: SessionListSettings,
     settingsRepo: SessionListSettingsRepository,
+    appSettings: SettingsRepository.Settings,
     serverUrl: String,
     onSessionSelected: (SessionSummary) -> Unit,
-    onNewChat: () -> Unit,
+    onNewChat: (PendingNewChatRequest) -> Unit,
+    onOpenSettings: () -> Unit,
     openArchived: () -> Unit,
     openScheduled: () -> Unit,
     modifier: Modifier = Modifier,
@@ -205,8 +237,10 @@ private fun SessionListScreen(
     val paneCount = LocalPaneCount.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     var searchText by rememberSaveable { mutableStateOf("") }
+    var searchIsExpanded by rememberSaveable { mutableStateOf(false) }
     var selectedProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
@@ -220,8 +254,65 @@ private fun SessionListScreen(
     var isPresentingProjectCreation by remember { mutableStateOf(false) }
     var projectPendingRename by remember { mutableStateOf<ProjectSummary?>(null) }
     var projectPendingDeletion by remember { mutableStateOf<ProjectSummary?>(null) }
+    var serverSwitcherExpanded by remember { mutableStateOf(false) }
+    var isPresentingAddServer by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var archiveSnackbarJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    var didCompleteInitialLoad by remember { mutableStateOf(false) }
+    val foregroundRefresh = remember { SessionListForegroundRefresh() }
+    var wasBackgrounded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+        didCompleteInitialLoad = true
+    }
+
+    // "Session times update while the list is idle" (1.8.0): one minute-aligned
+    // tick, running only while resumed (repeatOnLifecycle cancels on pause), so
+    // an idle list stays current without re-rendering whole rows.
+    var nowEpochSeconds by remember { mutableStateOf(System.currentTimeMillis() / 1000) }
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            SessionListIdleTicker.run(
+                nowEpochSeconds = { System.currentTimeMillis() / 1000 },
+                emit = { nowEpochSeconds = it },
+            )
+        }
+    }
+
+    // "Sessions refresh on foregrounding" (1.8.0): a background→active return
+    // refreshes the rows; a return that lands while a load is running, or before
+    // the initial load has finished, is remembered and refreshed once idle
+    // (SessionListForegroundRefresh port).
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> wasBackgrounded = true
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    if (wasBackgrounded) {
+                        wasBackgrounded = false
+                        if (foregroundRefresh.appReturned(
+                                didCompleteInitialLoad = didCompleteInitialLoad,
+                                isLoading = viewModel.uiState.value.isLoading,
+                            )
+                        ) {
+                            viewModel.refreshAsync()
+                        }
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(state.isLoading, didCompleteInitialLoad) {
+        if (foregroundRefresh.consumeIfReady(didCompleteInitialLoad, state.isLoading)) {
+            viewModel.refreshAsync()
+        }
+    }
 
     val normalizedQuery = searchText.trim().lowercase()
     val isSearchActive = normalizedQuery.isNotEmpty()
@@ -231,13 +322,83 @@ private fun SessionListScreen(
         viewModel.searchSessions(searchText)
     }
 
+    // Hiding the Projects section mid-filter would strand the list on one
+    // project with no way back (#189), so the filter clears with the section.
+    LaunchedEffect(appSettings.showsProjectsEntry) {
+        if (!appSettings.showsProjectsEntry) selectedProjectId = null
+    }
+
     val visibility = settings.automatedVisibility
     val groups = state.scheduledSessionGroups(searchText, selectedProjectId, visibility)
     val sections = sessionListSections(
         sessions = groups.ordinary,
         zoneId = java.time.ZoneId.systemDefault(),
-        nowEpochSeconds = System.currentTimeMillis() / 1000,
+        nowEpochSeconds = nowEpochSeconds,
     )
+
+    // The active-row monitor (SessionListView.swift's `.task(id: activeSessionMonitorTaskID)`):
+    // one poll every 3 s while visible streaming rows exist; Compose restarts
+    // the effect when the id changes and cancels it when the list leaves
+    // composition (a compact-width chat covers the list), matching upstream's
+    // poll gating.
+    val activeSessions = state.visibleActiveSessions(searchText, selectedProjectId, visibility)
+    val monitorId = ActiveSessionMonitorTaskId(
+        streamIds = SessionListUiState.activeStreamIds(activeSessions),
+        hasActiveRows = activeSessions.isNotEmpty(),
+        isViewingCachedData = state.isViewingCachedData,
+        showsRowStates = appSettings.showsSessionRowStates,
+    )
+    LaunchedEffect(monitorId) {
+        if (!monitorId.shouldPoll) return@LaunchedEffect
+        while (true) {
+            delay(ActiveSessionMonitorTaskId.POLL_INTERVAL_MILLIS)
+            viewModel.refreshActiveSessionStatesIfNeeded(monitorId.streamIds)
+        }
+    }
+
+    val openSession: (SessionSummary) -> Unit = { session ->
+        val previousId = selectedSessionId
+        if (previousId != null && previousId != session.sessionId) {
+            state.sessions.firstOrNull { it.sessionId == previousId }
+                ?.let { viewModel.noteReturn(it) }
+        }
+        selectedSessionId = session.sessionId
+        scope.launch { viewModel.beginViewing(session) }
+        onSessionSelected(session)
+    }
+
+    // In-app New Chat (Chat button, FAB, Ctrl+N): the route snapshots the
+    // project filter at tap time so the new chat joins the project the user
+    // sees (#875) and uses the list's selected profile (1.8.0).
+    val openNewChatRequest: () -> Unit = {
+        onNewChat(
+            PendingNewChatRequest(
+                projectId = selectedProjectId,
+                profileName = state.activeProfileName,
+            ),
+        )
+    }
+
+    val archiveWithUndo: (SessionSummary) -> Unit = { session ->
+        scope.launch {
+            if (!viewModel.archive(session)) return@launch
+            // removeSessionFromNavigation: an archived open chat closes.
+            if (selectedSessionId == session.sessionId) selectedSessionId = null
+            // "Archived · Undo" after the server confirms (#865). A newer
+            // archive replaces the toast; the first session stays in Archived.
+            archiveSnackbarJob?.cancel()
+            archiveSnackbarJob = scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = "Archived",
+                    actionLabel = "Undo",
+                    duration = SnackbarDuration.Short,
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    viewModel.unarchive(session)
+                }
+            }
+        }
+    }
 
     val exportSession: (SessionSummary, SessionExportFormat) -> Unit = { session, format ->
         scope.launch {
@@ -253,6 +414,25 @@ private fun SessionListScreen(
         }
     }
 
+    // Hardware-keyboard chat shortcuts (HermexCommands port): the shell's key
+    // handler reads this CompositionLocal, the Compose analogue of
+    // `focusedSceneValue(\.hermexSceneActions)`.
+    val shortcutChats = groups.ordinary
+    val currentSelectedSessionId = selectedSessionId
+    val shortcutActions = SessionListShortcutActions(
+        canCreateNewChat = !state.isViewingCachedData,
+        createNewChat = openNewChatRequest,
+        searchSessions = { searchIsExpanded = true },
+        openChatAtPosition = { position ->
+            ChatShortcutNavigation.chatAtPosition(position, shortcutChats)?.let(openSession)
+        },
+        openAdjacentChat = { offset ->
+            ChatShortcutNavigation.adjacentChat(offset, currentSelectedSessionId, shortcutChats)
+                ?.let(openSession)
+        },
+    )
+
+    CompositionLocalProvider(LocalSessionListShortcutActions provides shortcutActions) {
     Box(modifier = modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = state.isLoading,
@@ -267,10 +447,58 @@ private fun SessionListScreen(
                     .align(Alignment.TopCenter),
             ) {
                 item(key = "header") {
-                    SessionListHeader(
+                    val headerAccent = parseHexColor(appSettings.headerLogoColorHex)
+                        ?: MaterialTheme.colorScheme.primary
+                    SessionsHeader(
+                        logoColor = headerAccent,
+                        avatarInitials = sessionAvatarInitials(
+                            displayName = appSettings.identityDisplayName,
+                            storedInitials = appSettings.identityInitials,
+                            fallbackName = serverUrl
+                                .substringAfter("://")
+                                .substringBefore("/")
+                                .substringBefore(":"),
+                        ),
+                        avatarColor = headerAccent,
+                        avatarForeground = if (
+                            HeaderLogoColor.prefersDarkForeground(appSettings.headerLogoColorHex)
+                        ) {
+                            androidx.compose.ui.graphics.Color.Black
+                        } else {
+                            androidx.compose.ui.graphics.Color.White
+                        },
+                        isSearchExpanded = searchIsExpanded,
+                        searchText = searchText,
+                        onSearchTextChange = { searchText = it },
+                        onOpenSearch = { searchIsExpanded = true },
+                        onCloseSearch = {
+                            searchText = ""
+                            viewModel.clearSearchResults()
+                            searchIsExpanded = false
+                        },
+                        onOpenSettings = onOpenSettings,
+                        onSwitchServer = { serverSwitcherExpanded = true },
+                        avatarMenu = {
+                            ServerSwitcherMenu(
+                                expanded = serverSwitcherExpanded,
+                                onDismiss = { serverSwitcherExpanded = false },
+                                onAddServer = {
+                                    serverSwitcherExpanded = false
+                                    isPresentingAddServer = true
+                                },
+                            )
+                        },
+                    )
+                }
+
+                // Section chrome: "Sessions" + the fork's display-options menu,
+                // Archived shortcut and header Chat button (medium/expanded).
+                item(key = "sessions-chrome") {
+                    SessionsChromeRow(
                         paneCount = paneCount,
                         archivedCount = state.archivedCount,
                         isViewingCachedData = state.isViewingCachedData,
+                        isSearching = state.isSearchingRemoteSessions,
                         settings = settings,
                         onToggleSetting = { toggle ->
                             scope.launch {
@@ -294,19 +522,7 @@ private fun SessionListScreen(
                             }
                         },
                         openArchived = openArchived,
-                        onNewChat = onNewChat,
-                    )
-                }
-
-                item(key = "search") {
-                    SessionSearchField(
-                        searchText = searchText,
-                        onSearchTextChange = { searchText = it },
-                        isSearching = state.isSearchingRemoteSessions,
-                        onClear = {
-                            searchText = ""
-                            viewModel.clearSearchResults()
-                        },
+                        onNewChat = openNewChatRequest,
                     )
                 }
 
@@ -325,8 +541,43 @@ private fun SessionListScreen(
                     }
                 }
 
+                // Active Profile disclosure (SessionSidebarUtilityRows port, #24:
+                // hidden in single-profile mode; #189: hidden by the Settings
+                // section-visibility toggle).
+                if (!isSearchActive && appSettings.showsActiveProfileEntry && !state.isSingleProfileMode) {
+                    item(key = "profiles-header") {
+                        ProfilesSectionHeader(
+                            isExpanded = settings.profilesAreExpanded,
+                            isLoading = state.isLoadingActiveProfile,
+                            hasError = state.activeProfileErrorMessage != null,
+                            onToggle = {
+                                scope.launch {
+                                    settingsRepo.setProfilesAreExpanded(!settings.profilesAreExpanded)
+                                }
+                            },
+                        )
+                    }
+
+                    if (settings.profilesAreExpanded) {
+                        items(
+                            count = state.profileOptions.size,
+                            key = { "profile-" + state.profileOptions[it].id },
+                        ) { index ->
+                            val profile = state.profileOptions[index]
+                            ActiveProfilePickerRow(
+                                profile = profile,
+                                isSelected = profile.normalizedName != null &&
+                                    profile.normalizedName == state.activeProfileName,
+                                isSwitching = state.isSwitchingActiveProfile &&
+                                    state.switchingActiveProfileName == profile.normalizedName,
+                                onClick = { scope.launch { viewModel.switchActiveProfile(profile) } },
+                            )
+                        }
+                    }
+                }
+
                 // Projects disclosure (SessionSidebarUtilityRows / ProjectFilterRow port).
-                if (!isSearchActive) {
+                if (!isSearchActive && appSettings.showsProjectsEntry) {
                     item(key = "projects-header") {
                         ProjectsSectionHeader(
                             isExpanded = settings.projectsAreExpanded,
@@ -401,12 +652,15 @@ private fun SessionListScreen(
                                 session = session,
                                 state = state,
                                 settings = settings,
+                                showsRowStates = appSettings.showsSessionRowStates,
+                                nowEpochSeconds = nowEpochSeconds,
+                                searchText = searchText,
                                 isSelected = paneCount >= 2 && session.sessionId == selectedSessionId,
                                 isCompact = paneCount == 1,
-                                onOpen = {
-                                    selectedSessionId = session.sessionId
-                                    onSessionSelected(session)
-                                },
+                                onOpen = { openSession(session) },
+                                onOpenForkParent = ForkOrigin.resolveIn(session, state.sessions)?.parent
+                                    ?.let { parent -> { openSession(parent) } },
+                                onToggleUnread = { scope.launch { viewModel.toggleUnread(session) } },
                                 onTogglePin = {
                                     scope.launch { viewModel.setPinned(session.pinned != true, session) }
                                 },
@@ -417,7 +671,7 @@ private fun SessionListScreen(
                                     scope.launch { viewModel.loadProjects() }
                                 },
                                 onExport = { format -> exportSession(session, format) },
-                                onArchive = { scope.launch { viewModel.archive(session) } },
+                                onArchive = { archiveWithUndo(session) },
                                 onDelete = { sessionPendingDeletion = session },
                             )
                         }
@@ -476,12 +730,15 @@ private fun SessionListScreen(
                                 session = session,
                                 state = state,
                                 settings = settings,
+                                showsRowStates = appSettings.showsSessionRowStates,
+                                nowEpochSeconds = nowEpochSeconds,
+                                searchText = searchText,
                                 isSelected = paneCount >= 2 && session.sessionId == selectedSessionId,
                                 isCompact = paneCount == 1,
-                                onOpen = {
-                                    selectedSessionId = session.sessionId
-                                    onSessionSelected(session)
-                                },
+                                onOpen = { openSession(session) },
+                                onOpenForkParent = ForkOrigin.resolveIn(session, state.sessions)?.parent
+                                    ?.let { parent -> { openSession(parent) } },
+                                onToggleUnread = { scope.launch { viewModel.toggleUnread(session) } },
                                 onTogglePin = {
                                     scope.launch { viewModel.setPinned(session.pinned != true, session) }
                                 },
@@ -492,7 +749,7 @@ private fun SessionListScreen(
                                     scope.launch { viewModel.loadProjects() }
                                 },
                                 onExport = { format -> exportSession(session, format) },
-                                onArchive = { scope.launch { viewModel.archive(session) } },
+                                onArchive = { archiveWithUndo(session) },
                                 onDelete = { sessionPendingDeletion = session },
                             )
                         }
@@ -517,7 +774,7 @@ private fun SessionListScreen(
             // Disabled while offline, mirroring the iOS FAB's cached-data gate.
             val enabled = !state.isViewingCachedData
             ExtendedFloatingActionButton(
-                onClick = { if (enabled) onNewChat() },
+                onClick = { if (enabled) openNewChatRequest() },
                 icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                 text = { Text("Chat") },
                 modifier = Modifier
@@ -526,6 +783,28 @@ private fun SessionListScreen(
                     .alpha(if (enabled) 1f else 0.45f),
             )
         }
+
+        // The archive Undo toast (#865): sits above the Chat button, as wide as
+        // the column.
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 24.dp)
+                .padding(bottom = if (paneCount == 1) 88.dp else 22.dp),
+        )
+    }
+    }
+
+    if (isPresentingAddServer) {
+        AddServerDialog(
+            onDismiss = { isPresentingAddServer = false },
+            onAdded = { isPresentingAddServer = false },
+        )
+    }
+
+    state.activeProfileErrorMessage?.let { message ->
+        ActionErrorDialog(message = message, onDismiss = viewModel::clearActiveProfileError)
     }
 
     // MARK: dialogs
@@ -678,9 +957,14 @@ private fun SessionInteractiveRow(
     session: SessionSummary,
     state: SessionListUiState,
     settings: SessionListSettings,
+    showsRowStates: Boolean,
+    nowEpochSeconds: Long,
+    searchText: String,
     isSelected: Boolean,
     isCompact: Boolean,
     onOpen: () -> Unit,
+    onOpenForkParent: (() -> Unit)?,
+    onToggleUnread: () -> Unit,
     onTogglePin: () -> Unit,
     onRename: () -> Unit,
     onBranch: () -> Unit,
@@ -698,6 +982,19 @@ private fun SessionInteractiveRow(
     val canMutate = offersMutationActions && !state.isViewingCachedData && hasServerSessionId
     val canExport = !state.isViewingCachedData && hasServerSessionId
     val isMutating = state.isMutating(session)
+    val isUnread = state.isUnread(session)
+    // The fork's row-states toggle gates the polled label; the unread dot's
+    // `attentionState == null` check follows the same gate (a hidden Working
+    // label must not also hide the dot).
+    val attentionState = if (showsRowStates) {
+        SessionRowAttentionState.effectiveAttentionState(
+            session = session,
+            attentionState = state.attentionStateFor(session),
+            isViewingCachedData = state.isViewingCachedData,
+        )
+    } else {
+        null
+    }
 
     val rowContent: @Composable () -> Unit = {
         Box {
@@ -723,6 +1020,12 @@ private fun SessionInteractiveRow(
                     showsMessageCount = settings.showsMessageCount,
                     showsWorkspace = settings.showsWorkspace,
                     isViewingCachedData = state.isViewingCachedData,
+                    isUnread = isUnread,
+                    attentionState = attentionState,
+                    searchExcerpt = state.searchExcerptFor(session, searchText),
+                    forkOrigin = ForkOrigin.resolveIn(session, state.sessions),
+                    onOpenForkParent = onOpenForkParent,
+                    nowEpochSeconds = nowEpochSeconds,
                 )
             }
 
@@ -733,6 +1036,15 @@ private fun SessionInteractiveRow(
                     onClick = {
                         clipboard.setText(AnnotatedString(fullTitle))
                         menuExpanded = false
+                    },
+                )
+                // 1.7.0 unread replies: the row's own read mark.
+                DropdownMenuItem(
+                    text = { Text(if (isUnread) "Mark as Read" else "Mark as Unread") },
+                    enabled = state.canToggleUnread(session),
+                    onClick = {
+                        menuExpanded = false
+                        onToggleUnread()
                     },
                 )
                 if (offersMutationActions) {
@@ -862,11 +1174,17 @@ private fun SessionInteractiveRow(
 
 // MARK: - Header, search, and section chrome
 
+/**
+ * The "Sessions" label row under [SessionsHeader]: remote-search spinner (port
+ * of `SessionListRowsSection.sessionsHeaderRow`), the fork's display-options
+ * menu, the Archived shortcut, and the medium/expanded header Chat button.
+ */
 @Composable
-private fun SessionListHeader(
+private fun SessionsChromeRow(
     paneCount: Int,
     archivedCount: Int?,
     isViewingCachedData: Boolean,
+    isSearching: Boolean,
     settings: SessionListSettings,
     onToggleSetting: (SessionListSettingToggle) -> Unit,
     openArchived: () -> Unit,
@@ -877,15 +1195,21 @@ private fun SessionListHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 24.dp, end = 12.dp, top = 20.dp, bottom = 4.dp),
+            .padding(start = 24.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "Sessions",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
         )
+
+        if (isSearching) {
+            Spacer(Modifier.width(10.dp))
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        }
+
+        Spacer(Modifier.weight(1f))
 
         if ((archivedCount ?: 0) > 0) {
             IconButton(onClick = openArchived) {
@@ -1042,6 +1366,128 @@ private fun CountBadge(count: Int) {
             .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )
+}
+
+@Composable
+private fun ProfilesSectionHeader(
+    isExpanded: Boolean,
+    isLoading: Boolean,
+    hasError: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(onClick = onToggle)
+            .padding(start = 24.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (isExpanded) {
+                "Collapse active profile picker"
+            } else {
+                "Expand active profile picker"
+            },
+            // The header tints orange when the last profile action failed.
+            tint = if (hasError) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            imageVector = Icons.Filled.Person,
+            contentDescription = null,
+            tint = if (hasError) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Active Profile",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+/**
+ * Port of `ActiveProfilePickerRow` (`SessionListComponents.swift`): one profile
+ * option — display name, its default model caption, a switching spinner or the
+ * selected check.
+ */
+@Composable
+private fun ActiveProfilePickerRow(
+    profile: ProfileSummary,
+    isSelected: Boolean,
+    isSwitching: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 12.dp)
+            .background(
+                color = if (isSelected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Person,
+            contentDescription = null,
+            tint = if (isSelected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = profile.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = profile.model?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: "Default model unavailable",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (isSwitching) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        } else if (isSelected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = "Active profile",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -1366,7 +1812,6 @@ private fun ScheduledSessionsScreen(
     settings: SessionListSettings,
     onBack: () -> Unit,
     onSessionSelected: (SessionSummary) -> Unit,
-    onNewChat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
