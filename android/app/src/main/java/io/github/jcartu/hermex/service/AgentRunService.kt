@@ -40,6 +40,59 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
+internal enum class PromptResolution {
+    UNCONFIRMED,
+    PENDING,
+    CLEARED,
+}
+
+/**
+ * The background monitor treats only an explicit zero count as authority that
+ * a prompt kind is resolved. Done/error ends the run transport, not a prompt;
+ * cancellation is an explicit teardown and does not keep polling.
+ */
+internal data class RunPromptLifecycle(
+    val approval: PromptResolution = PromptResolution.UNCONFIRMED,
+    val question: PromptResolution = PromptResolution.UNCONFIRMED,
+    val terminal: BackgroundRunTerminal? = null,
+) {
+    fun applying(update: ApprovalPendingResponse): RunPromptLifecycle = copy(
+        approval = resolutionAfter(
+            current = approval,
+            hasPending = update.pending?.isEmpty == false,
+            pendingCount = update.pendingCount,
+        ),
+    )
+
+    fun applying(update: ClarificationPendingResponse): RunPromptLifecycle = copy(
+        question = resolutionAfter(
+            current = question,
+            hasPending = update.pending?.isEmpty == false,
+            pendingCount = update.pendingCount,
+        ),
+    )
+
+    fun endingWith(value: BackgroundRunTerminal): RunPromptLifecycle = copy(terminal = value)
+
+    val shouldContinueMonitoring: Boolean
+        get() = when (terminal) {
+            null -> true
+            BackgroundRunTerminal.CANCELLED -> false
+            BackgroundRunTerminal.COMPLETE, BackgroundRunTerminal.FAILED ->
+                approval != PromptResolution.CLEARED || question != PromptResolution.CLEARED
+        }
+
+    private fun resolutionAfter(
+        current: PromptResolution,
+        hasPending: Boolean,
+        pendingCount: Int?,
+    ): PromptResolution = when {
+        hasPending -> PromptResolution.PENDING
+        pendingCount == 0 -> PromptResolution.CLEARED
+        else -> current
+    }
+}
+
 /**
  * Android counterpart of `AgentLiveActivityManager` +
  * `ResponseCompletionNotificationService` (Config/AppTheme.swift): follows an
@@ -56,10 +109,16 @@ class AgentRunService : Service() {
     private data class RunKey(val server: String, val stream: String) {
         val notificationId: Int get() = (hashCode() and Int.MAX_VALUE).coerceAtLeast(1000)
     }
-    private class Monitor(val key: RunKey, val target: RunNotificationIntent.Target, val api: HermesApi, var state: BackgroundRunState) {
+    private class Monitor(
+        val key: RunKey,
+        val target: RunNotificationIntent.Target,
+        val api: HermesApi,
+        var state: BackgroundRunState,
+    ) {
         lateinit var job: Job
         var approvalId: String? = null
         var questionId: String? = null
+        var promptLifecycle = RunPromptLifecycle()
     }
 
     override fun onCreate() {
@@ -96,86 +155,149 @@ class AgentRunService : Service() {
             customHeaderProvider = { container.customHeaders.snapshotFor(key.server) })
         val monitor = Monitor(key, RunNotificationIntent.Target(key.server, session), api, BackgroundRunState(title))
         val initial = ongoingNotification(monitor)
-        if (monitors.isEmpty()) startForeground(key.notificationId, initial) else notifyOngoing(key.notificationId, initial)
+        if (monitors.values.none { it.state.terminal == null }) {
+            startForeground(key.notificationId, initial)
+        } else {
+            notifyOngoing(key.notificationId, initial)
+        }
         activeRuns += key
         monitor.job = scope.launch(start = CoroutineStart.LAZY) {
             var replayAfter: Int? = null
             val prompts = launch {
-                while (isActive && monitor.state.terminal == null) {
+                while (isActive && monitor.promptLifecycle.shouldContinueMonitoring) {
+                    if (container.serverRegistry.servers.none { it.id == key.server }) {
+                        // Removing/signing out of the owning account is an
+                        // authoritative teardown; no orphan poller or alert may
+                        // survive it.
+                        RunNotifications.clear(this@AgentRunService, monitor.target)
+                        monitor.job.cancel()
+                        break
+                    }
                     try {
                         approval(monitor, api.approvalPending(session))
                         question(monitor, api.clarifyPending(session))
-                    } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (_: Exception) { /* A failed advisory read cannot dismiss a pending request. */ }
-                    delay(1_500)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        // A failed advisory read cannot dismiss a pending request.
+                    }
+                    if (monitor.promptLifecycle.shouldContinueMonitoring) {
+                        delay(PROMPT_POLL_INTERVAL_MS)
+                    }
                 }
             }
             try {
-                while (isActive && monitor.state.terminal == null) {
-                    val stream = SseChatStream(container.okHttpClient, container.json, api) {
-                        container.customHeaders.snapshotFor(key.server)
+                try {
+                    while (isActive && monitor.state.terminal == null) {
+                        val stream = SseChatStream(container.okHttpClient, container.json, api) {
+                            container.customHeaders.snapshotFor(key.server)
+                        }
+                        stream.connect(key.stream, replayAfter).takeWhile { event ->
+                            monitor.state = monitor.state.reduce(event)
+                            when (event) {
+                                is ChatStreamEvent.ApprovalPending -> approval(monitor, event.response)
+                                is ChatStreamEvent.ClarificationPending -> question(monitor, event.response)
+                                else -> Unit
+                            }
+                            if (monitor.state.terminal == null) {
+                                notifyOngoing(key.notificationId, ongoingNotification(monitor))
+                            }
+                            monitor.state.terminal == null
+                        }.collect { }
+                        replayAfter = ChatStreamCoordinator.runJournalReplayAfterSeq(stream.lastEventId) ?: replayAfter
+                        if (monitor.state.terminal != null || !isActive) break
+                        val status = try {
+                            api.chatStreamStatus(key.stream)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (status?.active == true || status?.replayAvailable == true) {
+                            monitor.state = monitor.state.copy(status = "Reconnecting")
+                        } else if (status?.active == false) {
+                            val terminal = when (status.journal?.terminalState) {
+                                "errored", "interrupted-by-crash", "lost-worker-bookkeeping" ->
+                                    BackgroundRunTerminal.FAILED
+                                "interrupted-by-user" -> BackgroundRunTerminal.CANCELLED
+                                else -> BackgroundRunTerminal.COMPLETE
+                            }
+                            monitor.state = monitor.state.copy(terminal = terminal)
+                            break
+                        } else {
+                            monitor.state = monitor.state.copy(status = "Connection interrupted")
+                        }
+                        notifyOngoing(key.notificationId, ongoingNotification(monitor))
+                        delay(RECONNECT_DELAY_MS)
                     }
-                    stream.connect(key.stream, replayAfter).takeWhile { event ->
-                        monitor.state = monitor.state.reduce(event)
-                        when (event) {
-                            is ChatStreamEvent.ApprovalPending -> approval(monitor, event.response)
-                            is ChatStreamEvent.ClarificationPending -> question(monitor, event.response)
-                            else -> Unit
-                        }
-                        if (monitor.state.terminal == null) notifyOngoing(key.notificationId, ongoingNotification(monitor))
-                        monitor.state.terminal == null
-                    }.collect { }
-                    replayAfter = ChatStreamCoordinator.runJournalReplayAfterSeq(stream.lastEventId) ?: replayAfter
-                    if (monitor.state.terminal != null || !isActive) break
-                    val status = try { api.chatStreamStatus(key.stream) }
-                    catch (cancelled: CancellationException) { throw cancelled }
-                    catch (_: Exception) { null }
-                    if (status?.active == true || status?.replayAvailable == true) {
-                        monitor.state = monitor.state.copy(status = "Reconnecting")
-                    } else if (status?.active == false) {
-                        val terminal = when (status.journal?.terminalState) {
-                            "errored", "interrupted-by-crash", "lost-worker-bookkeeping" -> BackgroundRunTerminal.FAILED
-                            "interrupted-by-user" -> BackgroundRunTerminal.CANCELLED
-                            else -> BackgroundRunTerminal.COMPLETE
-                        }
-                        monitor.state = monitor.state.copy(terminal = terminal)
-                        break
-                    } else monitor.state = monitor.state.copy(status = "Connection interrupted")
-                    notifyOngoing(key.notificationId, ongoingNotification(monitor))
-                    delay(RECONNECT_DELAY_MS)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    monitor.state = monitor.state.copy(
+                        status = error.message ?: "Run monitor failed",
+                        terminal = BackgroundRunTerminal.FAILED,
+                    )
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                monitor.state = monitor.state.copy(status = error.message ?: "Run monitor failed", terminal = BackgroundRunTerminal.FAILED)
+
+                val terminal = monitor.state.terminal
+                if (terminal != null) {
+                    monitor.promptLifecycle = monitor.promptLifecycle.endingWith(terminal)
+                    activeRuns -= key
+                    manager.cancel(key.notificationId)
+                    updateForegroundOwnership()
+
+                    if (terminal == BackgroundRunTerminal.CANCELLED) {
+                        RunNotifications.clear(this@AgentRunService, monitor.target)
+                    } else {
+                        withContext(NonCancellable) {
+                            val failed = terminal == BackgroundRunTerminal.FAILED
+                            RunNotifications.clearRunOutcomes(this@AgentRunService, monitor.target)
+                            RunNotifications.post(
+                                this@AgentRunService,
+                                if (failed) RunNotificationKind.FAILED_RUN else RunNotificationKind.REPLY,
+                                monitor.target,
+                                monitor.state.title,
+                                if (failed) "Response failed" else "Response complete",
+                                container.settings.settings.first(),
+                                sceneIsActive = false,
+                            )
+                        }
+                        // The run transport is over, but an unanswered prompt
+                        // remains independently live until both endpoints
+                        // explicitly report pending_count == 0.
+                        prompts.join()
+                    }
+                }
             } finally {
                 prompts.cancel()
-                if (monitors[key] === monitor) monitors.remove(key)
-                activeRuns -= key
-                manager.cancel(key.notificationId)
-                if (monitors.isEmpty()) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                } else {
-                    val next = monitors.values.first()
-                    startForeground(next.key.notificationId, ongoingNotification(next))
-                }
-                val terminal = monitor.state.terminal
-                if (terminal != null && terminal != BackgroundRunTerminal.CANCELLED) withContext(NonCancellable) {
-                    val failed = terminal == BackgroundRunTerminal.FAILED
-                    RunNotifications.clear(this@AgentRunService, monitor.target)
-                    RunNotifications.post(this@AgentRunService,
-                        if (failed) RunNotificationKind.FAILED_RUN else RunNotificationKind.REPLY,
-                        monitor.target, monitor.state.title, if (failed) "Response failed" else "Response complete",
-                        container.settings.settings.first(), sceneIsActive = false)
-                }
+                removeMonitor(monitor)
             }
         }
         monitors[key] = monitor
         monitor.job.start()
     }
 
+    private fun removeMonitor(monitor: Monitor) {
+        if (monitors[monitor.key] !== monitor) return
+        monitors.remove(monitor.key)
+        activeRuns -= monitor.key
+        manager.cancel(monitor.key.notificationId)
+        updateForegroundOwnership()
+        if (monitors.isEmpty()) stopSelf()
+    }
+
+    private fun updateForegroundOwnership() {
+        val next = monitors.values.firstOrNull { it.state.terminal == null }
+            ?: monitors.values.firstOrNull { it.promptLifecycle.shouldContinueMonitoring }
+        if (next == null) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            startForeground(next.key.notificationId, ongoingNotification(next))
+        }
+    }
+
     private suspend fun approval(monitor: Monitor, update: ApprovalPendingResponse) {
+        monitor.promptLifecycle = monitor.promptLifecycle.applying(update)
         val pending = update.pending
         if (pending == null || pending.isEmpty) {
             if (update.pendingCount == 0) {
@@ -186,12 +308,19 @@ class AgentRunService : Service() {
         }
         if (monitor.approvalId == pending.id) return
         monitor.approvalId = pending.id
-        RunNotifications.post(this, RunNotificationKind.APPROVAL, monitor.target, monitor.state.title,
+        RunNotifications.post(
+            this,
+            RunNotificationKind.APPROVAL,
+            monitor.target,
+            monitor.state.title,
             pending.description?.takeIf { it.isNotBlank() } ?: "Approval required",
-            container.settings.settings.first(), sceneIsActive = false)
+            container.settings.settings.first(),
+            sceneIsActive = false,
+        )
     }
 
     private suspend fun question(monitor: Monitor, update: ClarificationPendingResponse) {
+        monitor.promptLifecycle = monitor.promptLifecycle.applying(update)
         val pending = update.pending
         if (pending == null || pending.isEmpty) {
             if (update.pendingCount == 0) {
@@ -202,8 +331,15 @@ class AgentRunService : Service() {
         }
         if (monitor.questionId == pending.id) return
         monitor.questionId = pending.id
-        RunNotifications.post(this, RunNotificationKind.QUESTION, monitor.target, monitor.state.title,
-            pending.displayQuestion, container.settings.settings.first(), sceneIsActive = false)
+        RunNotifications.post(
+            this,
+            RunNotificationKind.QUESTION,
+            monitor.target,
+            monitor.state.title,
+            pending.displayQuestion,
+            container.settings.settings.first(),
+            sceneIsActive = false,
+        )
     }
 
     private fun stopMonitor(key: RunKey) {
@@ -237,25 +373,56 @@ class AgentRunService : Service() {
     }
 
     private fun ongoingNotification(monitor: Monitor): Notification {
-        val open = PendingIntent.getActivity(this, monitor.key.notificationId,
+        val open = PendingIntent.getActivity(
+            this,
+            monitor.key.notificationId,
             RunNotificationIntent.contentIntent(this, monitor.target),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val cancel = PendingIntent.getService(this, monitor.key.notificationId,
-            Intent(this, AgentRunService::class.java).apply {
-                action = ACTION_CANCEL
-                putExtra(EXTRA_STREAM_ID, monitor.key.stream)
-                putExtra(RunNotificationIntent.EXTRA_SERVER_ID, monitor.key.server)
-            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, RunNotifications.CHANNEL_RUNS)
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val runIsActive = monitor.state.terminal == null
+        val notificationText = if (runIsActive) {
+            monitor.state.notificationText
+        } else {
+            when {
+                monitor.promptLifecycle.approval == PromptResolution.PENDING &&
+                    monitor.promptLifecycle.question == PromptResolution.PENDING ->
+                    "Approval and answer required"
+                monitor.promptLifecycle.approval == PromptResolution.PENDING -> "Approval required"
+                monitor.promptLifecycle.question == PromptResolution.PENDING -> "Answer required"
+                else -> "Checking pending requests"
+            }
+        }
+        val publicText = if (runIsActive) "Agent run in progress" else "Agent is waiting for a response"
+        val builder = NotificationCompat.Builder(this, RunNotifications.CHANNEL_RUNS)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle(monitor.state.title).setContentText(monitor.state.notificationText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(monitor.state.notificationText))
-            .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open)
+            .setContentTitle(monitor.state.title)
+            .setContentText(notificationText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notificationText))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(open)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(NotificationCompat.Builder(this, RunNotifications.CHANNEL_RUNS)
-                .setSmallIcon(R.drawable.ic_launcher_monochrome).setContentTitle("Hermex-Type-J")
-                .setContentText("Agent run in progress").build())
-            .addAction(0, "Cancel run", cancel).build()
+            .setPublicVersion(
+                NotificationCompat.Builder(this, RunNotifications.CHANNEL_RUNS)
+                    .setSmallIcon(R.drawable.ic_launcher_monochrome)
+                    .setContentTitle("Hermex-Type-J")
+                    .setContentText(publicText)
+                    .build(),
+            )
+        if (runIsActive) {
+            val cancel = PendingIntent.getService(
+                this,
+                monitor.key.notificationId,
+                Intent(this, AgentRunService::class.java).apply {
+                    action = ACTION_CANCEL
+                    putExtra(EXTRA_STREAM_ID, monitor.key.stream)
+                    putExtra(RunNotificationIntent.EXTRA_SERVER_ID, monitor.key.server)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, "Cancel run", cancel)
+        }
+        return builder.build()
     }
 
     @SuppressLint("MissingPermission")
@@ -271,6 +438,7 @@ class AgentRunService : Service() {
         private const val EXTRA_TITLE = "title"
         private val activeRuns = ConcurrentHashMap.newKeySet<RunKey>()
         private const val RECONNECT_DELAY_MS = 2_000L
+        private const val PROMPT_POLL_INTERVAL_MS = 1_500L
 
         fun start(context: Context, serverId: String, streamId: String, sessionId: String, title: String) {
             ContextCompat.startForegroundService(context, Intent(context, AgentRunService::class.java).apply {

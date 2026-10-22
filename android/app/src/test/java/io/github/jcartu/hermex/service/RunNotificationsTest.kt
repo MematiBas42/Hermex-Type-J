@@ -94,6 +94,28 @@ class RunNotificationsTest {
         assertEquals(two, RunNotificationIntent.target(shadowOf(shadowOf(manager).getNotification(two.notificationTag, 1).contentIntent).savedIntent))
     }
 
+    @Test fun `run termination retains prompt alerts while explicit teardown clears every kind`() {
+        val target = RunNotificationIntent.Target("https://host", "session")
+        for (kind in RunNotificationKind.entries) {
+            assertEquals(
+                RunNotificationResult.POSTED,
+                RunNotifications.post(app, kind, target, "Run", kind.name, enabled, false),
+            )
+        }
+
+        RunNotifications.clearRunOutcomes(app, target)
+
+        assertNull(shadowOf(manager).getNotification(target.notificationTag, RunNotificationKind.REPLY.id))
+        assertNull(shadowOf(manager).getNotification(target.notificationTag, RunNotificationKind.FAILED_RUN.id))
+        assertNotNull(shadowOf(manager).getNotification(target.notificationTag, RunNotificationKind.APPROVAL.id))
+        assertNotNull(shadowOf(manager).getNotification(target.notificationTag, RunNotificationKind.QUESTION.id))
+
+        RunNotifications.clear(app, target)
+        for (kind in RunNotificationKind.entries) {
+            assertNull(shadowOf(manager).getNotification(target.notificationTag, kind.id))
+        }
+    }
+
     @Test fun `Hermes unknown default and named profiles remain distinct`() {
         for (profile in listOf(null, "", "Team & work")) {
             val target = RunNotificationIntent.Target("https://host", "key", profile, ServerKind.HERMES)

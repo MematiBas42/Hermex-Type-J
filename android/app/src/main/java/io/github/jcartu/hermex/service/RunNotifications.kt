@@ -115,6 +115,17 @@ object RunNotifications {
         }
     }
 
+    /**
+     * Clears only notifications owned by run termination. Approval/question
+     * alerts have an independent server-confirmed lifecycle and must survive
+     * Done/Error until their pending endpoint explicitly reports zero.
+     */
+    fun clearRunOutcomes(context: Context, target: RunNotificationIntent.Target) {
+        val manager = NotificationManagerCompat.from(context)
+        manager.cancel(target.notificationTag, RunNotificationKind.REPLY.id)
+        manager.cancel(target.notificationTag, RunNotificationKind.FAILED_RUN.id)
+    }
+
     fun clear(context: Context, target: RunNotificationIntent.Target) {
         val manager = NotificationManagerCompat.from(context)
         for (kind in RunNotificationKind.entries) manager.cancel(target.notificationTag, kind.id)
@@ -155,7 +166,7 @@ class RunNotificationHooks(
     private val sceneIsActive: () -> Boolean,
 ) {
     suspend fun runStarted(server: ServerAccount, session: String, title: String, hermesProfile: String? = null): Boolean {
-        RunNotifications.clear(context, target(server, session, hermesProfile))
+        RunNotifications.clearRunOutcomes(context, target(server, session, hermesProfile))
         return offer.claimForRunStart()
     }
 

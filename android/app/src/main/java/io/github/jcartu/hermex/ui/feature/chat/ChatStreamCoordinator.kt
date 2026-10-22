@@ -113,6 +113,11 @@ interface ChatStreamCoordinatorDelegate {
     fun streamCoordinatorDidReceiveErrorMessage(message: String)
     fun streamCoordinatorDidReceiveRecoveryError(error: Throwable)
     fun streamCoordinatorDidConfirmRecovery()
+    /**
+     * [isReplay] is true only when a full-history replay may repeat restored
+     * content and the delegate should arm prefix deduplication. A journal
+     * suffix resumed after a trusted positive cursor reports false.
+     */
     fun streamCoordinatorDidStartConnection(isReplay: Boolean)
     fun streamCoordinatorDidResetRecoveryState()
 
@@ -163,6 +168,11 @@ class ChatStreamCoordinator(
     var isConnectionSuspended = false
         private set
 
+    /**
+     * Whether the current connection can repeat the restored response prefix.
+     * The name is retained for the delegate/VM contract; a replay transport
+     * resumed after a trusted positive cursor deliberately leaves this false.
+     */
     var isReplayConnection = false
         private set
 
@@ -258,7 +268,13 @@ class ChatStreamCoordinator(
             lastEventId = null
         }
 
-        markConnectionStarted(isReplay = replayAfterSeq != null, recoveryState = recoveryState)
+        val usesJournalReplay = replayAfterSeq != null
+        val allowReplayDedup = replayAfterSeq != null && replayAfterSeq <= 0
+        markConnectionStarted(
+            isReplay = usesJournalReplay,
+            allowReplayDedup = allowReplayDedup,
+            recoveryState = recoveryState,
+        )
 
         connectionJob?.cancel()
         connectionJob = scope.launch {
@@ -1065,15 +1081,19 @@ class ChatStreamCoordinator(
         if (state.value.isStreamHeartbeatFresh != fresh) state.update { it.copy(isStreamHeartbeatFresh = fresh) }
     }
 
-    private fun markConnectionStarted(isReplay: Boolean, recoveryState: ActiveStreamRecoveryState) {
+    private fun markConnectionStarted(
+        isReplay: Boolean,
+        allowReplayDedup: Boolean,
+        recoveryState: ActiveStreamRecoveryState,
+    ) {
         val startedAt = now()
         lastProgressMillis = if (isReplay) startedAt else null
         lastTransportActivityMillis = startedAt
         lastRecoveryStatusCheckMillis = null
         setRecoveryStateIfChanged(recoveryState)
         refreshHeartbeatFreshness(startedAt)
-        isReplayConnection = isReplay
-        delegate?.streamCoordinatorDidStartConnection(isReplay)
+        isReplayConnection = allowReplayDedup
+        delegate?.streamCoordinatorDidStartConnection(allowReplayDedup)
     }
 
     private suspend fun loadMessagesForReconnect(reconnectTaskId: UUID): Boolean {
