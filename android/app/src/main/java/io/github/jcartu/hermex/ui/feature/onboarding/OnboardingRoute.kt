@@ -43,6 +43,19 @@ import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.HingeAwarePaneRow
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.systemBarsPadding
+import io.github.jcartu.hermex.model.ServerKind
+import io.github.jcartu.hermex.ui.adaptive.LocalFoldState
+import io.github.jcartu.hermex.ui.adaptive.rememberFoldState
+import io.github.jcartu.hermex.ui.adaptive.rememberWindowWidthDp
+import io.github.jcartu.hermex.ui.adaptive.trifoldPaneCount
+import io.github.jcartu.hermex.ui.feature.hermes.connect.HermesSignInRoute
+import io.github.jcartu.hermex.ui.feature.hermes.connect.rememberHermesBrowserSignInPresenter
 
 /**
  * Onboarding flow, port of `OnboardingView.swift`. Compact: full-screen pager.
@@ -52,6 +65,16 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun OnboardingRoute(container: AppContainer, savedServer: ServerAccount?) {
+    val fold by rememberFoldState()
+    val panes = maxOf(LocalPaneCount.current, fold.trifoldPaneCount(rememberWindowWidthDp()))
+    CompositionLocalProvider(LocalFoldState provides fold, LocalPaneCount provides panes) {
+        if (savedServer?.kind == ServerKind.HERMES) HermesSignInRoute(container, savedServer)
+        else OnboardingContent(container, savedServer)
+    }
+}
+
+@Composable
+private fun OnboardingContent(container: AppContainer, savedServer: ServerAccount?) {
     val viewModel: OnboardingViewModel = viewModel(
         // A different saved server (a switch to a signed-out one) gets its own form.
         key = "onboarding:${savedServer?.id.orEmpty()}",
@@ -62,20 +85,23 @@ fun OnboardingRoute(container: AppContainer, savedServer: ServerAccount?) {
                     savedServer = savedServer,
                     savedHeaders = savedServer?.let(container.authManager::savedCustomHeaders).orEmpty(),
                     initialErrorMessage = container.authManager.lastErrorMessage.value,
+                    hermesHttpClient = container.okHttpClient,
                 )
             }
         },
     )
+    DisposableEffect(viewModel) { onDispose { viewModel.cancel() } }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {
         if (paneCount >= 2) {
-            HingeAwarePaneRow(paneCount = 2) { index, paneModifier ->
+            HingeAwarePaneRow(paneCount = paneCount) { index, paneModifier ->
                 when (index) {
                     0 -> OnboardingPagerColumn(viewModel, uiState, paneModifier)
-                    else -> OnboardingGuidePane(uiState, paneModifier)
+                    1 -> OnboardingGuidePane(uiState, paneModifier)
+                    else -> Column(paneModifier.padding(24.dp).verticalScroll(rememberScrollState())) { OnboardingFeatureList() }
                 }
             }
         } else {
@@ -106,6 +132,15 @@ private fun OnboardingPagerColumn(
     uiState: OnboardingUiState,
     modifier: Modifier = Modifier,
 ) {
+    val browser = rememberHermesBrowserSignInPresenter()
+    var confirmReplace by rememberSaveable { mutableStateOf(false) }
+    val submit: () -> Unit = { if (uiState.canSubmit && !uiState.isConnectionLocked) viewModel.connect(browser = browser) }
+    if (confirmReplace) AlertDialog(
+        onDismissRequest = { confirmReplace = false }, title = { Text("Replace webui server?") },
+        text = { Text("Removes the saved webui sign-in and its data on this device, then connects directly to Hermes. The server's name and appearance are kept.") },
+        confirmButton = { TextButton(onClick = { confirmReplace = false; viewModel.connect(replacingWebuiServer = true, browser = browser) }) { Text("Replace") } },
+        dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text("Cancel") } },
+    )
     val pagerState = rememberPagerState(
         initialPage = uiState.currentPage,
         pageCount = { OnboardingFlowPolicy.pageCount },
@@ -150,18 +185,21 @@ private fun OnboardingPagerColumn(
                         onPasswordChange = viewModel::onPasswordChange,
                         onHeadersChange = viewModel::onCustomHeadersChange,
                         onConnectionModeChange = viewModel::setConnectionMode,
-                        onSubmit = { if (uiState.canSubmit && !uiState.isConnectionLocked) viewModel.connect() },
+                        onSubmit = submit,
+                        onUsernameChange = viewModel::onUsernameChange,
+                        onUseSavedSignIn = viewModel::useSavedSignIn,
+                        onReplaceWebui = { confirmReplace = true },
                     )
                 }
             }
         }
 
-        OnboardingBottomBar(viewModel, uiState)
+        OnboardingBottomBar(viewModel, uiState, submit)
     }
 }
 
 @Composable
-private fun OnboardingBottomBar(viewModel: OnboardingViewModel, uiState: OnboardingUiState) {
+private fun OnboardingBottomBar(viewModel: OnboardingViewModel, uiState: OnboardingUiState, submit: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -176,20 +214,18 @@ private fun OnboardingBottomBar(viewModel: OnboardingViewModel, uiState: Onboard
         )
 
         if (uiState.currentPage == OnboardingFlowPolicy.connectPageIndex) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OnboardingSecondaryButton(
                     text = "Test Connection",
                     icon = Icons.Filled.Lan,
-                    enabled = !uiState.isWorking && !uiState.isConnectionLocked && uiState.canSubmit,
-                    modifier = Modifier.weight(1f),
+                    enabled = !uiState.isWorking && !uiState.isConnectionLocked && uiState.serverUrl.isNotBlank(),
                     onClick = viewModel::testConnection,
                 )
                 OnboardingPrimaryButton(
-                    text = "Connect",
+                    text = uiState.submitTitle,
                     icon = Icons.Filled.CheckCircle,
                     enabled = !uiState.isWorking && !uiState.isConnectionLocked && uiState.canSubmit,
-                    modifier = Modifier.weight(1f),
-                    onClick = viewModel::connect,
+                    onClick = submit,
                 )
             }
         } else {
@@ -202,7 +238,7 @@ private fun OnboardingBottomBar(viewModel: OnboardingViewModel, uiState: Onboard
                 TextButton(onClick = viewModel::jumpToConnectPage) {
                     Text(
                         "Already have a server?",
-                        color = Color.White.copy(alpha = 0.55f),
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                     )
@@ -238,7 +274,7 @@ private fun OnboardingGuidePane(uiState: OnboardingUiState, modifier: Modifier =
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(
                 "Setup guide",
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
@@ -253,20 +289,20 @@ private fun OnboardingGuidePane(uiState: OnboardingUiState, modifier: Modifier =
                         modifier = Modifier
                             .size(23.dp)
                             .background(
-                                if (isCurrent) OnboardingAccent else Color.White.copy(alpha = 0.12f),
+                                if (isCurrent) OnboardingAccent else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.12f),
                                 CircleShape,
                             ),
                     ) {
                         Text(
                             "${index + 1}",
-                            color = if (isCurrent) Color.Black else Color.White.copy(alpha = 0.6f),
+                            color = if (isCurrent) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
                     Text(
                         step,
-                        color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.45f),
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (isCurrent) 1f else 0.45f),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                     )
@@ -281,18 +317,18 @@ private fun OnboardingGuidePane(uiState: OnboardingUiState, modifier: Modifier =
             2 -> OnboardingStatusBanner(
                 text = "Copy the prompt and hand it to the Hermes agent on your desktop. It replies with the exact HTTPS URL and password to enter on the last step.",
                 icon = Icons.Filled.CheckCircle,
-                tint = Color.White.copy(alpha = 0.7f),
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             )
             3 -> OnboardingStatusBanner(
                 text = "Your phone and the server must be on the same tailnet. Keep the Tailscale VPN connected while using Hermex.",
                 icon = Icons.Filled.Lan,
-                tint = Color.White.copy(alpha = 0.7f),
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             )
             else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OnboardingStatusBanner(
                     text = uiState.connectionMode.help,
                     icon = Icons.Filled.Lan,
-                    tint = Color.White.copy(alpha = 0.7f),
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                 )
                 if (uiState.authStatus?.authEnabled == false) {
                     OnboardingStatusBanner(

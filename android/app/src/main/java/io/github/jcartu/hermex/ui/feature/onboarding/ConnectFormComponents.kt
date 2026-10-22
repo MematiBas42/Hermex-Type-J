@@ -48,27 +48,27 @@ import androidx.compose.ui.unit.sp
 import io.github.jcartu.hermex.net.CustomHeader
 
 /**
- * Port of `CustomHeadersEditor.Style`: the connect form's components draw on
- * onboarding's fixed dark palette or on the Settings theme (Add Server).
+ * Port of `CustomHeadersEditor.Style`: both variants follow the user's theme;
+ * onboarding retains its lighter strokes and alpha hierarchy.
  */
 enum class ConnectFormStyle {
     ONBOARDING,
     SETTINGS;
 
     val primaryText: Color
-        @Composable get() = if (this == ONBOARDING) Color.White else MaterialTheme.colorScheme.onSurface
+        @Composable get() = if (this == ONBOARDING) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurface
 
     val secondaryText: Color
-        @Composable get() = if (this == ONBOARDING) Color.White.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurfaceVariant
+        @Composable get() = if (this == ONBOARDING) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurfaceVariant
 
     val fieldStroke: Color
-        @Composable get() = if (this == ONBOARDING) Color.White.copy(alpha = 0.1f) else MaterialTheme.colorScheme.outlineVariant
+        @Composable get() = if (this == ONBOARDING) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f) else MaterialTheme.colorScheme.outlineVariant
 
     val accent: Color
         @Composable get() = if (this == ONBOARDING) OnboardingAccent else MaterialTheme.colorScheme.primary
 
     val placeholder: Color
-        @Composable get() = if (this == ONBOARDING) Color.White.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        @Composable get() = if (this == ONBOARDING) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
 }
 
 /**

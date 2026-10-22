@@ -93,6 +93,7 @@ class ChatViewModelTest {
     private lateinit var sentMessages: MutableList<String>
     private var capturedAttachments: List<JsonElement>? = null
     private lateinit var draftStore: io.github.jcartu.hermex.data.ChatDraftStore
+    private lateinit var snapshots: io.github.jcartu.hermex.data.ActiveChatStreamSnapshotStore
     private lateinit var storeScope: kotlinx.coroutines.CoroutineScope
     private val viewModels = androidx.lifecycle.ViewModelStore()
     private var viewModelCount = 0
@@ -105,6 +106,7 @@ class ChatViewModelTest {
         directory = Files.createTempDirectory("chat-vm-test").toFile()
         cacheStore = CacheStore(directory, json)
         storeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher)
+        snapshots = io.github.jcartu.hermex.data.ActiveChatStreamSnapshotStore(directory, json, storeScope)
         draftStore = io.github.jcartu.hermex.data.ChatDraftStore(
             io.github.jcartu.hermex.data.ChatDraftFilePersistence(directory, json, dispatcher),
             io.github.jcartu.hermex.data.ChatDraftAttachmentStore(directory), storeScope, ioDispatcher = dispatcher,
@@ -125,6 +127,9 @@ class ChatViewModelTest {
         coEvery { serverConfig.current() } returns ServerConfig(baseUrl = serverUrl, password = "pw")
         every { sse.lastEventId } returns null
         every { sse.connect(any(), any()) } returns events
+        every { sse.connectApprovalStream(any()) } returns MutableSharedFlow(extraBufferCapacity = 16)
+        every { sse.connectClarifyStream(any()) } returns MutableSharedFlow(extraBufferCapacity = 16)
+        coEvery { api.sessionYolo(any()) } returns io.github.jcartu.hermex.model.SessionYoloResponse(yoloEnabled = false)
 
         // Composer configuration endpoints (loadComposerConfiguration).
         coEvery { api.profiles() } returns ProfilesResponse()
@@ -160,7 +165,9 @@ class ChatViewModelTest {
         directory.deleteRecursively()
     }
 
-    private fun viewModel(sessionId: String? = "s1", newChat: Boolean = false, network: io.github.jcartu.hermex.net.NetworkAvailability? = null): ChatViewModel =
+    private fun viewModel(sessionId: String? = "s1", newChat: Boolean = false,
+                          network: io.github.jcartu.hermex.net.NetworkAvailability? = null,
+                          onStarted: suspend () -> Unit = {}): ChatViewModel =
         ChatViewModel(
             api = api,
             sse = sse,
@@ -174,6 +181,9 @@ class ChatViewModelTest {
             ioDispatcher = dispatcher,
             drafts = draftStore,
             network = network,
+            streamSnapshots = snapshots,
+            attachmentPreview = { _, _, _, _, _ -> byteArrayOf(9, 8, 7) },
+            onRunStarted = onStarted,
         ).also { viewModels.put("vm-${viewModelCount++}", it) }
 
     /** Activates session "s1" and starts a stream by sending "hello". */
@@ -874,5 +884,169 @@ class ChatViewModelTest {
         assertEquals("s1", vm.uiState.value.sessionId)
         assertEquals("rejected work", vm.uiState.value.draft)
         assertEquals("other work", draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2"))?.text)
+    }
+
+    @Test
+    fun `process recreation restores live reasoning tools and assistant prefix then resumes cursor`() = runTest(dispatcher) {
+        val vm = startedViewModel()
+        every { sse.lastEventId } returns "run:27"
+        events.emit(ChatStreamEvent.Token("Hello world"))
+        events.emit(ChatStreamEvent.Reasoning("Still thinking"))
+        events.emit(ChatStreamEvent.ToolStarted(ToolStreamEvent(name = "bash", stableId = "tool-1", preview = "pwd")))
+        vm.pinLocalNoticeMessage("Keep notice")
+        vm.suspendStreamForBackground()
+        viewModels.clear()
+        snapshots.flush()
+        snapshots = io.github.jcartu.hermex.data.ActiveChatStreamSnapshotStore(directory, json, storeScope)
+        coEvery { api.chatStreamStatus("stream-1") } returns ChatStreamStatusResponse(active = true, replayAvailable = true)
+        coEvery { api.session(any(), any(), any(), any(), any()) } returns SessionResponse(
+            SessionDetail(sessionId = "s1", activeStreamId = "stream-1", messages = listOf(
+                ChatMessage(role = "user", content = "hello", messageId = "u"),
+                ChatMessage(role = "assistant", content = "Hello", messageId = "server-assistant"),
+            )))
+        val restored = viewModel()
+        restored.switchToSession("s1", false)
+        assertEquals("Hello world", restored.uiState.value.messages.last { it.role == "assistant" }.content)
+        assertEquals("Still thinking", restored.uiState.value.liveReasoningText)
+        assertEquals("tool-1", restored.uiState.value.liveToolCalls.single().id)
+        assertFalse(restored.uiState.value.liveToolCalls.single().isCompleted)
+        assertEquals("server-assistant", restored.uiState.value.streamingAssistantMessageId)
+        assertEquals(listOf("Keep notice"), restored.uiState.value.pinnedLocalNotices)
+        verify { sse.connect("stream-1", 27) }
+        coVerify(exactly = 1) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
+        events.emit(ChatStreamEvent.Cancelled)
+        assertNull(snapshots.snapshot(serverUrl, "s1", "stream-1"))
+    }
+
+    @Test
+    fun `share staging failure on second copy leaves original draft and no partial attachment`() = runTest(dispatcher) {
+        val actual = io.github.jcartu.hermex.data.ChatDraftAttachmentStore(directory)
+        var copies = 0
+        val failing = object : io.github.jcartu.hermex.data.ChatDraftAttachmentStoring by actual {
+            override fun save(data: ByteArray, suggestedFilename: String): String {
+                if (++copies == 2) throw java.io.IOException("disk full")
+                return actual.save(data, suggestedFilename)
+            }
+        }
+        draftStore = io.github.jcartu.hermex.data.ChatDraftStore(
+            io.github.jcartu.hermex.data.ChatDraftFilePersistence(directory, json, dispatcher), failing, storeScope, dispatcher)
+        val shared = SharedImport("transaction", "Incoming", listOf("one.txt", "two.txt").map {
+            SharedImportAttachment(it, "text/plain", 4, File(directory, it).apply { writeText("text") })
+        }, emptyList())
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("Original")
+        assertFalse(vm.applySharedImport(shared))
+        assertEquals("Original", vm.uiState.value.draft)
+        assertTrue(vm.uiState.value.pendingAttachments.isEmpty())
+        val saved = draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s1"))!!
+        assertEquals("Original", saved.text)
+        assertTrue(saved.attachments.isEmpty())
+        assertTrue(saved.sharedImportIds.isEmpty())
+        assertTrue(actual.retainedFileBytes().isEmpty())
+        coVerify(exactly = 0) { api.uploadFile(any(), any(), any()) }
+    }
+
+    @Test
+    fun `document restore and shared import both regenerate composer thumbnails`() = runTest(dispatcher) {
+        coEvery { api.uploadFile(any(), any(), any()) } answers {
+            UploadResponse(path = "/up/${arg<String>(2)}", mime = "text/plain", isImage = false, size = 4)
+        }
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.uploadAttachment("text".toByteArray(), "saved.txt")
+        vm.switchToSession("s2", false)
+        vm.switchToSession("s1", false)
+        assertTrue(vm.uiState.value.pendingAttachments.single().thumbnailData!!.contentEquals(byteArrayOf(9, 8, 7)))
+        val shared = SharedImport("preview", "", listOf(SharedImportAttachment("shared.txt", "text/plain", 4,
+            File(directory, "shared.txt").apply { writeText("text") })), emptyList())
+        assertTrue(vm.applySharedImport(shared))
+        assertEquals(2, vm.uiState.value.pendingAttachments.size)
+        assertTrue(vm.uiState.value.pendingAttachments.all { it.thumbnailData!!.contentEquals(byteArrayOf(9, 8, 7)) })
+    }
+
+    @Test
+    fun `late rotation after navigating away retains attachments only in source draft`() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { api.uploadFile(any(), any(), any()) } returns UploadResponse(path = "/up/report.txt", mime = "text/plain", isImage = false, size = 4)
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            gate.await()
+            throw ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2"}""")
+        }
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("Rejected work")
+        vm.uploadAttachment("text".toByteArray(), "report.txt")
+        vm.send()
+        vm.switchToSession("s3", false)
+        vm.updateDraft("New work")
+        gate.complete(Unit)
+        assertEquals("s3", vm.uiState.value.sessionId)
+        assertEquals("New work", vm.uiState.value.draft)
+        assertTrue(vm.uiState.value.pendingAttachments.isEmpty())
+        val source = draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s1"))!!
+        assertEquals("Rejected work", source.text)
+        assertEquals("report.txt", source.attachments.single().name)
+        assertEquals("text", draftStore.attachmentData(source.attachments.single().file!!).decodeToString())
+        assertNull(draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2")))
+    }
+
+    @Test
+    fun `cancelled continuation lookup retains rejected attachment copies through recreation`() = runTest(dispatcher) {
+        val target = kotlinx.coroutines.CompletableDeferred<SessionResponse>()
+        coEvery { api.uploadFile(any(), any(), any()) } returns UploadResponse(path = "/up/report.txt", mime = "text/plain", isImage = false, size = 4)
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2"}""")
+        coEvery { api.session("s2", false, null, any(), any()) } coAnswers { target.await() }
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("Rejected work")
+        vm.uploadAttachment("text".toByteArray(), "report.txt")
+        vm.send()
+        viewModels.clear()
+        draftStore.flush()
+        val disk = io.github.jcartu.hermex.data.ChatDraftFilePersistence(directory, json, dispatcher).load()
+        val source = disk[io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s1")]!!
+        assertEquals("Rejected work", source.text)
+        assertEquals("text", draftStore.attachmentData(source.attachments.single().file!!).decodeToString())
+        assertNull(disk[io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2")])
+    }
+
+    @Test
+    fun `rotation Profile mismatch keeps original text quotes and attachments`() = runTest(dispatcher) {
+        coEvery { api.session(any(), any(), any(), any(), any()) } answers {
+            SessionResponse(SessionDetail(sessionId = firstArg(), profile = if (firstArg<String>() == "s1") "work" else "other"))
+        }
+        coEvery { api.uploadFile(any(), any(), any()) } returns UploadResponse(path = "/up/report.txt", mime = "text/plain", isImage = false, size = 4)
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2"}""")
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("Keep here")
+        vm.askAboutSelection("Quoted passage")
+        vm.uploadAttachment("text".toByteArray(), "report.txt")
+        vm.send()
+        assertEquals("s1", vm.uiState.value.sessionId)
+        assertEquals("Keep here", vm.uiState.value.draft)
+        assertEquals("Quoted passage", vm.uiState.value.draftQuotes.single().text)
+        assertEquals("report.txt", vm.uiState.value.pendingAttachments.single().name)
+        assertNull(vm.uiState.value.compressionContinuation)
+        assertTrue(vm.uiState.value.isCompressionRotated)
+        assertNull(draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2")))
+    }
+
+    @Test
+    fun `accepted run invokes first-run notification hook but rejected send never does`() = runTest(dispatcher) {
+        var offers = 0
+        val vm = viewModel(onStarted = { offers++ })
+        vm.switchToSession("s1", false)
+        vm.updateDraft("hello")
+        vm.send()
+        assertEquals(1, offers)
+        events.emit(ChatStreamEvent.Cancelled)
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws ApiError.Http(500, "failed")
+        vm.updateDraft("again")
+        vm.send()
+        assertEquals(1, offers)
     }
 }

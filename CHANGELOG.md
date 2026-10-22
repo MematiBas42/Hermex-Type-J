@@ -8,6 +8,17 @@ Security sections per release.
 ## [2.0.0] - 2026-08-17
 
 ### Added
+- Android direct-Hermes connection flow: dashboard-first detection, password,
+  browser PKCE and open-dashboard sign-in, encrypted per-server connection
+  records and refresh-token rotation, host identity checks, and explicit
+  replacement of a saved webui server at the same address.
+- Hermes server Settings: editable sign-in and connection headers, public
+  host/gateway status, companion capability presence, and Update Hermes with
+  receipt-based restart recovery. Sign-out keeps the server and opens its own
+  locked-address sign-in form; removing a server also removes its local data.
+- The Android onboarding/connect flow follows the selected Tokyo Night or
+  Classic palette in both light and dark modes, including fields, overlays,
+  hero glow, feature icons and primary actions.
 - Renamed the Android fork to **Hermex-Type-J** (`jcartu/Hermex-Type-J`,
   package ID unchanged for in-place upgrades) and expanded it with:
 - Kanban boards: boards/columns/cards, card detail (comments, activity,
@@ -161,6 +172,16 @@ working and get fixes, and new features go to Hermes.
 - An approval answer the host can't confirm keeps the card answerable with a
   warning, and an approval with malformed choices offers only Deny. ([#1103],
   [#1104])
+- Android: live webui streams retain their partial reply, reasoning, tool cards
+  and replay cursor across process recreation. Shared imports commit text and
+  attachment copies together; restored/shared documents regenerate composer
+  thumbnails. Rejected compression continuations preserve their original draft
+  across navigation, cancellation and Profile mismatches.
+- Android: local run alerts have separate reply, approval, question and failure
+  channels, respect each Notifications toggle, and carry the owning server and
+  session on tap. Approvals use a high-importance channel; stopped runs stay
+  silent. The first accepted run claims the one-time permission offer, and
+  Send Test Notification uses the production reply channel.
 
 [#713]: https://github.com/uzairansaruzi/hermex/issues/713
 [#1020]: https://github.com/uzairansaruzi/hermex/pull/1020
