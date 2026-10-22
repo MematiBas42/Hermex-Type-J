@@ -62,7 +62,8 @@ class WorkspaceTest {
                   "type": "file",
                   "size": 842,
                   "modified": 1723456799,
-                  "is_dir": false
+                  "is_dir": false,
+                  "target_outside_workspace": true
                 }
               ],
               "path": "/srv/hermex",
@@ -89,6 +90,7 @@ class WorkspaceTest {
         assertEquals(1723456799.0, readme.modified!!, 0.0)
         assertEquals(false, readme.isDirectory)
         assertFalse(readme.isBrowsableDirectory)
+        assertEquals(true, readme.targetOutsideWorkspace)
         assertEquals("/srv/hermex", response.path)
         assertEquals("/srv/hermex", response.workspace)
         assertNull(response.error)

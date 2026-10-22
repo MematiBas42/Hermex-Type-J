@@ -101,10 +101,12 @@ class GitWorkspaceViewModelTest {
     }
 
     @Test fun `discard forwards explicit delete untracked choice`() = runTest(dispatcher) {
+        coEvery { api.gitUnstage("s1", listOf("A.kt")) } returns GitMutationResponse(true, status())
         coEvery { api.gitDiscard("s1", listOf("A.kt"), true) } returns GitMutationResponse(true, status(files = emptyList()))
         val vm = loaded()
         vm.togglePath("A.kt"); vm.discardSelected(true); advanceUntilIdle()
         coVerify { api.gitDiscard("s1", listOf("A.kt"), true) }
+        coVerify { api.gitUnstage("s1", listOf("A.kt")) }
         assertTrue(vm.uiState.value.files.isEmpty())
     }
 

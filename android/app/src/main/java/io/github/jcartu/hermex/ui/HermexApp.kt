@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.core.prefs.ServerConfig
 import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.di.AppContainer
@@ -66,6 +67,7 @@ import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 import io.github.jcartu.hermex.ui.feature.skills.SkillsRoute
 import io.github.jcartu.hermex.ui.feature.tasks.TasksRoute
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceRoute
+import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceFileNavigation
 
 enum class HermexDestination(val label: String, val icon: ImageVector) {
     CHATS("Chats", Icons.AutoMirrored.Filled.Chat),
@@ -108,6 +110,12 @@ private fun MainShell(container: AppContainer) {
     val selected = navigation.selectedDestination
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
+    val workspaceFileRequest by WorkspaceFileNavigation.request.collectAsStateWithLifecycle()
+    LaunchedEffect(workspaceFileRequest?.id) {
+        if (workspaceFileRequest != null) {
+            navigation.selectDestination(HermexDestination.FILES)
+        }
+    }
     LaunchedEffect(pendingDeepLink?.first) {
         val pending = pendingDeepLink ?: return@LaunchedEffect
         when (val link = pending.second) {
@@ -143,7 +151,7 @@ private fun MainShell(container: AppContainer) {
                     onDeepLinkConsumed = navigation::consumeKanbanTarget,
                 )
                 HermexDestination.TASKS -> TasksRoute()
-                HermexDestination.FILES -> WorkspaceRoute()
+                HermexDestination.FILES -> WorkspaceRoute(initialSessionId = navigation.selectedSessionId)
                 HermexDestination.MORE -> MoreRoute(navigation)
             }
         }
@@ -184,6 +192,7 @@ private fun MainShell(container: AppContainer) {
                 }
             }
         }
+        DocumentPreviewHost()
     }
 }
 
