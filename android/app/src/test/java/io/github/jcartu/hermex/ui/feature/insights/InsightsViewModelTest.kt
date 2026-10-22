@@ -1,16 +1,16 @@
 package io.github.jcartu.hermex.ui.feature.insights
 
+import io.github.jcartu.hermex.model.InsightsResponse
+import io.github.jcartu.hermex.model.ProviderQuotaResponse
+import io.github.jcartu.hermex.model.ProvidersResponse
 import io.github.jcartu.hermex.model.SessionSummary
 import io.github.jcartu.hermex.model.SessionsResponse
-import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -18,23 +18,38 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneOffset
+
+private class FakeInsightsClient(
+    var insightsResult: Result<InsightsResponse> = Result.success(InsightsResponse()),
+    var sessionsResult: Result<SessionsResponse> = Result.success(SessionsResponse()),
+    var providersResult: Result<ProvidersResponse> = Result.success(ProvidersResponse()),
+    var quotaResult: Result<ProviderQuotaResponse> = Result.success(ProviderQuotaResponse(status = "available")),
+) : InsightsDataClient {
+
+    override val insightsFeatures: InsightsFeatures = InsightsFeatures.webui
+
+    var quotaCalls = mutableListOf<Pair<String, Boolean>>()
+
+    override suspend fun sessions(): SessionsResponse = sessionsResult.getOrThrow()
+
+    override suspend fun insights(days: Int): InsightsResponse = insightsResult.getOrThrow()
+
+    override suspend fun providers(): ProvidersResponse = providersResult.getOrThrow()
+
+    override suspend fun providerQuota(provider: String, refresh: Boolean): ProviderQuotaResponse {
+        quotaCalls += provider to refresh
+        return quotaResult.getOrThrow()
+    }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InsightsViewModelTest {
 
-    private val api = mockk<HermesApi>()
-    private val zone = ZoneOffset.UTC
-
-    /** Fixed "now": 2026-08-17T12:00:00Z. */
-    private val now: Instant = Instant.parse("2026-08-17T12:00:00Z")
-    private val nowMillis = now.toEpochMilli()
+    private val dispatcher = StandardTestDispatcher()
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        Dispatchers.setMain(dispatcher)
     }
 
     @After
@@ -42,200 +57,151 @@ class InsightsViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun epochSeconds(daysAgo: Long): Double =
-        now.minusSeconds(daysAgo * 86_400).epochSecond.toDouble()
-
-    private fun session(
-        id: String,
-        daysAgo: Long,
-        model: String? = "gpt-fast",
-        input: Int = 0,
-        output: Int = 0,
-        messages: Int = 0,
-        cost: Double? = null,
-        title: String? = null,
-    ) = SessionSummary(
-        sessionId = id,
-        title = title,
-        model = model,
-        messageCount = messages,
-        lastMessageAt = epochSeconds(daysAgo),
-        inputTokens = input,
-        outputTokens = output,
-        estimatedCost = cost,
+    private fun serverInsights() = InsightsResponse(
+        periodDays = 7,
+        totalSessions = 4,
+        totalMessages = 12,
+        totalInputTokens = 100,
+        totalOutputTokens = 50,
+        totalTokens = 150,
+        totalCost = 0.75,
+        totalCacheReadTokens = 30,
+        totalCacheHitPercent = 87.5,
+        dailyTokens = listOf(
+            io.github.jcartu.hermex.model.InsightsDailyToken(date = "2026-09-01", inputTokens = 10, outputTokens = 5),
+            io.github.jcartu.hermex.model.InsightsDailyToken(date = "2026-09-02", inputTokens = 20, outputTokens = 10, cost = 0.1),
+        ),
+        activityByDay = listOf(io.github.jcartu.hermex.model.InsightsActivityByDay(day = "Monday", sessions = 5)),
+        activityByHour = listOf(io.github.jcartu.hermex.model.InsightsActivityByHour(hour = 14, sessions = 3)),
+        models = listOf(
+            io.github.jcartu.hermex.model.InsightsModelBreakdown(
+                model = "muse", cost = 0.4, costShare = 60, tokenShare = 55,
+                totalTokens = 90, sessions = 2, cacheHitPercent = 80.0,
+            ),
+        ),
     )
 
-    private val fixture = listOf(
-        session("today", daysAgo = 0, model = "gpt-fast", input = 100, output = 50, messages = 4, cost = 0.5),
-        session("thisWeek", daysAgo = 5, model = "gpt-smart", input = 300, output = 150, messages = 10, cost = 1.5),
-        session("thisMonth", daysAgo = 20, model = "gpt-fast", input = 600, output = 300, messages = 6, cost = 2.0),
-        session("ancient", daysAgo = 40, model = "gpt-old", input = 9_000, output = 1_000, messages = 99, cost = 9.0),
-    )
+    @Test
+    fun `server insights populate the window aggregates and chart buckets`() = runTest(dispatcher) {
+        val client = FakeInsightsClient(insightsResult = Result.success(serverInsights()))
+        val vm = InsightsViewModel(client)
+        advanceUntilIdle()
 
-    private fun makeViewModel(sessions: List<SessionSummary> = fixture): InsightsViewModel {
-        coEvery { api.sessions(any(), any()) } returns SessionsResponse(sessions = sessions)
-        return InsightsViewModel(api, nowMillis = { nowMillis }, zone = zone)
+        val state = vm.uiState.value
+        assertEquals(InsightsDataSource.SERVER, state.dataSource)
+        assertEquals(150, state.totalTokens)
+        assertEquals(4, state.sessionCount)
+        assertEquals(0.75, state.estimatedCost, 0.0)
+        assertEquals(30, state.totalCacheReadTokens)
+        // Cost > 0 opens on the cost metric; buckets span 7 days with padding.
+        assertEquals(io.github.jcartu.hermex.model.UsageMetric.COST, state.metric)
+        assertEquals(7, state.chartBuckets.size)
+        assertTrue(state.chartBuckets.any { it.hasActivity })
+        assertEquals("Monday", state.peakDay?.day)
+        assertEquals(14, state.peakHour?.hour)
+        // Totals: processed, cached input, cache hit rate, input, output, messages, busiest weekday+hour.
+        assertEquals("processedTokens", state.totalsCells.first().id)
+        assertTrue(state.totalsCells.any { it.id == "cacheHitRate" && it.value == "87.5%" })
+        assertTrue(state.totalsCells.any { it.id == "busiestWeekday" })
+        assertTrue(state.modelBreakdowns.isNotEmpty())
+        assertTrue(state.topSessions.isEmpty())
     }
 
     @Test
-    fun `default timeframe aggregates the last 30 days`() {
-        val viewModel = makeViewModel()
+    fun `the today window plots 24 hourly buckets with no metric`() = runTest(dispatcher) {
+        val client = FakeInsightsClient(insightsResult = Result.success(serverInsights()))
+        val vm = InsightsViewModel(client)
+        advanceUntilIdle()
 
-        viewModel.loadIfNeeded()
+        vm.selectTimeframe(AnalyticsTimeframe.TODAY)
+        advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertTrue(state.hasLoaded)
-        assertEquals(AnalyticsTimeframe.LAST_30_DAYS, state.selectedTimeframe)
-        assertEquals(3, state.sessionCount) // "ancient" excluded
-        assertEquals(1_000L, state.totalInputTokens)
-        assertEquals(500L, state.totalOutputTokens)
-        assertEquals(1_500L, state.totalTokens)
-        assertEquals(20L, state.totalMessages)
-        assertEquals(4.0, state.estimatedCost, 1e-9)
+        val state = vm.uiState.value
+        assertTrue(state.loadedTimeframe.isHourly)
+        assertFalse(state.showsMetricToggle)
+        assertEquals(24, state.chartBuckets.size)
+        assertEquals("Sessions", state.heroFigure.label)
+        assertTrue(state.hourlyChartNote != null)
     }
 
     @Test
-    fun `timeframe switch re-derives locally without refetching`() {
-        val viewModel = makeViewModel()
-        viewModel.loadIfNeeded()
-
-        viewModel.selectTimeframe(AnalyticsTimeframe.TODAY)
-        assertEquals(1, viewModel.uiState.value.sessionCount)
-        assertEquals(150L, viewModel.uiState.value.totalTokens)
-
-        viewModel.selectTimeframe(AnalyticsTimeframe.ALL_TIME)
-        assertEquals(4, viewModel.uiState.value.sessionCount)
-        assertEquals(11_500L, viewModel.uiState.value.totalTokens)
-
-        coVerify(exactly = 1) { api.sessions(any(), any()) }
-    }
-
-    @Test
-    fun `per-model breakdown groups sums and sorts by tokens`() {
-        val viewModel = makeViewModel()
-        viewModel.loadIfNeeded()
-
-        val models = viewModel.uiState.value.models
-        assertEquals(listOf("gpt-fast", "gpt-smart"), models.map { it.model })
-
-        val fast = models[0]
-        assertEquals(2, fast.sessionCount)
-        assertEquals(700L, fast.inputTokens)
-        assertEquals(350L, fast.outputTokens)
-        assertEquals(1_050L, fast.totalTokens)
-        assertEquals(2.5, fast.cost, 1e-9)
-        assertEquals(70, fast.tokenSharePercent)
-        assertEquals(30, models[1].tokenSharePercent)
-    }
-
-    @Test
-    fun `top sessions sort by total tokens descending and cap at ten`() {
-        val many = (1..12).map { index ->
-            session("s$index", daysAgo = 1, input = index * 10, output = 0)
-        }
-        val viewModel = makeViewModel(many)
-        viewModel.loadIfNeeded()
-
-        val top = viewModel.uiState.value.topSessions
-        assertEquals(10, top.size)
-        assertEquals("s12", top.first().sessionId)
-        assertEquals("s3", top.last().sessionId)
-    }
-
-    @Test
-    fun `daily usage buckets are zero-filled oldest first`() {
-        val viewModel = makeViewModel()
-        viewModel.loadIfNeeded()
-
-        val daily = viewModel.uiState.value.daily
-        assertEquals(DAILY_CHART_DAYS, daily.size)
-        assertEquals(LocalDate.of(2026, 8, 4), daily.first().date)
-        assertEquals(LocalDate.of(2026, 8, 17), daily.last().date)
-        assertEquals(150L, daily.last().totalTokens) // "today"
-        assertEquals(1, daily.last().sessionCount)
-        assertEquals(450L, daily[daily.size - 6].totalTokens) // "thisWeek", 5 days ago
-        assertEquals(0L, daily[1].totalTokens) // untouched day stays zero
-    }
-
-    @Test
-    fun `failure surfaces an error message`() {
-        coEvery { api.sessions(any(), any()) } throws ApiError.Http(503, null)
-        val viewModel = InsightsViewModel(api, nowMillis = { nowMillis }, zone = zone)
-
-        viewModel.load()
-
-        val state = viewModel.uiState.value
-        assertFalse(state.hasLoaded)
-        assertEquals(ApiError.Http(503, null).message, state.errorMessage)
-    }
-
-    // MARK: - Pure aggregation
-
-    @Test
-    fun `timeframes filter on the analytics timestamp with fallbacks`() {
-        val byUpdated = SessionSummary(sessionId = "u", updatedAt = epochSeconds(0))
-        val byCreated = SessionSummary(sessionId = "c", createdAt = epochSeconds(0))
-        val timeless = SessionSummary(sessionId = "t")
-
-        assertTrue(AnalyticsTimeframe.TODAY.contains(byUpdated, nowMillis, zone))
-        assertTrue(AnalyticsTimeframe.TODAY.contains(byCreated, nowMillis, zone))
-        assertFalse(AnalyticsTimeframe.TODAY.contains(timeless, nowMillis, zone))
-        assertFalse(AnalyticsTimeframe.LAST_7_DAYS.contains(timeless, nowMillis, zone))
-        assertTrue(AnalyticsTimeframe.ALL_TIME.contains(timeless, nowMillis, zone))
-    }
-
-    @Test
-    fun `seven day window is inclusive at the boundary and excludes the future`() {
-        val boundary = session("b", daysAgo = 7)
-        val past = session("p", daysAgo = 8)
-        val future = session("f", daysAgo = -1)
-
-        assertTrue(AnalyticsTimeframe.LAST_7_DAYS.contains(boundary, nowMillis, zone))
-        assertFalse(AnalyticsTimeframe.LAST_7_DAYS.contains(past, nowMillis, zone))
-        assertFalse(AnalyticsTimeframe.LAST_7_DAYS.contains(future, nowMillis, zone))
-    }
-
-    @Test
-    fun `model breakdown with zero tokens reports zero share`() {
-        val models = modelUsageBreakdown(
-            listOf(SessionSummary(sessionId = "a", model = "m", inputTokens = 0, outputTokens = 0)),
-        )
-        assertEquals(1, models.size)
-        assertEquals(0, models[0].tokenSharePercent)
-    }
-
-    @Test
-    fun `sessions without a model group under unknown`() {
-        val models = modelUsageBreakdown(
-            listOf(
-                SessionSummary(sessionId = "a", model = null, inputTokens = 10),
-                SessionSummary(sessionId = "b", model = " ", inputTokens = 5),
+    fun `a failed insights read falls back to session metadata`() = runTest(dispatcher) {
+        val client = FakeInsightsClient(
+            insightsResult = Result.failure(RuntimeException("insights down")),
+            sessionsResult = Result.success(
+                SessionsResponse(
+                    sessions = listOf(
+                        SessionSummary(
+                            sessionId = "s1", inputTokens = 20, outputTokens = 5,
+                            messageCount = 6, estimatedCost = 0.05,
+                            lastMessageAt = (System.currentTimeMillis() / 1000).toDouble(),
+                        ),
+                    ),
+                ),
             ),
         )
-        assertEquals(1, models.size)
-        assertEquals("Unknown Model", models[0].model)
-        assertEquals(15L, models[0].totalTokens)
-        assertEquals(100, models[0].tokenSharePercent)
+        val vm = InsightsViewModel(client)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(InsightsDataSource.LOCAL_FALLBACK, state.dataSource)
+        assertEquals(25, state.totalTokens)
+        assertEquals(6, state.totalMessages)
+        assertEquals(1, state.topSessions.size)
+        assertTrue(state.sourceDescription.contains("fallback"))
     }
 
     @Test
-    fun `daily usage ignores sessions outside the window`() {
-        val daily = dailyUsage(
-            listOf(session("old", daysAgo = 30, input = 500), session("in", daysAgo = 2, input = 40)),
-            days = 7,
-            nowMillis = nowMillis,
-            zone = zone,
+    fun `quota probes load separately and failures stay silent`() = runTest(dispatcher) {
+        val client = FakeInsightsClient(
+            providersResult = Result.success(
+                ProvidersResponse(
+                    providers = listOf(io.github.jcartu.hermex.model.ProviderSummary(id = "openai-codex", hasKey = true)),
+                    activeProvider = "openai-codex",
+                ),
+            ),
+            quotaResult = Result.success(
+                ProviderQuotaResponse(
+                    status = "available",
+                    provider = "openai-codex",
+                    displayName = "Codex",
+                    accountLimits = io.github.jcartu.hermex.model.ProviderAccountLimits(
+                        plan = "Plus",
+                        available = true,
+                        fetchedAt = "2026-09-06T07:55:41Z",
+                        windows = listOf(
+                            io.github.jcartu.hermex.model.ProviderQuotaWindow(
+                                label = "5h window",
+                                remainingPercent = 12.0,
+                                resetAt = "2026-09-06T07:55:41Z",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         )
-        assertEquals(7, daily.size)
-        assertEquals(40L, daily.sumOf { it.totalTokens })
+        val vm = InsightsViewModel(client)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertTrue(state.showsLimits)
+        assertEquals(1, state.limitCards.size)
+        assertEquals("Codex", state.limitCards.single().title)
+        assertEquals("Plus", state.limitCards.single().plan)
+        assertEquals("12% left", state.limitCards.single().rows.single().amount)
+        assertEquals(listOf("openai-codex" to false), client.quotaCalls)
     }
 
     @Test
-    fun `token formatting matches the ios rows`() {
-        assertEquals("12,345", formatTokenCount(12_345))
-        assertEquals("0", formatTokenCount(0))
-        assertEquals("999", formatCompactTokens(999))
-        assertEquals("45.0K", formatCompactTokens(45_000))
-        assertEquals("1.2M", formatCompactTokens(1_230_000))
+    fun `a superseded timeframe load cannot overwrite a newer one`() = runTest(dispatcher) {
+        val client = FakeInsightsClient(insightsResult = Result.success(serverInsights()))
+        val vm = InsightsViewModel(client)
+        advanceUntilIdle()
+
+        // The second load (30 days) wins even if the first (7 days) answers later.
+        vm.selectTimeframe(AnalyticsTimeframe.LAST_30_DAYS)
+        advanceUntilIdle()
+        assertEquals(AnalyticsTimeframe.LAST_30_DAYS, vm.uiState.value.loadedTimeframe)
+        assertFalse(vm.uiState.value.isLoading)
     }
 }
