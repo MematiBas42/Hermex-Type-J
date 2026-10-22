@@ -41,10 +41,27 @@ object HermesShareImport {
         connectionID: String,
         profile: String,
         shareId: String,
+    ): Boolean = transfer(
+        sharedImports = container.sharedImports,
+        draftStore = container.cacheStore.chatDraftStore,
+        serverId = serverId,
+        connectionID = connectionID,
+        profile = profile,
+        shareId = shareId,
+    )
+
+    /** The transfer over its two stores, so unit tests can drive it without a container. */
+    internal suspend fun transfer(
+        sharedImports: SharedImportRepository,
+        draftStore: io.github.jcartu.hermex.data.ChatDraftStore,
+        serverId: String,
+        connectionID: String,
+        profile: String,
+        shareId: String,
     ): Boolean {
         synchronized(claimLock) { if (!claimed.add(shareId)) return false }
         try {
-            val import = container.sharedImports.pending.value?.takeIf { it.id == shareId }
+            val import = sharedImports.pending.value?.takeIf { it.id == shareId }
                 ?: return false
             val files = withContext(Dispatchers.IO) {
                 import.attachments.map { attachment ->
@@ -56,14 +73,14 @@ object HermesShareImport {
                     )
                 }
             }
-            container.cacheStore.chatDraftStore.appendShare(
+            draftStore.appendShare(
                 shareId = import.id,
                 text = import.text,
                 files = files,
                 key = ChatDraftKey.hermesSession(serverId, connectionID, profile, null),
                 maximumFileBytes = SharedImportRepository.MAX_ATTACHMENT_BYTES.toInt(),
             )
-            container.sharedImports.acknowledge(import.id)
+            sharedImports.acknowledge(import.id)
             return true
         } finally {
             synchronized(claimLock) { claimed.remove(shareId) }

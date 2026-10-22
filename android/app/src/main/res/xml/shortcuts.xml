@@ -14,6 +14,19 @@
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
     <shortcut
+        android:shortcutId="new_chat_voice"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_monochrome"
+        android:shortcutShortLabel="@string/shortcut_new_chat_voice"
+        android:shortcutLongLabel="@string/shortcut_new_chat_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="io.github.jcartu.hermex"
+            android:targetClass="io.github.jcartu.hermex.MainActivity"
+            android:data="hermex-type-j://new-chat-voice" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+    <shortcut
         android:shortcutId="kanban"
         android:enabled="true"
         android:icon="@drawable/ic_launcher_monochrome"

@@ -50,6 +50,7 @@ import io.github.jcartu.hermex.core.navigation.DeepLinkRouter
 import io.github.jcartu.hermex.core.navigation.HermesSessionResolution
 import io.github.jcartu.hermex.core.navigation.LinkRoutingContext
 import io.github.jcartu.hermex.core.navigation.MovedSessionLookup
+import io.github.jcartu.hermex.core.navigation.VoiceDictationRequest
 import io.github.jcartu.hermex.core.share.ShareRouting
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.feature.bots.BotLinkMailbox
@@ -199,11 +200,12 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenWebuiNewChat -> {
+                // #338: the webui composer auto-starts dictation via the shared
+                // request bridge (Swift `AppIntentRouter`); the Hermes path rides
+                // HermesChatPane's own autoStartsVoiceInput parameter instead.
+                if (route.autoStartsVoiceInput) VoiceDictationRequest.request()
                 navigation.selectDestination(HermexDestination.CHATS)
-                navigation.startNewChat(
-                    profileName = route.profileName,
-                    autoStartsVoiceInput = route.autoStartsVoiceInput,
-                )
+                navigation.startNewChat(profileName = route.profileName)
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenKanban -> {
@@ -221,6 +223,9 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenHermesNewChat -> {
+                // A Hermes voice new chat auto-starts through HermesChatPane's
+                // autoStartsVoiceInput parameter, which the destination carries
+                // end-to-end; VoiceDictationRequest is the webui-only bridge.
                 HermesSessionLookup.openNewChat(
                     serverId = route.destination.serverId,
                     profile = route.destination.profile,
