@@ -27,6 +27,12 @@ class CacheStore(private val directory: File, private val json: Json) {
     private val sessionsFile = File(directory, "sessions.json")
     private val messagesFile = File(directory, "messages.json")
     private val lock = Any()
+    /** Process-owned persistence survives a chat ViewModel being cleared. */
+    val persistenceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    /** Drafts are not offline-cache entries and are never evicted by cache maintenance. */
+    val chatDraftStore: ChatDraftStore by lazy {
+        ChatDraftStore(ChatDraftFilePersistence(directory, json), ChatDraftAttachmentStore(directory), persistenceScope)
+    }
 
     /** Keyed by `cacheKey` (the SwiftData unique attribute). */
     private var sessions: LinkedHashMap<String, CachedSession>? = null

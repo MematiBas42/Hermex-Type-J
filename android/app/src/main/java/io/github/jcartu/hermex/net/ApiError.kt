@@ -98,6 +98,36 @@ sealed class ApiError(cause: Throwable? = null) : Exception(cause) {
             if (http.statusCode != 409) return false
             return serverErrorPayload(http.body)?.stale == true
         }
+    /**
+     * Port of `APIError.sessionRotation`: only the durable compression conflict
+     * (HTTP 409, `code: "session_rotated"`, a well-formed
+     * `continuation_session_id`) authorizes continuation navigation. Decoded
+     * separately so malformed continuation metadata cannot hide other errors.
+     */
+    val sessionRotation: SessionRotation?
+        get() = (this as? Http)?.let { sessionRotation(it.statusCode, it.body) }
+
+    /**
+     * Set for hermes-webui's stale-runtime 409 (#955): Hermes Agent was updated
+     * under the running WebUI, which refuses every local Agent action until it
+     * is restarted on the server. [message] already shows its copy; chat uses
+     * it to offer "Copy fix prompt".
+     */
+    val agentRuntimeStale: AgentRuntimeStale?
+        get() = (this as? Http)?.let { agentRuntimeStale(it.statusCode, it.body) }
+
+    /** Port of `APIError.SessionRotation`: a validated continuation session id. */
+    data class SessionRotation private constructor(val continuationSessionId: String) {
+        companion object {
+            /** Null for an empty id or one carrying whitespace, control or path characters. */
+            fun of(continuationSessionId: String): SessionRotation? {
+                if (continuationSessionId.isEmpty()) return null
+                if (continuationSessionId.any { it.isWhitespace() || it.isISOControl() }) return null
+                if (continuationSessionId.any { it == '/' || it == '\\' || it == '?' || it == '#' }) return null
+                return SessionRotation(continuationSessionId)
+            }
+        }
+    }
 
     @Serializable
     private data class ErrorPayload(
@@ -145,24 +175,70 @@ sealed class ApiError(cause: Throwable? = null) : Exception(cause) {
         }
 
         private fun httpMessage(statusCode: Int, body: String?): String {
+            agentRuntimeStale(statusCode, body)?.let { return it.message }
             if (isVanishedSession(statusCode, body)) {
                 return "That session no longer exists on the server. Reopen another session or create a new one."
             }
 
             return when (statusCode) {
                 -1 -> "The server response could not be read. Check that the URL points to a Hermes Web UI server."
-                400 -> serverErrorMessage(body)?.let { "The server rejected the request: $it" }
+                400 -> displayableServerMessage(body)?.let { "The server rejected the request: $it" }
                     ?: "The server rejected the request."
-                403 -> "The server refused access. Check the server password and permissions."
+                // A 403 is a per-request refusal (read-only imported session, missing
+                // permission), not a bad password: 401 owns the password copy (1.6.0).
+                403 -> displayableServerMessage(body)?.let { "The server refused the request: $it" }
+                    ?: "The server refused the request. Check the server permissions and try again."
                 404 -> "The server endpoint was not found. Check that the URL points to a Hermes Web UI server."
-                408 -> "The server took too long to respond. Check that the Mac is awake and the server is running."
+                408 -> "The server did not respond in time. Check that the server is running and the connection is available."
                 429 -> "The server is receiving too many requests. Wait a moment, then try again."
                 500 -> "The Hermes server hit an internal error. Check the server logs, then try again."
                 502, 503, 504 ->
-                    "The server or Cloudflare tunnel is unavailable. Check that the Mac is awake, hermes-webui is running, and the tunnel is connected."
-                else -> serverErrorMessage(body)?.let { "Server returned HTTP $statusCode: $it" }
+                    "Could not connect to the server. Check that hermes-webui is running and the tunnel is connected."
+                else -> displayableServerMessage(body)?.let { "Server returned HTTP $statusCode: $it" }
                     ?: "Server returned HTTP $statusCode."
             }
+        }
+
+        /** Longest server-provided message interpolated into user-facing copy. */
+        private const val DISPLAYED_SERVER_MESSAGE_LIMIT = 200
+
+        /** The structured server message, bounded for display so an oversized body never floods an alert. */
+        private fun displayableServerMessage(body: String?): String? {
+            val message = serverErrorMessage(body) ?: return null
+            if (message.length <= DISPLAYED_SERVER_MESSAGE_LIMIT) return message
+            return message.take(DISPLAYED_SERVER_MESSAGE_LIMIT) + "…"
+        }
+
+        /**
+         * Decoded apart from [ErrorPayload], so a `type` of another shape in some
+         * other error can't hide that error's message or `active_stream_id`.
+         */
+        @Serializable
+        private data class AgentRuntimeStalePayload(
+            val type: String? = null,
+            @SerialName("agent_update_state") val agentUpdateState: String? = null,
+        )
+
+        private fun agentRuntimeStale(statusCode: Int, body: String?): AgentRuntimeStale? {
+            if (statusCode != 409 || body.isNullOrEmpty()) return null
+            val payload = runCatching { payloadJson.decodeFromString<AgentRuntimeStalePayload>(body) }.getOrNull()
+                ?: return null
+            if (payload.type != "agent_runtime_stale") return null
+            return AgentRuntimeStale.fromAgentUpdateState(payload.agentUpdateState)
+        }
+
+        @Serializable
+        private data class SessionRotationPayload(
+            val code: String? = null,
+            @SerialName("continuation_session_id") val continuationSessionId: String? = null,
+        )
+
+        private fun sessionRotation(statusCode: Int, body: String?): SessionRotation? {
+            if (statusCode != 409 || body.isNullOrEmpty()) return null
+            val payload = runCatching { payloadJson.decodeFromString<SessionRotationPayload>(body) }.getOrNull()
+                ?: return null
+            if (payload.code != "session_rotated") return null
+            return SessionRotation.of(payload.continuationSessionId ?: return null)
         }
 
         private fun isVanishedSession(statusCode: Int, body: String?): Boolean {

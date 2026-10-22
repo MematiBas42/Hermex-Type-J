@@ -121,7 +121,6 @@ import okhttp3.Response
 import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.math.max
 
 /**
  * Port of `Networking/APIClient.swift` and its in-scope extensions
@@ -207,13 +206,43 @@ class HermesApi(
     suspend fun sessionStatus(id: String): SessionStatusResponse =
         get(Endpoint.SessionStatus(id))
 
+    /**
+     * Creates a session. A null [projectId] leaves `project_id` out of the body,
+     * so the session starts unassigned; the server stores a given id without
+     * checking it (#875: chats started under a project filter join that project).
+     */
     suspend fun createSession(
         workspace: String?,
         model: String?,
         modelProvider: String?,
         profile: String?,
+        projectId: String? = null,
     ): SessionResponse =
-        post(Endpoint.NewSession, NewSessionRequest(workspace, model, modelProvider, profile))
+        post(Endpoint.NewSession, NewSessionRequest(workspace, model, modelProvider, profile, projectId))
+
+    /**
+     * Imports a CLI or messaging session into the WebUI-owned session store
+     * (`POST /api/session/import_cli`). The returned session is authoritative
+     * for whether continuation is safe.
+     */
+    suspend fun importExternalSession(id: String): SessionResponse =
+        post(Endpoint.ImportCliSession, SessionIdRequest(id))
+
+    /**
+     * Copies a session (`POST /api/session/duplicate`): independent messages,
+     * tool calls and usage counters, no fork lineage (#25). Answers with the
+     * whole duplicated session, so no follow-up fetch is needed.
+     */
+    suspend fun duplicateSession(id: String): SessionResponse =
+        post(Endpoint.DuplicateSession, SessionIdRequest(id))
+
+    /**
+     * Truncates the session to empty on the server and resets its title to
+     * Untitled (`POST /api/session/clear`, #389). Destructive and irreversible —
+     * only call it behind a confirmation. Answers the compact session shape.
+     */
+    suspend fun clearSession(id: String): SessionMutationResponse =
+        post(Endpoint.ClearSession, SessionIdRequest(id))
 
     suspend fun renameSession(id: String, title: String): SessionMutationResponse =
         post(Endpoint.RenameSession, RenameSessionRequest(id, title))
@@ -361,14 +390,16 @@ class HermesApi(
      * buffered events after that sequence number before going live
      * (`replay=1&after_seq=N`), so a reconnect never re-sends the user message.
      */
-    suspend fun chatStreamUrl(streamId: String, replayAfterSeq: Int? = null): HttpUrl {
-        val url = Endpoint.ChatStream(streamId).url(resolveBaseUrl())
-        if (replayAfterSeq == null) return url
-        return url.newBuilder()
-            .addQueryParameter("replay", "1")
-            .addQueryParameter("after_seq", "${max(0, replayAfterSeq)}")
-            .build()
-    }
+    suspend fun chatStreamUrl(streamId: String, replayAfterSeq: Int? = null): HttpUrl =
+        Endpoint.ChatStream(streamId, replayAfterSeq).url(resolveBaseUrl())
+
+    /** URL for the per-session approval SSE feed (`APIClient+Chat.swift` `approvalStreamURL`). */
+    suspend fun approvalStreamUrl(sessionId: String): HttpUrl =
+        Endpoint.ApprovalStream(sessionId).url(resolveBaseUrl())
+
+    /** URL for the per-session clarification SSE feed (`clarifyStreamURL`). */
+    suspend fun clarifyStreamUrl(sessionId: String): HttpUrl =
+        Endpoint.ClarifyStream(sessionId).url(resolveBaseUrl())
 
     suspend fun cancelChat(streamId: String): ChatCancelResponse =
         get(Endpoint.ChatCancel(streamId))
@@ -379,10 +410,25 @@ class HermesApi(
     /**
      * Steers the running turn. The server either injects the steer text into
      * the active stream (`accepted: true`) or reports how it fell back
-     * (`fallback`, e.g. queued as a follow-up message).
+     * (`fallback`, e.g. queued as a follow-up message). [steerChatOutcome]
+     * classifies the answer the way `ChatViewModel` acts on it.
      */
     suspend fun steerChat(sessionId: String, text: String): ChatSteerResponse =
         post(Endpoint.ChatSteer, ChatSteerRequest(sessionId, text))
+
+    /**
+     * Port of `APIClient.steerChat(sessionID:text:) -> ChatSteerOutcome`: steers
+     * the session's active run and reports what became of the hint. Never
+     * throws — a failed request is a [ChatSteerOutcome.Refused] carrying its error.
+     */
+    suspend fun steerChatOutcome(sessionId: String, text: String): ChatSteerOutcome {
+        val response = try {
+            steerChat(sessionId, text)
+        } catch (error: ApiError) {
+            return ChatSteerOutcome.Refused(transportError = error)
+        }
+        return ChatSteerOutcome.classify(response)
+    }
 
     suspend fun approvalPending(sessionId: String): ApprovalPendingResponse =
         get(Endpoint.ApprovalPending(sessionId))
@@ -548,8 +594,13 @@ class HermesApi(
     suspend fun reasoning(model: String? = null, provider: String? = null): ReasoningStatusResponse =
         get(Endpoint.Reasoning(model, provider))
 
-    suspend fun saveReasoningEffort(effort: String): ReasoningStatusResponse =
-        post(Endpoint.Reasoning(), ReasoningEffortRequest(effort))
+    /**
+     * Saves the reasoning effort. With [sessionId] the change is scoped to that
+     * session (`ReasoningEffortRequest(effort:sessionId:)` in
+     * `APIClient+ServerPanels.swift`); without it the server's global default moves.
+     */
+    suspend fun saveReasoningEffort(effort: String, sessionId: String? = null): ReasoningStatusResponse =
+        post(Endpoint.Reasoning(), ReasoningEffortRequest(effort, sessionId))
 
     suspend fun saveReasoningDisplay(display: String): ReasoningStatusResponse =
         post(Endpoint.Reasoning(), ReasoningDisplayRequest(display))
@@ -942,6 +993,7 @@ private data class NewSessionRequest(
     val model: String?,
     @SerialName("model_provider") val modelProvider: String?,
     val profile: String?,
+    @SerialName("project_id") val projectId: String? = null,
 )
 
 @Serializable
@@ -1114,8 +1166,16 @@ private data class GoalSubmissionRequest(
 @Serializable
 private data class DefaultModelRequest(val model: String)
 
+/**
+ * `session_id` is omitted when null (settings' Default Model picker saves the
+ * global default); the chat composer always scopes the effort to its session
+ * (1.6.0: effort changes no longer apply globally).
+ */
 @Serializable
-private data class ReasoningEffortRequest(val effort: String)
+private data class ReasoningEffortRequest(
+    val effort: String,
+    @SerialName("session_id") val sessionId: String? = null,
+)
 
 @Serializable
 private data class ReasoningDisplayRequest(val display: String)

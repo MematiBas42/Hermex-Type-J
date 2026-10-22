@@ -70,10 +70,13 @@ class HermesApiErrorMappingTest {
     }
 
     @Test
-    fun status403MapsToHttpWithAccessMessage() {
+    fun status403SurfacesServerReason() {
         val error = failWith(403)
         assertEquals(403, (error as ApiError.Http).statusCode)
-        assertEquals("The server refused access. Check the server password and permissions.", error.message)
+        assertEquals("The server refused the request. Check the server permissions and try again.", error.message)
+
+        val reasoned = failWith(403, """{"error":"Imported sessions are read-only"}""")
+        assertEquals("The server refused the request: Imported sessions are read-only", reasoned.message)
     }
 
     @Test
@@ -146,10 +149,45 @@ class HermesApiErrorMappingTest {
         for (code in intArrayOf(502, 503, 504)) {
             val error = failWith(code)
             assertEquals(
-                "The server or Cloudflare tunnel is unavailable. Check that the Mac is awake, hermes-webui is running, and the tunnel is connected.",
+                "Could not connect to the server. Check that hermes-webui is running and the tunnel is connected.",
                 error.message,
             )
         }
+    }
+
+    @Test
+    fun sessionRotated409ExposesValidatedContinuationOnly() {
+        val rotated = failWith(409, """{"error":"sealed","code":"session_rotated","continuation_session_id":"abc-123"}""")
+        assertEquals("session_rotated", rotated.serverCode)
+        assertEquals("abc-123", rotated.sessionRotation?.continuationSessionId)
+        assertNull("a 409 without the code is not a rotation", failWith(409, """{"error":"busy"}""").sessionRotation)
+        assertNull(
+            "path characters never authorize navigation",
+            failWith(409, """{"code":"session_rotated","continuation_session_id":"../x"}""").sessionRotation,
+        )
+        assertNull(
+            "whitespace never authorizes navigation",
+            failWith(409, """{"code":"session_rotated","continuation_session_id":"a b"}""").sessionRotation,
+        )
+    }
+
+    @Test
+    fun agentRuntimeStale409ExplainsAndOffersFixPrompt() {
+        val updated = failWith(
+            409,
+            """{"error":"Hermes Agent was updated while Hermes WebUI was running.","type":"agent_runtime_stale","retryable":true}""",
+        )
+        assertEquals(AgentRuntimeStale.UPDATED, updated.agentRuntimeStale)
+        assertEquals("Hermes was updated on your server. Restart Hermes WebUI there, then try again.", updated.message)
+        assertTrue(updated.agentRuntimeStale!!.fixPrompt!!.contains("Restart the Hermes WebUI server"))
+
+        val updating = failWith(409, """{"type":"agent_runtime_stale","agent_update_state":"active"}""")
+        assertEquals(AgentRuntimeStale.UPDATING, updating.agentRuntimeStale)
+        assertNull("no fix prompt while the update still runs", updating.agentRuntimeStale!!.fixPrompt)
+
+        val incomplete = failWith(409, """{"type":"agent_runtime_stale","agent_update_state":"incomplete"}""")
+        assertEquals(AgentRuntimeStale.INCOMPLETE, incomplete.agentRuntimeStale)
+        assertNull("an ordinary 409 is not stale", failWith(409, """{"error":"busy"}""").agentRuntimeStale)
     }
 
     @Test

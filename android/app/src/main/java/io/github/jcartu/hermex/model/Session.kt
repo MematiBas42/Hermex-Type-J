@@ -231,6 +231,8 @@ data class SessionSummary(
     @SerialName("read_only") val readOnly: Boolean? = null,
     @SerialName("is_read_only") val isReadOnly: Boolean? = null,
     @SerialName("match_type") val matchType: String? = null,
+    /** Search excerpt showing why the row matched (1.6.0, ≤124 chars); absent on older servers. */
+    @SerialName("match_preview") val matchPreview: String? = null,
 ) {
     /** Port of `init(from detail:)`. */
     constructor(detail: SessionDetail) : this(
@@ -268,6 +270,7 @@ data class SessionSummary(
         readOnly = detail.readOnly,
         isReadOnly = detail.isReadOnly,
         matchType = null,
+        matchPreview = null,
     )
 
     val id: String

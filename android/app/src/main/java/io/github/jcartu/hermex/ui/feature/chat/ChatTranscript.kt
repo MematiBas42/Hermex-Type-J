@@ -591,6 +591,7 @@ private fun StreamRecoveryStatusPill(
         ActiveStreamRecoveryState.IDLE -> "Stream active"
         ActiveStreamRecoveryState.CHECKING -> "Checking stream"
         ActiveStreamRecoveryState.RECONNECTING -> "Reconnecting stream"
+        ActiveStreamRecoveryState.WAITING_FOR_NETWORK -> "Waiting for network"
     }
 
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
