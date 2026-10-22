@@ -5,7 +5,6 @@ import io.github.jcartu.hermex.model.CronJobStatus
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZonedDateTime
 
 /**
  * The segments above the Tasks list. Selection is view state: it is never
@@ -79,7 +78,7 @@ object TaskAgenda {
         if (!job.isLive) return TaskAgendaGroup.PAUSED
         val next = job.nextRunAt?.date ?: return TaskAgendaGroup.LATER
 
-        val startOfToday: Instant = ZonedDateTime.now(zone).toLocalDate().atStartOfDay(zone).toInstant()
+        val startOfToday: Instant = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant()
         val startOfTomorrow = startOfToday + Duration.ofDays(1)
         val startOfDayAfterTomorrow = startOfToday + Duration.ofDays(2)
         val weekHorizon = startOfToday + Duration.ofDays(7)

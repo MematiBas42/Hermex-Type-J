@@ -4,6 +4,7 @@ import io.github.jcartu.hermex.model.CronDateValue
 import io.github.jcartu.hermex.model.CronJob
 import io.github.jcartu.hermex.model.CronJobEditorDraft
 import io.github.jcartu.hermex.model.CronRecentCompletion
+import io.github.jcartu.hermex.model.CronRunHistoryResponse
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

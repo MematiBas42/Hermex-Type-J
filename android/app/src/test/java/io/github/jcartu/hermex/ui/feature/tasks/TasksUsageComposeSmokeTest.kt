@@ -4,16 +4,22 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
-import androidx.test.core.app.ActivityScenario
-import androidx.test.core.app.ApplicationProvider
 import io.github.jcartu.hermex.model.CronJob
+import io.github.jcartu.hermex.model.CronRunHistoryResponse
+import io.github.jcartu.hermex.model.InsightsResponse
+import io.github.jcartu.hermex.model.ProviderQuotaResponse
+import io.github.jcartu.hermex.model.ProvidersResponse
+import io.github.jcartu.hermex.model.SessionsResponse
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
+import io.github.jcartu.hermex.ui.feature.insights.InsightsDataClient
+import io.github.jcartu.hermex.ui.feature.insights.InsightsFeatures
 import io.github.jcartu.hermex.ui.feature.insights.InsightsRoute
-import io.github.jcartu.hermex.ui.feature.insights.WebuiInsightsDataClient
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -25,29 +31,29 @@ import org.robolectric.annotation.Config
  * composes each surface at each pane count and asserts composition completed.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35])
 class TasksUsageComposeSmokeTest {
 
     private class SmokeCronClient : CronDataClient {
         override val cronFeatures: CronFeatures = CronFeatures.webui
         override suspend fun cronJobs() = CronJobList(jobs = listOf(CronJob(jobId = "j1", name = "One")), runningJobs = emptyMap())
-        override suspend fun cronRecent() = io.github.jcartu.hermex.model.CronRecentCompletionsResponse(emptyList())
-        override suspend fun cronDeliveryOptions(profile: String?) = io.github.jcartu.hermex.model.CronDeliveryOptionsResponse(emptyList())
+        override suspend fun cronRecent() = io.github.jcartu.hermex.model.CronRecentCompletionsResponse(completions = null)
+        override suspend fun cronDeliveryOptions(profile: String?) = io.github.jcartu.hermex.model.CronDeliveryOptionsResponse(platforms = null)
         override suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String?, skills: List<String>, model: String?, provider: String?, profile: String?, toastNotifications: Boolean) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
         override suspend fun updateCron(jobId: String, prompt: String?, schedule: String?, name: String?, deliver: String?, skills: List<String>?, model: String?, provider: String?, profile: String?, toastNotifications: Boolean?) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
         override suspend fun runCron(jobId: String, profile: String?) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
         override suspend fun pauseCron(jobId: String, profile: String?, reason: String?) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
         override suspend fun resumeCron(jobId: String, profile: String?) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
         override suspend fun deleteCron(jobId: String, profile: String?) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
-        override suspend fun cronOutput(jobId: String, limit: Int?) = io.github.jcartu.hermex.model.CronOutputResponse(emptyList())
-        override suspend fun cronHistory(jobId: String, profile: String?, offset: Int, limit: Int) = CronRunHistoryResponse(runs = emptyList())
+        override suspend fun cronOutput(jobId: String, limit: Int?) = io.github.jcartu.hermex.model.CronOutputResponse(outputs = null)
+        override suspend fun cronHistory(jobId: String, profile: String?, offset: Int, limit: Int) = CronRunHistoryResponse()
         override suspend fun cronRunDetail(jobId: String, profile: String?, filename: String) = io.github.jcartu.hermex.model.CronRunDetailResponse(filename = filename, content = "")
         override suspend fun cronModelGroups(profile: String?) = emptyList<io.github.jcartu.hermex.model.ModelCatalogGroup>()
         override suspend fun cronProfiles() = emptyList<io.github.jcartu.hermex.model.ProfileSummary>()
         override suspend fun cronSkills(profile: String?) = emptyList<io.github.jcartu.hermex.model.SkillSummary>()
     }
 
-    private class SmokeInsightsClient(private val api: io.github.jcartu.hermex.net.HermesApi? = null) : InsightsDataClient {
+    private class SmokeInsightsClient : InsightsDataClient {
         override val insightsFeatures: InsightsFeatures = InsightsFeatures.webui
         override suspend fun sessions() = SessionsResponse()
         override suspend fun insights(days: Int) = InsightsResponse()
@@ -57,24 +63,24 @@ class TasksUsageComposeSmokeTest {
 
     private fun composeAtPaneCounts(content: @androidx.compose.runtime.Composable (Int) -> Unit) {
         for (paneCount in 1..3) {
-            var composed = false
-            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
-                scenario.onActivity { activity ->
-                    val composeView = ComposeView(activity)
-                    composeView.setContent {
-                        CompositionLocalProvider(LocalPaneCount provides paneCount) {
-                            DisposableEffect(Unit) {
-                                composed = true
-                                onDispose { }
-                            }
-                            content(paneCount)
+            val composed = mutableStateOf(false)
+            val controller = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+            controller.get().runOnUiThread {
+                val composeView = ComposeView(controller.get())
+                composeView.setContent {
+                    CompositionLocalProvider(LocalPaneCount provides paneCount) {
+                        DisposableEffect(Unit) {
+                            composed.value = true
+                            onDispose { }
                         }
+                        content(paneCount)
                     }
-                    activity.setContentView(composeView)
                 }
-                shadowOf(Looper.getMainLooper()).idle()
+                controller.get().setContentView(composeView)
             }
-            assertTrue("composition completed at pane count $paneCount", composed)
+            shadowOf(Looper.getMainLooper()).idle()
+            controller.pause().stop().destroy()
+            assertTrue("composition completed at pane count $paneCount", composed.value)
         }
     }
 

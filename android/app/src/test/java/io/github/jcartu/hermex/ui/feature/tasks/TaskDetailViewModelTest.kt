@@ -185,7 +185,7 @@ class TaskDetailViewModelTest {
     }
 
     @Test
-    fun `a read showing the run running keeps run now pending`() = runTest(dispatcher) {
+    fun `a read showing the run running keeps run now pending until the host finishes`() = runTest(dispatcher) {
         val client = FakeCronClient(
             cronFeatures = CronFeatures.hermes,
             jobs = listOf(CronJob(jobId = "j1", name = "j1")),
@@ -198,16 +198,15 @@ class TaskDetailViewModelTest {
         )
         advanceUntilIdle()
 
-        // First read shows the job running; second read shows the finished run.
-        client.jobs = listOf(CronJob(jobId = "j1", name = "j1"))
-        client.running = mapOf("j1" to 2.0)
+        // The trigger is unanswered (504), and the first read shows the job running.
         client.cronJobsError = null
-        var reads = 0
-        val originalJobs = { client.jobs }
-        val outcome = runNowAsync(vm)
-        advanceUntilIdle()
+        client.running = mapOf("j1" to 2.0)
 
-        // The follow ends once a read shows the run finished (newer last_run_at, no running entry).
+        val outcome = runNowAsync(vm)
+        advanceTimeBy(1)
+        assertEquals(RunNowState.RUNNING, vm.uiState.value.runNowState)
+
+        // The next read shows the run finished: a newer last_run_at, no running entry.
         client.running = emptyMap()
         client.jobs = listOf(CronJob(jobId = "j1", name = "j1", lastRunAt = CronDateValue(Instant.ofEpochSecond(900))))
         advanceTimeBy(6_000)

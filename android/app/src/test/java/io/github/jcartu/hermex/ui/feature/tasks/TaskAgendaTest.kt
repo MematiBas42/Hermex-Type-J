@@ -20,6 +20,7 @@ class TaskAgendaTest {
         nextRunAt: Instant? = null,
         lastStatus: String? = "ok",
         lastError: String? = null,
+        lastDeliveryError: String? = null,
         scheduleKind: String? = "cron",
     ) = CronJob(
         jobId = id,
@@ -29,6 +30,7 @@ class TaskAgendaTest {
         nextRunAt = nextRunAt?.let { CronDateValue(it) },
         lastStatus = lastStatus,
         lastError = lastError,
+        lastDeliveryError = lastDeliveryError,
         schedule = io.github.jcartu.hermex.model.CronSchedule(kind = scheduleKind),
     )
 
@@ -74,6 +76,7 @@ class TaskAgendaTest {
         val jobs = listOf(
             job("a", "Alpha", nextRunAt = now.plusSeconds(200_000)),
             job("b", "Beta", nextRunAt = now.plusSeconds(50_000)),
+            job("l", "Lima"),
             job("p", enabled = false),
             job("e", lastStatus = "error"),
         )
@@ -82,14 +85,16 @@ class TaskAgendaTest {
         val sections = TaskAgenda.sections(jobs, running, TaskFilter.ALL, now, zone)
         assertEquals(
             listOf(
-                TaskAgendaGroup.LATER_TODAY,
+                TaskAgendaGroup.TOMORROW,
+                TaskAgendaGroup.THIS_WEEK,
                 TaskAgendaGroup.LATER,
                 TaskAgendaGroup.NEEDS_ATTENTION,
                 TaskAgendaGroup.PAUSED,
             ),
             sections.map { it.group },
         )
-        assertEquals(listOf("b", "a"), sections.first().jobs.map { it.name })
+        // Within the "Tomorrow" group, the soonest run first.
+        assertEquals(listOf("Beta"), sections.first().jobs.map { it.name })
 
         val errors = TaskAgenda.sections(jobs, running, TaskFilter.ERRORS, now, zone)
         assertEquals(listOf(TaskAgendaGroup.NEEDS_ATTENTION), errors.map { it.group })
@@ -97,9 +102,9 @@ class TaskAgendaTest {
         val paused = TaskAgenda.sections(jobs, running, TaskFilter.PAUSED, now, zone)
         assertEquals(listOf(TaskAgendaGroup.PAUSED), paused.map { it.group })
 
-        assertEquals(2, TaskAgenda.count(TaskFilter.LIVE, jobs, running))
+        assertEquals(4, TaskAgenda.count(TaskFilter.LIVE, jobs, running))
         assertEquals(1, TaskAgenda.count(TaskFilter.PAUSED, jobs, running))
-        assertEquals(4, TaskAgenda.count(TaskFilter.ALL, jobs, running))
+        assertEquals(5, TaskAgenda.count(TaskFilter.ALL, jobs, running))
     }
 
     @Test

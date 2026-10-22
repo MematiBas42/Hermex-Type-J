@@ -7,9 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -145,35 +142,44 @@ fun UsageTotalsGrid(
     modifier: Modifier = Modifier,
 ) {
     SectionCard(title = "Totals", modifier = modifier) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            items(cells.size) { index ->
-                val cell = cells[index]
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        cell.label,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        cell.value,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                    )
-                    cell.detail?.let { detail ->
+        // Two-up grid built from chunked rows: a lazy grid cannot live inside
+        // the screen's scrollable column (unbounded height), and the cell
+        // count is small enough that laziness buys nothing.
+        cells.chunked(2).forEach { row ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                row.forEach { cell ->
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
                         Text(
-                            detail,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline,
+                            cell.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Text(
+                            cell.value,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                        cell.detail?.let { detail ->
+                            Text(
+                                detail,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
                     }
                 }
+                if (row.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
+            Spacer(Modifier.padding(vertical = 8.dp))
         }
     }
 }
