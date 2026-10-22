@@ -66,6 +66,11 @@ class HermesGatewayTest {
 
     @After
     fun tearDown() {
+        // Under full-suite load the client's close handshake can outlive
+        // MockWebServer's shutdown grace; drop the host side first so shutdown
+        // never waits on it.
+        sockets.forEach { runCatching { it.close(1000, null) } }
+        sockets.clear()
         server.shutdown()
     }
 
