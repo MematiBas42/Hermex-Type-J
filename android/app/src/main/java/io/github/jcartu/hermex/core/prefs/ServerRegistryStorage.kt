@@ -3,6 +3,7 @@ package io.github.jcartu.hermex.core.prefs
 import android.content.SharedPreferences
 import io.github.jcartu.hermex.core.crypto.StringCipher
 import io.github.jcartu.hermex.model.ServerRegistry
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -20,7 +21,9 @@ class EncryptedPreferencesKeychain(
     private val cipher: StringCipher,
 ) : ServerRegistry.Keychain {
     override fun save(value: String, key: String) {
-        preferences.edit().putString(key, cipher.encrypt(value)).commit()
+        if (!preferences.edit().putString(key, cipher.encrypt(value)).commit()) {
+            throw IOException("The server registry could not be written.")
+        }
     }
 
     override fun load(key: String): String? {

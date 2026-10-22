@@ -96,7 +96,7 @@ enum class AnalyticsTimeframe {
         return when (this) {
             TODAY -> {
                 val nowDay = java.time.LocalDate.now()
-                val sessionDay = java.time.LocalDate.ofInstant(sessionTime, java.time.ZoneId.systemDefault())
+                val sessionDay = sessionTime.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
                 sessionDay == nowDay
             }
             LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS -> {

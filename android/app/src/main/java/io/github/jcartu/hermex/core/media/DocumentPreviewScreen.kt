@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import androidx.core.graphics.createBitmap
 import coil.compose.AsyncImage
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.feature.workspace.SourceViewerScreen
@@ -208,7 +209,7 @@ private fun renderPdfPage(file: java.io.File, pageIndex: Int): Bitmap? = runCatc
                 val scale = (1_800f / page.width.coerceAtLeast(1)).coerceIn(1f, 2.5f)
                 val width = (page.width * scale).toInt().coerceAtLeast(1)
                 val height = (page.height * scale).toInt().coerceAtLeast(1)
-                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+                createBitmap(width, height).also { bitmap ->
                     bitmap.eraseColor(AndroidColor.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                 }
