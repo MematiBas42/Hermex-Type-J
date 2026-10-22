@@ -8,8 +8,8 @@ import io.github.jcartu.hermex.model.SlashSkillFormatter
  * One semantic run in the composer draft.
  *
  * Port of `Features/Chat/ComposerChipToken.swift`. Text remains ordinary editable
- * text; path and skill references are rendered atomically while their server
- * representation stays plain text.
+ * text; path and skill references are styled inline while their editable and
+ * server representations stay plain text with identical caret offsets.
  */
 sealed interface ComposerToken {
     data class Text(val text: String) : ComposerToken
@@ -21,7 +21,7 @@ sealed interface ComposerToken {
 val ComposerToken.serverText: String
     get() = when (this) {
         is ComposerToken.Text -> text
-        is ComposerToken.PathChip -> "@${path.removePrefix("@")}" 
+        is ComposerToken.PathChip -> "@$path"
         is ComposerToken.SkillChip -> "/${SlashSkillFormatter.slug(name.removePrefix("/"))}"
     }
 
@@ -30,7 +30,7 @@ val ComposerToken.displayText: String
     get() = when (this) {
         is ComposerToken.Text -> text
         is ComposerToken.PathChip -> {
-            val normalized = path.removePrefix("@").trimEnd('/')
+            val normalized = path.trimEnd('/')
             normalized.substringAfterLast('/').ifEmpty { normalized }
         }
         is ComposerToken.SkillChip -> name.removePrefix("/")
@@ -92,7 +92,6 @@ fun parseComposerTokens(
     }
     val pathsLongestFirst = knownPaths
         .asSequence()
-        .map { it.removePrefix("@") }
         .filter(String::isNotEmpty)
         .distinct()
         .sortedByDescending(String::length)
@@ -151,8 +150,11 @@ fun parseComposerTokens(
             val rawName = text.substring(index + 1, end)
             val slug = SlashSkillFormatter.slug(rawName)
             val isBuiltIn = SlashCommandCatalog.command(named = slug) != null
-            token = if (slug.isNotEmpty() && !isBuiltIn) {
-                ComposerToken.SkillChip(normalizedSkills[slug] ?: rawName)
+            token = if (slug.isNotEmpty() && rawName == slug && !isBuiltIn) {
+                val label = normalizedSkills[slug]
+                    ?.takeIf { SlashSkillFormatter.slug(it) == slug }
+                    ?: rawName
+                ComposerToken.SkillChip(label)
             } else {
                 null
             }

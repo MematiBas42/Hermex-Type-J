@@ -37,6 +37,7 @@ import io.github.jcartu.hermex.model.PendingAttachment
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.LinkedHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -166,6 +167,8 @@ private data class PickedAttachmentMetadata(
     val mime: String,
 )
 
+private class AttachmentTooLargeException : IOException()
+
 /** Reads one selected URI and renders/caches its staged-document thumbnail off the UI thread. */
 internal suspend fun preparePickedAttachment(
     context: Context,
@@ -182,6 +185,8 @@ internal suspend fun preparePickedAttachment(
         resolver.openInputStream(uri)?.use { stream ->
             stream.readBounded(PendingAttachment.maximumUploadBytes)
         }
+    } catch (_: AttachmentTooLargeException) {
+        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename)
     } catch (_: SecurityException) {
         null
     } catch (_: IOException) {
@@ -189,15 +194,17 @@ internal suspend fun preparePickedAttachment(
     }
 
     if (bytes == null) {
-        if (metadata.size != null && metadata.size > PendingAttachment.maximumUploadBytes) {
-            PreparedAttachmentResult.TooLarge(metadata.filename)
-        } else {
-            PreparedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
-        }
+        PreparedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
     } else {
-        val cacheKey = "${uri}|${metadata.filename}|${metadata.size ?: bytes.size}|${metadata.mime}"
+        val contentHash = MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+        val cacheKey = "${metadata.filename}|${metadata.mime}|$contentHash"
         val preview = ComposerThumbnailCache.get(serverCacheNamespace, cacheKey)
-            ?: renderAttachmentPreview(context, uri, metadata, bytes)?.also { rendered ->
+            ?: try {
+                renderAttachmentPreview(context, uri, metadata, bytes)
+            } catch (_: Exception) {
+                null
+            }?.also { rendered ->
                 ComposerThumbnailCache.put(serverCacheNamespace, cacheKey, rendered)
             }
         PreparedAttachmentResult.Success(
@@ -252,11 +259,11 @@ private fun pickedAttachmentMetadata(context: Context, uri: Uri): PickedAttachme
     return PickedAttachmentMetadata(
         filename = filename?.takeIf(String::isNotBlank) ?: uri.lastPathSegment ?: "attachment",
         size = size,
-        mime = context.contentResolver.getType(uri).orEmpty(),
+        mime = runCatching { context.contentResolver.getType(uri) }.getOrNull().orEmpty(),
     )
 }
 
-private fun InputStream.readBounded(maximumBytes: Int): ByteArray? {
+private fun InputStream.readBounded(maximumBytes: Int): ByteArray {
     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
     val output = ByteArrayOutputStream(minOf(maximumBytes, DEFAULT_BUFFER_SIZE * 4))
     var total = 0
@@ -264,7 +271,7 @@ private fun InputStream.readBounded(maximumBytes: Int): ByteArray? {
         val count = read(buffer)
         if (count < 0) break
         total += count
-        if (total > maximumBytes) return null
+        if (total > maximumBytes) throw AttachmentTooLargeException()
         output.write(buffer, 0, count)
     }
     return output.toByteArray()
@@ -317,8 +324,7 @@ private fun renderPdfFirstPage(context: Context, uri: Uri): ByteArray? {
 
 /** Renders a bounded UTF-8 text excerpt so source documents do not collapse to a generic icon. */
 private fun renderTextExcerpt(bytes: ByteArray): ByteArray? {
-    val excerpt = bytes.copyOfRange(0, minOf(bytes.size, 24 * 1_024))
-        .toString(Charsets.UTF_8)
+    val excerpt = bytes.decodeToString(endIndex = minOf(bytes.size, 24 * 1_024))
         .replace("\r\n", "\n")
         .replace('\r', '\n')
         .trim()

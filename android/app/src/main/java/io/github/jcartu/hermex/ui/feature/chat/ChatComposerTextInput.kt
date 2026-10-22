@@ -18,6 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -59,12 +62,14 @@ internal fun ChatComposerTextInput(
     var fieldValue by remember {
         mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
     }
+    var appliedCaretRequestId by remember { mutableStateOf<Long?>(null) }
     val currentRecall by rememberUpdatedState(recallLastUserMessage)
     val currentOnDraftChange by rememberUpdatedState(onDraftChange)
     val currentOnSelectionChange by rememberUpdatedState(onSelectionChange)
 
     LaunchedEffect(draft, requestedCaret?.id) {
-        val requestedSelection = requestedCaret?.caret
+        val pendingRequest = requestedCaret?.takeIf { it.id != appliedCaretRequestId }
+        val requestedSelection = pendingRequest?.caret
             ?.coerceIn(0, draft.length)
             ?.let(::TextRange)
         if (draft != fieldValue.text || requestedSelection != null) {
@@ -72,6 +77,7 @@ internal fun ChatComposerTextInput(
             fieldValue = TextFieldValue(text = draft, selection = nextSelection)
             currentOnSelectionChange(nextSelection)
         }
+        if (pendingRequest != null) appliedCaretRequestId = pendingRequest.id
     }
 
     val colors = MaterialTheme.colorScheme
@@ -112,7 +118,7 @@ internal fun ChatComposerTextInput(
         modifier = modifier
             .heightIn(min = 48.dp, max = maximumHeight)
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (!enabled || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
                 val isKeyboardSend = event.key == Key.Enter && event.isCtrlPressed
                 if (isKeyboardSend && keyboardSendEnabled) {
@@ -120,7 +126,9 @@ internal fun ChatComposerTextInput(
                     return@onPreviewKeyEvent true
                 }
 
-                if (event.key == Key.DirectionUp && canRecallLastUserMessage(fieldValue.text)) {
+                val isUnmodifiedUp = event.key == Key.DirectionUp &&
+                    !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && !event.isShiftPressed
+                if (isUnmodifiedUp && canRecallLastUserMessage(fieldValue.text)) {
                     val recalled = currentRecall?.invoke()?.takeIf(String::isNotEmpty)
                     if (recalled != null) {
                         val selection = TextRange(recalled.length)
