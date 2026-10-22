@@ -149,7 +149,7 @@ class ChatAttachmentCoordinatorTest {
     }
 
     @Test
-    fun `missing mime falls back to octet-stream and non-image drops the thumbnail`() = runTest {
+    fun `document preview survives even when mime falls back to octet-stream`() = runTest {
         stubUpload(mime = null, isImage = false)
 
         coordinator.uploadAttachment(byteArrayOf(1), "notes.txt", previewData = byteArrayOf(9))
@@ -157,7 +157,7 @@ class ChatAttachmentCoordinatorTest {
         val pending = state.value.pendingAttachments.single()
         assertEquals("application/octet-stream", pending.mime)
         assertFalse(pending.isImage)
-        assertNull(pending.thumbnailData)
+        assertTrue(pending.thumbnailData!!.contentEquals(byteArrayOf(9)))
     }
 
     @Test

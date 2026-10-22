@@ -92,12 +92,23 @@ class ChatViewModelTest {
     private lateinit var events: MutableSharedFlow<ChatStreamEvent>
     private lateinit var sentMessages: MutableList<String>
     private var capturedAttachments: List<JsonElement>? = null
+    private lateinit var draftStore: io.github.jcartu.hermex.data.ChatDraftStore
+    private lateinit var storeScope: kotlinx.coroutines.CoroutineScope
+    private val viewModels = androidx.lifecycle.ViewModelStore()
+    private var viewModelCount = 0
+    @get:org.junit.Rule
+    val timeout: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(15)
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         directory = Files.createTempDirectory("chat-vm-test").toFile()
         cacheStore = CacheStore(directory, json)
+        storeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher)
+        draftStore = io.github.jcartu.hermex.data.ChatDraftStore(
+            io.github.jcartu.hermex.data.ChatDraftFilePersistence(directory, json, dispatcher),
+            io.github.jcartu.hermex.data.ChatDraftAttachmentStore(directory), storeScope, ioDispatcher = dispatcher,
+        )
         api = mockk()
         sse = mockk()
         serverConfig = mockk()
@@ -143,11 +154,13 @@ class ChatViewModelTest {
 
     @After
     fun tearDown() {
+        viewModels.clear()
+        storeScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         Dispatchers.resetMain()
         directory.deleteRecursively()
     }
 
-    private fun viewModel(sessionId: String? = "s1", newChat: Boolean = false): ChatViewModel =
+    private fun viewModel(sessionId: String? = "s1", newChat: Boolean = false, network: io.github.jcartu.hermex.net.NetworkAvailability? = null): ChatViewModel =
         ChatViewModel(
             api = api,
             sse = sse,
@@ -159,7 +172,9 @@ class ChatViewModelTest {
             initialSessionId = sessionId,
             initialNewChat = newChat,
             ioDispatcher = dispatcher,
-        )
+            drafts = draftStore,
+            network = network,
+        ).also { viewModels.put("vm-${viewModelCount++}", it) }
 
     /** Activates session "s1" and starts a stream by sending "hello". */
     private fun startedViewModel(): ChatViewModel {
@@ -205,7 +220,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `switchToSession preserves draft and staged attachments`() = runTest(dispatcher) {
+    fun `switchToSession stores composer under its original session`() = runTest(dispatcher) {
         coEvery { api.uploadFile(any(), any(), any()) } returns UploadResponse(
             filename = "a.png",
             path = "/up/a.png",
@@ -223,8 +238,11 @@ class ChatViewModelTest {
 
         val state = vm.uiState.value
         assertEquals("s2", state.sessionId)
-        assertEquals("keep me", state.draft)
-        assertEquals(listOf("/up/a.png"), state.pendingAttachments.map { it.path })
+        assertEquals("", state.draft)
+        assertTrue(state.pendingAttachments.isEmpty())
+        vm.switchToSession("s1", newChat = false)
+        assertEquals("keep me", vm.uiState.value.draft)
+        assertEquals(listOf("/up/a.png"), vm.uiState.value.pendingAttachments.map { it.path })
     }
 
     @Test
@@ -497,21 +515,21 @@ class ChatViewModelTest {
         coVerify(exactly = 1) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify { api.steerChat("s1", "go left") }
         assertEquals("", vm.uiState.value.draft)
-        assertTrue(vm.uiState.value.pinnedLocalNotices.contains("Steering hint delivered."))
+        assertEquals("Steering hint delivered.", vm.uiState.value.steeringConfirmation)
+        assertTrue(vm.uiState.value.messages.last().isSteerMessage)
     }
 
     @Test
-    fun `rejected steer queues the message and drains it after the stop`() = runTest(dispatcher) {
+    fun `rejected steer keeps draft and does not stop active run`() = runTest(dispatcher) {
         coEvery { api.steerChat(any(), any()) } returns ChatSteerResponse(accepted = false)
         val vm = startedViewModel()
-
         vm.updateDraft("go left")
         vm.send()
-
-        // cancel → finishStream → queued message drains as a fresh send.
-        coVerify { api.cancelChat("stream-1") }
-        assertEquals(listOf("hello", "go left"), sentMessages)
+        coVerify(exactly = 0) { api.cancelChat(any()) }
+        assertEquals(listOf("hello"), sentMessages)
         assertEquals("stream-1", vm.uiState.value.activeStreamId)
+        assertEquals("go left", vm.uiState.value.draft)
+        assertEquals("Couldn't steer", vm.uiState.value.steerFailureMessage)
     }
 
     @Test
@@ -671,7 +689,7 @@ class ChatViewModelTest {
             "Terminal is not available in the mobile app.",
             vm.uiState.value.sendErrorMessage,
         )
-        assertEquals("", vm.uiState.value.draft)
+        assertEquals("/terminal top", vm.uiState.value.draft)
         assertTrue(sentMessages.isEmpty())
     }
 
@@ -689,16 +707,20 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `slash clear empties the transcript`() = runTest(dispatcher) {
+    fun `slash clear confirms before clearing server and cache`() = runTest(dispatcher) {
         coEvery { api.session(any(), any(), any(), any(), any()) } returns SessionResponse(
             SessionDetail(sessionId = "s1", title = "T", messages = serverTranscript()),
         )
+        coEvery { api.clearSession("s1") } returns io.github.jcartu.hermex.model.SessionMutationResponse(ok = true)
         val vm = viewModel()
         vm.switchToSession("s1", newChat = false)
         assertEquals(2, vm.uiState.value.messages.size)
 
         vm.updateDraft("/clear")
         vm.send()
+        assertTrue(vm.uiState.value.pendingClearConfirmation)
+        coVerify(exactly = 0) { api.clearSession(any()) }
+        vm.confirmClearSessionHistory()
 
         assertTrue(vm.uiState.value.messages.isEmpty())
         assertTrue(vm.uiState.value.transcriptMessages.isEmpty())
@@ -723,19 +745,12 @@ class ChatViewModelTest {
         vm.updateDraft("/queue later message")
         vm.send()
 
-        // The notice is pinned while the stream runs...
-        assertTrue(vm.uiState.value.pinnedLocalNotices.contains("Queued for next turn (#1)."))
+        assertEquals("Queued, sends when this run finishes", vm.uiState.value.queuedMessagesReceipt)
         assertEquals(listOf("hello"), sentMessages)
 
         events.emit(ChatStreamEvent.StreamEnd)
 
-        // ...then flushed to the transcript, and the queued message sends.
         assertEquals(listOf("hello", "later message"), sentMessages)
-        assertTrue(
-            vm.uiState.value.messages.any {
-                it.role == "local_notice" && it.content == "Queued for next turn (#1)."
-            },
-        )
     }
 
     @Test
@@ -749,5 +764,115 @@ class ChatViewModelTest {
         val help = vm.uiState.value.messages.last()
         assertEquals("local_assistant", help.role)
         assertTrue(help.content!!.contains("`/steer <message>`"))
+    }
+
+    @Test
+    fun `live reconnect uses last journal sequence without a new POST`() = runTest(dispatcher) {
+        val vm = startedViewModel()
+        every { sse.lastEventId } returns "run:27"
+        coEvery { api.chatStreamStatus("stream-1") } returns ChatStreamStatusResponse(active = true, replayAvailable = true)
+        coEvery { api.session(any(), any(), any(), any(), any()) } returns SessionResponse(
+            SessionDetail(sessionId = "s1", activeStreamId = "stream-1", messages = serverTranscript()),
+        )
+        events.emit(ChatStreamEvent.TransportError("drop"))
+        verify(exactly = 1) { sse.connect("stream-1", 27) }
+        assertEquals(listOf("hello"), sentMessages)
+        vm.suspendStreamForBackground()
+    }
+
+    @Test
+    fun `late events cannot reopen a completed response`() = runTest(dispatcher) {
+        val vm = startedViewModel()
+        events.emit(ChatStreamEvent.Done(DoneStreamEvent(session = SessionDetail(sessionId = "s1", messages = serverTranscript()))))
+        events.emit(ChatStreamEvent.Token("late before stream end"))
+        events.emit(ChatStreamEvent.StreamEnd)
+        events.emit(ChatStreamEvent.Token("late after stream end"))
+        events.emit(ChatStreamEvent.Error("late failure"))
+        advanceTimeBy(20)
+        assertEquals("Hi!", vm.uiState.value.messages.last().content)
+        assertEquals(1, vm.uiState.value.responseCompletionTrigger)
+        assertNull(vm.uiState.value.sendErrorMessage)
+    }
+
+    @Test
+    fun `offline recovery waits then resumes on network callback`() = runTest(dispatcher) {
+        val signal = kotlinx.coroutines.flow.MutableStateFlow(0)
+        var online = false
+        val network = object : io.github.jcartu.hermex.net.NetworkAvailability {
+            override val isSatisfied: Boolean get() = online
+            override val changes: kotlinx.coroutines.flow.StateFlow<Int> = signal
+        }
+        val vm = viewModel(network = network)
+        vm.switchToSession("s1", false)
+        vm.resumeForForeground()
+        vm.updateDraft("hello")
+        vm.send()
+        events.emit(ChatStreamEvent.TransportError("offline"))
+        assertEquals(ActiveStreamRecoveryState.WAITING_FOR_NETWORK, vm.uiState.value.recoveryState)
+        coVerify(exactly = 0) { api.chatStreamStatus(any()) }
+        coEvery { api.chatStreamStatus(any()) } returns ChatStreamStatusResponse(active = false, replayAvailable = true)
+        online = true
+        signal.value += 1
+        coVerify(exactly = 1) { api.chatStreamStatus("stream-1") }
+        verify { sse.connect("stream-1", 0) }
+        vm.suspendStreamForBackground()
+    }
+
+    @Test
+    fun `queued message survives ViewModel clear and reattach as a draft`() = runTest(dispatcher) {
+        val vm = startedViewModel()
+        vm.updateDraft("review this next")
+        vm.send(SendMode.QUEUE)
+        val owner = androidx.lifecycle.ViewModelStore()
+        owner.put("chat", vm)
+        owner.clear()
+        draftStore.flush()
+        val reopened = viewModel()
+        reopened.switchToSession("s1", false)
+        assertEquals("review this next", reopened.uiState.value.draft)
+        assertEquals(listOf("hello"), sentMessages)
+    }
+
+    @Test
+    fun `session rotation moves rejected draft without resending`() = runTest(dispatcher) {
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2","error":"sealed"}""")
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("review before resend")
+        vm.send()
+        assertEquals("s2", vm.uiState.value.sessionId)
+        assertEquals("review before resend", vm.uiState.value.draft)
+        assertFalse(vm.uiState.value.messages.any { it.role == "user" })
+        coVerify(exactly = 1) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `invalid rotation target keeps source draft and seals POST`() = runTest(dispatcher) {
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"../bad","error":"sealed"}""")
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("keep me")
+        vm.send()
+        vm.send()
+        assertEquals("s1", vm.uiState.value.sessionId)
+        assertEquals("keep me", vm.uiState.value.draft)
+        assertTrue(vm.uiState.value.isCompressionRotated)
+        coVerify(exactly = 1) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `rotation never overwrites nonempty destination draft`() = runTest(dispatcher) {
+        draftStore.setText("other work", io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2"))
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2","error":"sealed"}""")
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("rejected work")
+        vm.send()
+        assertEquals("s1", vm.uiState.value.sessionId)
+        assertEquals("rejected work", vm.uiState.value.draft)
+        assertEquals("other work", draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2"))?.text)
     }
 }
