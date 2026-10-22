@@ -161,6 +161,16 @@ working and get fixes, and new features go to Hermes.
 - An approval answer the host can't confirm keeps the card answerable with a
   warning, and an approval with malformed choices offers only Deny. ([#1103],
   [#1104])
+- Android: live webui streams retain their partial reply, reasoning, tool cards
+  and replay cursor across process recreation. Shared imports commit text and
+  attachment copies together; restored/shared documents regenerate composer
+  thumbnails. Rejected compression continuations preserve their original draft
+  across navigation, cancellation and Profile mismatches.
+- Android: local run alerts have separate reply, approval, question and failure
+  channels, respect each Notifications toggle, and carry the owning server and
+  session on tap. Approvals use a high-importance channel; stopped runs stay
+  silent. The first accepted run claims the one-time permission offer, and
+  Send Test Notification uses the production reply channel.
 
 [#713]: https://github.com/uzairansaruzi/hermex/issues/713
 [#1020]: https://github.com/uzairansaruzi/hermex/pull/1020

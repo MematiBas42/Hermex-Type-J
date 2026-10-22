@@ -100,6 +100,13 @@ class AppContainer(context: Context) {
         )
     }
 
+    /** Server-owned local alerts shared by webui monitoring and direct-Hermes chats. */
+    val runNotifications: io.github.jcartu.hermex.service.RunNotificationHooks by lazy {
+        io.github.jcartu.hermex.service.RunNotificationHooks(appContext, settings, notificationOffer) {
+            foregroundMonitor.isInForeground.value
+        }
+    }
+
     val cookieStore: CookieSerializer = CookieSerializer(context.dataStore)
 
     val cookieJar: CookieJar = PersistentCookieJar(
