@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.model.ServerAccount
+import io.github.jcartu.hermex.model.ServerKind
 import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.FirstPaneSplitRow
@@ -54,6 +55,7 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.adaptive.rememberFoldState
 import io.github.jcartu.hermex.ui.adaptive.rememberWindowWidthDp
 import io.github.jcartu.hermex.ui.adaptive.trifoldPaneCount
+import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
 import io.github.jcartu.hermex.ui.feature.chat.ChatPane
 import io.github.jcartu.hermex.ui.feature.git.GitWorkspaceRoute
@@ -63,12 +65,16 @@ import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingRoute
 import io.github.jcartu.hermex.ui.feature.kanban.KanbanRoute
+import io.github.jcartu.hermex.ui.feature.kanban.HermesKanbanDataSource
+import io.github.jcartu.hermex.ui.feature.kanban.WebuiKanbanDataSource
 import io.github.jcartu.hermex.ui.feature.sessions.LocalSessionListShortcutActions
 import io.github.jcartu.hermex.ui.feature.sessions.SessionsListPane
 import io.github.jcartu.hermex.ui.feature.sessions.handleSessionListShortcutKey
 import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 import io.github.jcartu.hermex.ui.feature.skills.SkillsRoute
 import io.github.jcartu.hermex.ui.feature.tasks.TasksRoute
+import io.github.jcartu.hermex.ui.feature.tasks.HermesCronDataClient
+import io.github.jcartu.hermex.ui.feature.tasks.WebuiCronDataClient
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceRoute
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceFileNavigation
 
@@ -99,12 +105,14 @@ fun HermexApp(container: AppContainer) {
     when (val state = authState) {
         AuthState.Unconfigured -> OnboardingRoute(container, savedServer = null)
         is AuthState.LoggedOut -> OnboardingRoute(container, savedServer = state.account)
-        is AuthState.LoggedIn -> ServerScopedViewModels(serverId = state.account.id) { MainShell(container) }
+        is AuthState.LoggedIn -> ServerScopedViewModels(serverId = state.account.id) {
+            MainShell(container, state.account)
+        }
     }
 }
 
 @Composable
-private fun MainShell(container: AppContainer) {
+private fun MainShell(container: AppContainer, account: ServerAccount) {
     val fold: State<FoldState> = rememberFoldState()
     val destinationStateHolder = rememberSaveableStateHolder()
     val windowWidthDp: Int = rememberWindowWidthDp()
@@ -125,6 +133,27 @@ private fun MainShell(container: AppContainer) {
     val settings by container.settings.settings.collectAsStateWithLifecycle(
         initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings(),
     )
+    val hermesConnection = remember(account.id, account.kind) {
+        if (account.kind == ServerKind.HERMES) {
+            container.botConnectionStore.load(account.id)?.let { saved ->
+                container.hermesConnections.connection(saved, account.id)
+            }
+        } else {
+            null
+        }
+    }
+    val tasksClient = remember(account.id, hermesConnection) {
+        when (account.kind) {
+            ServerKind.WEBUI -> WebuiCronDataClient(container.api)
+            ServerKind.HERMES -> hermesConnection?.let { HermesCronDataClient(it, profile = null) }
+        }
+    }
+    val kanbanDataSource = remember(account.id, hermesConnection) {
+        when (account.kind) {
+            ServerKind.WEBUI -> WebuiKanbanDataSource(container.api)
+            ServerKind.HERMES -> hermesConnection?.let(::HermesKanbanDataSource)
+        }
+    }
     // Section-visibility toggles (iOS `sectionVisibility.tasks|insights`): a
     // hidden destination can't stay selected, so the shell falls back to Chats.
     LaunchedEffect(settings.showsTasksEntry, selected) {
@@ -161,15 +190,30 @@ private fun MainShell(container: AppContainer) {
     ) {
         val destinationContent: @Composable (HermexDestination) -> Unit = { destination ->
             when (destination) {
-                HermexDestination.CHATS -> ChatsArea(navigation)
-                HermexDestination.KANBAN -> KanbanRoute(
-                    initialBoardSlug = navigation.kanbanBoardSlug,
-                    initialCardId = navigation.kanbanCardId,
-                    onDeepLinkConsumed = navigation::consumeKanbanTarget,
-                )
-                HermexDestination.TASKS -> TasksRoute(
-                    client = io.github.jcartu.hermex.ui.feature.tasks.WebuiCronDataClient(container.api),
-                )
+                HermexDestination.CHATS -> if (account.kind == ServerKind.HERMES) {
+                    io.github.jcartu.hermex.ui.feature.hermes.home.HermesHome(account, container, navigation::openSettings)
+                } else ChatsArea(navigation)
+                HermexDestination.KANBAN -> {
+                    val source = kanbanDataSource
+                    if (source == null) {
+                        ErrorState(\"Sign in to this Hermes server to open Kanban.\")
+                    } else {
+                        KanbanRoute(
+                            dataSource = source,
+                            initialBoardSlug = navigation.kanbanBoardSlug,
+                            initialCardId = navigation.kanbanCardId,
+                            onDeepLinkConsumed = navigation::consumeKanbanTarget,
+                        )
+                    }
+                }
+                HermexDestination.TASKS -> {
+                    val client = tasksClient
+                    if (client == null) {
+                        ErrorState(\"Sign in to this Hermes server to open Tasks.\")
+                    } else {
+                        TasksRoute(client = client)
+                    }
+                }
                 HermexDestination.FILES -> WorkspaceRoute(initialSessionId = navigation.selectedSessionId)
                 HermexDestination.MORE -> MoreRoute(navigation, container)
             }

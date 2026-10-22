@@ -35,8 +35,12 @@ import org.robolectric.annotation.Config
 class TasksUsageComposeSmokeTest {
 
     private class SmokeCronClient : CronDataClient {
-        override val cronFeatures: CronFeatures = CronFeatures.webui
-        override suspend fun cronJobs() = CronJobList(jobs = listOf(CronJob(jobId = "j1", name = "One")), runningJobs = emptyMap())
+        override val cronFeatures: CronFeatures = CronFeatures.hermes
+        override suspend fun cronJobs() = CronJobList(
+            jobs = listOf(CronJob(jobId = "j1", name = "One", profile = "inbox")),
+            runningJobs = emptyMap(),
+            recentRuns = emptyList(),
+        )
         override suspend fun cronRecent() = io.github.jcartu.hermex.model.CronRecentCompletionsResponse(completions = null)
         override suspend fun cronDeliveryOptions(profile: String?) = io.github.jcartu.hermex.model.CronDeliveryOptionsResponse(platforms = null)
         override suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String?, skills: List<String>, model: String?, provider: String?, profile: String?, toastNotifications: Boolean) = io.github.jcartu.hermex.model.CronMutationResponse(ok = true)
@@ -85,7 +89,7 @@ class TasksUsageComposeSmokeTest {
     }
 
     @Test
-    fun `tasks agenda composes at pane counts 1 to 3`() {
+    fun `Hermes tasks agenda composes at pane counts 1 to 3`() {
         composeAtPaneCounts { TasksRoute(client = SmokeCronClient()) }
     }
 
