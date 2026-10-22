@@ -63,7 +63,9 @@ object BotDeepLink {
         fun value(name: String): String? = trimmed(runCatching { uri.getQueryParameter(name) }.getOrNull())
         val rawServer = value(SERVER) ?: return null
         val server = runCatching { AuthManager.normalizedServerUrl(rawServer) }.getOrNull() ?: return null
-        val connection = value(CONNECTION)?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull()?.let { raw.uppercase() } } ?: return null
+        val connection = value(CONNECTION)?.let { raw ->
+            runCatching { UUID.fromString(raw) }.getOrNull()?.takeIf { it.toString().equals(raw, ignoreCase = true) }?.toString()?.uppercase()
+        } ?: return null
         val profile = value(PROFILE) ?: return null
         return BotDestination(server = server, connectionID = connection, profile = profile, conversation = value(CONVERSATION))
     }

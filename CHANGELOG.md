@@ -127,6 +127,18 @@ working and get fixes, and new features go to Hermes.
 - Bot Mode: a bot's chat opens in the regular chat from every entry point, with
   its avatar pill, rules and @mentions, and stays readable offline. ([#1151],
   [#1164], [#1166])
+- Android Bot Mode: native adaptive inbox with Desktop sections, phone-local
+  section order, pinned/hidden bots, live attention ordering, unread marks and
+  bot/message search; create, duplicate, edit and delete Profiles with guarded
+  appearance, model, capability, instruction and avatar writes. Group rooms
+  include members, threads, explicit uncertain-send retries and bounded local
+  history. Drawn faces honor Reduce Motion and settle after a 30-second work
+  beat. Canonical bot chats reuse the regular Hermes transcript/composer with
+  identity-bound links, avatar titles and atomic `@` mentions. The optional
+  webui Bots row remains opt-in; direct Hermes homes always include Bots.
+  APNs relay provisioning is not an Android feature; `vault.*` prompts remain
+  unanswered as in current upstream 2.0 (#1148), rather than restoring the
+  removed 1.9 behavior.
 
 ### Changed
 - Settings opens on a short index: your servers, then Appearance, Composer,

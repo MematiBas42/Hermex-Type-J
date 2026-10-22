@@ -214,6 +214,15 @@ class AppContainer(context: Context) {
         )
     }
 
+    /** BotMode's phone-local presentation state; credentials remain in botConnectionStore. */
+    val botLocalDefaults by lazy { io.github.jcartu.hermex.ui.feature.bots.BotLocalDefaults.Preferences(appContext) }
+    val botUnreadStore by lazy { io.github.jcartu.hermex.ui.feature.bots.BotUnreadStore(botLocalDefaults) }
+    val botSectionOrderStore by lazy { io.github.jcartu.hermex.ui.feature.bots.BotSectionOrderStore(botLocalDefaults) }
+    val botRoomOrganizeStore by lazy { io.github.jcartu.hermex.ui.feature.bots.BotRoomOrganizeStore(botLocalDefaults) }
+    val botAvatars by lazy { io.github.jcartu.hermex.ui.feature.bots.BotAvatarStore() }
+    val botModeGate by lazy { io.github.jcartu.hermex.ui.feature.bots.BotModeGate(appContext) }
+    val botHistoryCache by lazy { io.github.jcartu.hermex.ui.feature.bots.BotHistoryCache.shared(appContext) }
+
     val modelFavorites: io.github.jcartu.hermex.model.ModelFavoritesStore by lazy {
         io.github.jcartu.hermex.model.ModelFavoritesStore(dataStore = appContext.dataStore)
     }
@@ -228,6 +237,11 @@ class AppContainer(context: Context) {
             json = json,
             onClear = { server ->
                 if (server == null) hermesCacheStore.clearAll() else hermesCacheStore.clearCache(server)
+                val cutoff = System.currentTimeMillis()
+                if (server == null) botHistoryCache.markAllCleared(cutoff) else botHistoryCache.markServerCleared(server, cutoff)
+                appScope.launch {
+                    if (server == null) botHistoryCache.clearAll(cutoff) else botHistoryCache.clearServer(server, cutoff)
+                }
             },
         )
     }

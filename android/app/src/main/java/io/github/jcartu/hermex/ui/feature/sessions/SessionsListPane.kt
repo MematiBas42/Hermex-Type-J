@@ -110,11 +110,13 @@ fun SessionsRoute(
     onNewChat: (PendingNewChatRequest) -> Unit,
     modifier: Modifier = Modifier,
     onOpenSettings: () -> Unit = {},
+    botsEntry: (@Composable () -> Unit)? = null,
 ) {
     SessionsListPane(
         onSessionSelected = onSessionSelected,
         onNewChat = onNewChat,
         onOpenSettings = onOpenSettings,
+        botsEntry = botsEntry,
         modifier = modifier,
     )
 }
@@ -140,6 +142,7 @@ fun SessionsListPane(
     onNewChat: (PendingNewChatRequest) -> Unit,
     modifier: Modifier = Modifier,
     onOpenSettings: () -> Unit = {},
+    botsEntry: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val container = remember(context) {
@@ -189,6 +192,7 @@ fun SessionsListPane(
             onSessionSelected = onSessionSelected,
             onNewChat = onNewChat,
             onOpenSettings = onOpenSettings,
+            botsEntry = botsEntry,
             openArchived = { screen = SessionsScreen.ARCHIVED },
             openScheduled = { screen = SessionsScreen.SCHEDULED },
             modifier = modifier,
@@ -231,6 +235,7 @@ private fun SessionListScreen(
     openArchived: () -> Unit,
     openScheduled: () -> Unit,
     modifier: Modifier = Modifier,
+    botsEntry: (@Composable () -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
@@ -491,6 +496,10 @@ private fun SessionListScreen(
                 }
 
                 // Section chrome: "Sessions" + the fork's display-options menu,
+                if (!isSearchActive && botsEntry != null) {
+                    item(key = "bots-entry") { botsEntry() }
+                }
+
                 // Archived shortcut and header Chat button (medium/expanded).
                 item(key = "sessions-chrome") {
                     SessionsChromeRow(
