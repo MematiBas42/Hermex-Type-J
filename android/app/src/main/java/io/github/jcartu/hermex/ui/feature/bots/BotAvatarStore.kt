@@ -11,6 +11,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.util.Base64
@@ -118,7 +119,7 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
     }
 
     private fun bump() {
-        _version.value = _version.value + 1
+        _version.update { it + 1 }
     }
 
     /** A readable asset: a picture to show, or Desktop's still copy of a drawn face. */
