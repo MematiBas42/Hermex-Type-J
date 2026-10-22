@@ -206,7 +206,15 @@ class AppContainer(context: Context) {
         io.github.jcartu.hermex.data.CacheStore(
             directory = java.io.File(appContext.filesDir, "offline-cache"),
             json = json,
+            onClear = { server ->
+                if (server == null) hermesCacheStore.clearAll() else hermesCacheStore.clearCache(server)
+            },
         )
+    }
+
+    /** Direct-Hermes rows/transcripts have Profile and lineage scopes, independent of webui sweeps. */
+    val hermesCacheStore: io.github.jcartu.hermex.data.HermesCacheStore by lazy {
+        io.github.jcartu.hermex.data.HermesCacheStore(java.io.File(appContext.filesDir, "offline-cache"), json)
     }
 
     val sharedImports: io.github.jcartu.hermex.core.share.SharedImportRepository by lazy {
