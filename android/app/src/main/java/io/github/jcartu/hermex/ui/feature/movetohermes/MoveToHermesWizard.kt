@@ -124,8 +124,11 @@ fun MoveToHermesBannerSlot(serverId: String, modifier: Modifier = Modifier) {
     if (record != null || showInvite) {
         val source = servers.firstOrNull { it.id == record?.sourceServerId }
         val destination = servers.firstOrNull { it.id == record?.destinationServerId }
-        val sourceName = MoveToHermesUiState.displayName(source ?: account.takeIf { it.kind == ServerKind.WEBUI })
-        val destinationName = MoveToHermesUiState.displayName(destination)
+        val sourceName = MoveToHermesUiState.displayName(
+            source ?: account.takeIf { it.kind == ServerKind.WEBUI },
+            record?.sourceServerId,
+        )
+        val destinationName = MoveToHermesUiState.displayName(destination, record?.destinationServerId)
         val kind = when {
             record == null -> MoveBannerKind.INVITE
             record.stage == MoveStage.PAUSED || record.stage == MoveStage.RUNNING -> MoveBannerKind.PAUSED

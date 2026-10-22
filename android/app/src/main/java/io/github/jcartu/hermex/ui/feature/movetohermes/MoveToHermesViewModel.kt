@@ -37,8 +37,8 @@ data class MoveToHermesUiState(
     val isRepeat: Boolean = false,
     val hasNextSource: Boolean = false,
 ) {
-    val sourceName: String get() = displayName(source)
-    val destinationName: String get() = displayName(destination)
+    val sourceName: String get() = displayName(source, record?.sourceServerId)
+    val destinationName: String get() = displayName(destination, record?.destinationServerId)
     val canMove: Boolean
         get() = stage == MoveWizardStage.REVIEW && profileChoices.all { choice ->
             mappings.firstOrNull { it.sourceProfile == choice.sourceProfile }?.let {
@@ -47,12 +47,15 @@ data class MoveToHermesUiState(
         }
 
     companion object {
-        fun displayName(account: ServerAccount?): String {
-            if (account == null) return "server"
-            return account.displayName.trim().ifEmpty {
-                account.urlString.substringAfter("://").substringBefore('/').substringBefore(':')
+        fun displayName(account: ServerAccount?, fallbackId: String? = null): String {
+            if (account != null) {
+                return account.displayName.trim().ifEmpty { host(account.urlString) }
             }
+            return fallbackId?.let(::host) ?: "server"
         }
+
+        private fun host(serverId: String): String =
+            serverId.substringAfter("://").substringBefore('/').substringBefore(':').ifEmpty { serverId }
     }
 }
 
