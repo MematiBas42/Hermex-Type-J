@@ -85,8 +85,18 @@ private const val MAX_PANE_CONTENT_WIDTH_DP = 520
 @Composable
 fun SkillsRoute() {
     val container = (LocalContext.current.applicationContext as HermexApplication).container
+    SkillsRoute(client = WebuiSkillsDataClient(container.api))
+}
+
+/** Kind-neutral Skills route; direct Hermes supplies [HermesSkillsDataClient] and its Profile. */
+@Composable
+fun SkillsRoute(
+    client: SkillsDataClient,
+    profile: String? = null,
+) {
     val skillsViewModel: SkillsViewModel = viewModel(
-        factory = viewModelFactory { initializer { SkillsViewModel(container.api) } },
+        key = "skills:${profile.orEmpty()}",
+        factory = viewModelFactory { initializer { SkillsViewModel(client) } },
     )
     val state by skillsViewModel.uiState.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
@@ -96,9 +106,9 @@ fun SkillsRoute() {
 
     val detailViewModel: SkillDetailViewModel? = selectedSkillName?.let { name ->
         viewModel<SkillDetailViewModel>(
-            key = "skillDetail:$name",
+            key = "skillDetail:${profile.orEmpty()}:$name",
             factory = viewModelFactory {
-                initializer { SkillDetailViewModel(container.api, name) }
+                initializer { SkillDetailViewModel(client, name) }
             },
         )
     }
@@ -107,6 +117,7 @@ fun SkillsRoute() {
     val listPane: @Composable (Modifier) -> Unit = { paneModifier ->
         SkillsListPane(
             state = state,
+            profile = profile,
             selectedSkillName = if (paneCount == 1) null else selectedSkillName,
             onSelect = { skill -> skill.name?.let { selectedSkillName = it } },
             onToggle = skillsViewModel::setSkill,
@@ -153,7 +164,9 @@ fun SkillsRoute() {
                         fileName = detailState.selectedFile,
                         content = detailState.fileContent,
                         isLoading = detailState.isLoadingFile,
-                        onClose = { detailViewModel?.closeFile() },
+                        isBinary = detailState.fileIsBinary,
+                        isTruncated = detailState.fileIsTruncated,
+                        onClose = { detailViewModel.closeFile() },
                         modifier = paneModifier,
                     )
                 } else {
@@ -167,12 +180,13 @@ fun SkillsRoute() {
         }
     }
 
-    // At 1–2 panes the linked file opens in a sheet, like the iOS `.sheet`.
     if (paneCount < 3 && detailState?.selectedFile != null && detailViewModel != null) {
         SkillFileViewerSheet(
             fileName = detailState.selectedFile,
             content = detailState.fileContent,
             isLoading = detailState.isLoadingFile,
+            isBinary = detailState.fileIsBinary,
+            isTruncated = detailState.fileIsTruncated,
             onClose = detailViewModel::closeFile,
         )
     }
@@ -182,6 +196,7 @@ fun SkillsRoute() {
 
 @Composable
 private fun SkillsListPane(
+    profile: String?,
     state: SkillsUiState,
     selectedSkillName: String?,
     onSelect: (SkillSummary) -> Unit,
@@ -195,7 +210,10 @@ private fun SkillsListPane(
             Modifier.fillMaxWidth().padding(top = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Skills", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (profile == null) "Skills" else "Skills · $profile",
+                style = MaterialTheme.typography.titleLarge,
+            )
             Spacer(Modifier.weight(1f))
             if (state.isLoading) {
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -432,7 +450,7 @@ private fun SkillDetailPane(
                         Markdown(content = state.content)
                     }
 
-                    if (state.linkedFiles.isNotEmpty()) {
+                    if (state.hasLinkedFiles && state.linkedFiles.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
                                 "Linked Files",
@@ -485,6 +503,8 @@ private fun SkillFileViewerSheet(
     fileName: String,
     content: String?,
     isLoading: Boolean,
+    isBinary: Boolean,
+    isTruncated: Boolean,
     onClose: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -495,6 +515,8 @@ private fun SkillFileViewerSheet(
             fileName = fileName,
             content = content,
             isLoading = isLoading,
+            isBinary = isBinary,
+            isTruncated = isTruncated,
             onClose = onClose,
         )
     }
@@ -505,6 +527,8 @@ private fun SkillFileViewerPane(
     fileName: String,
     content: String?,
     isLoading: Boolean,
+    isBinary: Boolean,
+    isTruncated: Boolean,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -514,6 +538,8 @@ private fun SkillFileViewerPane(
                 fileName = fileName,
                 content = content,
                 isLoading = isLoading,
+                isBinary = isBinary,
+                isTruncated = isTruncated,
                 onClose = onClose,
             )
         }
@@ -525,6 +551,8 @@ private fun SkillFileViewerContent(
     fileName: String,
     content: String?,
     isLoading: Boolean,
+    isBinary: Boolean,
+    isTruncated: Boolean,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -552,6 +580,10 @@ private fun SkillFileViewerContent(
 
         when {
             isLoading -> LoadingState(label = "Loading file...")
+            isBinary -> EmptyState(
+                title = "No Preview",
+                message = "Preview is not available for this file type.",
+            )
             content.isNullOrEmpty() -> EmptyState(
                 title = "No Content",
                 message = "This file appears to be empty.",
@@ -563,6 +595,14 @@ private fun SkillFileViewerContent(
                     .padding(horizontal = 16.dp)
                     .padding(bottom = 24.dp),
             ) {
+                if (isTruncated) {
+                    Text(
+                        "Preview truncated",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
                 Markdown(content = content)
             }
         }

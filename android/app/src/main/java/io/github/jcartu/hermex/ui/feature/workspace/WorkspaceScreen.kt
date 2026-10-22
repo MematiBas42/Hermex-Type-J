@@ -292,6 +292,7 @@ internal fun WorkspaceTreeRenderSurface(
     state: WorkspaceUiState,
     actions: WorkspaceActions = WorkspaceActions(),
     modifier: Modifier = Modifier,
+    showFileIcons: Boolean = true,
 ) {
     LazyColumn(modifier.fillMaxSize()) {
         items(state.visibleTreeNodes, key = { it.node.path }) { visible ->
@@ -302,6 +303,7 @@ internal fun WorkspaceTreeRenderSurface(
                 onToggle = actions.toggleDirectory,
                 onRetry = actions.retryDirectory,
                 onOpen = actions.openEntry,
+                showFileIcon = showFileIcons,
             )
         }
     }
@@ -315,6 +317,7 @@ private fun FileTreeRow(
     onToggle: (String) -> Unit,
     onRetry: (String) -> Unit,
     onOpen: (WorkspaceEntry) -> Unit,
+    showFileIcon: Boolean,
 ) {
     val node = visible.node
     val loading = node.path in tree.loadingPaths
@@ -344,7 +347,11 @@ private fun FileTreeRow(
             Icon(Icons.Filled.Folder, null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
         } else {
             Spacer(Modifier.width(20.dp))
-            FileTypeIcon(node.path, Modifier.size(22.dp))
+            if (showFileIcon) {
+                FileTypeIcon(node.path, Modifier.size(22.dp))
+            } else {
+                Spacer(Modifier.size(22.dp))
+            }
         }
         Column(Modifier.weight(1f).padding(start = 8.dp)) {
             Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis)

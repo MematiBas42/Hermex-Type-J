@@ -57,10 +57,16 @@ import io.github.jcartu.hermex.ui.adaptive.rememberWindowWidthDp
 import io.github.jcartu.hermex.ui.adaptive.trifoldPaneCount
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.feature.chat.ChatPane
 import io.github.jcartu.hermex.ui.feature.git.GitWorkspaceRoute
+import io.github.jcartu.hermex.ui.feature.git.hermes.HermesGitNavigation
+import io.github.jcartu.hermex.ui.feature.git.hermes.HermesGitWorkspaceRoute
 import io.github.jcartu.hermex.ui.feature.insights.InsightsRoute
+import io.github.jcartu.hermex.net.hermes.HermesInsightsClient
+import io.github.jcartu.hermex.ui.feature.insights.HermesInsightsDataClient
 import io.github.jcartu.hermex.ui.feature.memory.MemoryRoute
+import io.github.jcartu.hermex.ui.feature.memory.HermesMemoryDataClient
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingRoute
@@ -72,11 +78,16 @@ import io.github.jcartu.hermex.ui.feature.sessions.SessionsListPane
 import io.github.jcartu.hermex.ui.feature.sessions.handleSessionListShortcutKey
 import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 import io.github.jcartu.hermex.ui.feature.skills.SkillsRoute
+import io.github.jcartu.hermex.net.hermes.HermesSkillsClient
+import io.github.jcartu.hermex.ui.feature.skills.HermesProfileFeatureHost
+import io.github.jcartu.hermex.ui.feature.skills.HermesSkillsDataClient
 import io.github.jcartu.hermex.ui.feature.tasks.TasksRoute
 import io.github.jcartu.hermex.ui.feature.tasks.HermesCronDataClient
 import io.github.jcartu.hermex.ui.feature.tasks.WebuiCronDataClient
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceRoute
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceFileNavigation
+import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceNavigation
+import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceRoute
 
 enum class HermexDestination(val label: String, val icon: ImageVector) {
     CHATS("Chats", Icons.AutoMirrored.Filled.Chat),
@@ -125,6 +136,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
     val workspaceFileRequest by WorkspaceFileNavigation.request.collectAsStateWithLifecycle()
+    val hermesWorkspaceContext by HermesWorkspaceNavigation.context.collectAsStateWithLifecycle()
     LaunchedEffect(workspaceFileRequest?.id) {
         if (workspaceFileRequest != null) {
             navigation.selectDestination(HermexDestination.FILES)
@@ -212,8 +224,26 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                         TasksRoute(client = client)
                     }
                 }
-                HermexDestination.FILES -> WorkspaceRoute(initialSessionId = navigation.selectedSessionId)
-                HermexDestination.MORE -> MoreRoute(navigation, container)
+                HermexDestination.FILES -> {
+                    if (account.kind == ServerKind.HERMES) {
+                        val context = hermesWorkspaceContext?.takeIf { it.server == account.id }
+                        val saved = container.botConnectionStore.load(account.id)
+                        if (context != null && saved != null) {
+                            HermesWorkspaceRoute(
+                                context = context,
+                                connection = container.hermesConnections.connection(saved, account.id),
+                            )
+                        } else {
+                            EmptyState(
+                                title = "Open a session",
+                                message = "Open Files from a Hermes session to browse its working folder.",
+                            )
+                        }
+                    } else {
+                        WorkspaceRoute(initialSessionId = navigation.selectedSessionId)
+                    }
+                }
+                HermexDestination.MORE -> MoreRoute(navigation, container, account)
             }
         }
 
@@ -350,12 +380,17 @@ private enum class MoreEntry(val label: String, val icon: ImageVector) {
  * Two+ panes: menu rail column | content side by side.
  */
 @Composable
-private fun MoreRoute(navigation: AppNavigationViewModel, container: AppContainer) {
+private fun MoreRoute(
+    navigation: AppNavigationViewModel,
+    container: AppContainer,
+    account: ServerAccount,
+) {
     val paneCount = LocalPaneCount.current
     var entry by rememberSaveable { mutableStateOf<MoreEntry?>(null) }
     val settings by container.settings.settings.collectAsStateWithLifecycle(
         initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings(),
     )
+    val hermesGitClient by HermesGitNavigation.client.collectAsStateWithLifecycle()
     LaunchedEffect(navigation.pendingMoreRoute) {
         if (navigation.pendingMoreRoute == "git") {
             entry = MoreEntry.GIT
@@ -375,15 +410,58 @@ private fun MoreRoute(navigation: AppNavigationViewModel, container: AppContaine
     }
     val content: @Composable (MoreEntry?) -> Unit = { current ->
         when (current) {
-            MoreEntry.SKILLS -> SkillsRoute()
-            MoreEntry.GIT -> GitWorkspaceRoute(
-                initialSessionId = navigation.gitSessionId,
-                onDeepLinkConsumed = navigation::consumeGitTarget,
-            )
-            MoreEntry.MEMORY -> MemoryRoute()
-            MoreEntry.INSIGHTS -> InsightsRoute(
-                client = io.github.jcartu.hermex.ui.feature.insights.WebuiInsightsDataClient(container.api),
-            )
+            MoreEntry.SKILLS -> if (account.kind == ServerKind.HERMES) {
+                HermesProfileFeatureHost(container, account) { profile, connection ->
+                    SkillsRoute(
+                        client = remember(connection, profile) {
+                            HermesSkillsDataClient(HermesSkillsClient(connection, profile))
+                        },
+                        profile = profile,
+                    )
+                }
+            } else {
+                SkillsRoute()
+            }
+            MoreEntry.GIT -> if (account.kind == ServerKind.HERMES) {
+                val client = hermesGitClient?.takeIf { it.context.server == account.id }
+                if (client == null) {
+                    EmptyState(
+                        title = "Open a session",
+                        message = "Open Git from a Hermes session to review its repository.",
+                    )
+                } else {
+                    HermesGitWorkspaceRoute(client)
+                }
+            } else {
+                GitWorkspaceRoute(
+                    initialSessionId = navigation.gitSessionId,
+                    onDeepLinkConsumed = navigation::consumeGitTarget,
+                )
+            }
+            MoreEntry.MEMORY -> if (account.kind == ServerKind.HERMES) {
+                HermesProfileFeatureHost(container, account) { profile, connection ->
+                    MemoryRoute(
+                        client = remember(connection, profile) { HermesMemoryDataClient(connection, profile) },
+                        profile = profile,
+                    )
+                }
+            } else {
+                MemoryRoute()
+            }
+            MoreEntry.INSIGHTS -> if (account.kind == ServerKind.HERMES) {
+                HermesProfileFeatureHost(container, account) { profile, connection ->
+                    InsightsRoute(
+                        client = remember(connection, profile) {
+                            HermesInsightsDataClient(HermesInsightsClient(connection, profile))
+                        },
+                        profile = profile,
+                    )
+                }
+            } else {
+                InsightsRoute(
+                    client = io.github.jcartu.hermex.ui.feature.insights.WebuiInsightsDataClient(container.api),
+                )
+            }
             MoreEntry.SETTINGS -> SettingsRoute(
                 onOpenArchived = { navigation.selectDestination(HermexDestination.CHATS) },
             )
@@ -461,7 +539,11 @@ private fun ServerScopedViewModels(serverId: String, content: @Composable () -> 
     val host = checkNotNull(androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current)
     val owner = remember(serverId) { ServerViewModelStoreOwner(host) }
     androidx.compose.runtime.DisposableEffect(owner) {
-        onDispose { owner.viewModelStore.clear() }
+        onDispose {
+            owner.viewModelStore.clear()
+            HermesWorkspaceNavigation.clear(serverId)
+            HermesGitNavigation.clear(serverId)
+        }
     }
     val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel(viewModelStoreOwner = host)
     var previousServerId by rememberSaveable { mutableStateOf(serverId) }

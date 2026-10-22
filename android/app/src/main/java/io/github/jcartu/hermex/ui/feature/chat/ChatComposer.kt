@@ -78,6 +78,8 @@ fun ChatComposer(
     hapticsEnabled: Boolean = true,
     attachmentCacheNamespace: String? = null,
     uploadAttachmentWithPreview: ((ByteArray, String, ByteArray?) -> Unit)? = null,
+    /** Direct Hermes supplies a Profile-bound host-STT importer; webui keeps [ChatComposerActions.importVoiceNote]. */
+    importVoiceNote: ((ByteArray, String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -327,6 +329,7 @@ fun ChatComposer(
                         enabled = voiceInputEnabled,
                         isProcessing = state.isProcessingVoiceNote,
                         actions = actions,
+                        importVoiceNote = importVoiceNote,
                     )
 
                     ChatComposerTextInput(
