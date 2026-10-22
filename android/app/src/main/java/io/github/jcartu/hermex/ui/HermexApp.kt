@@ -336,7 +336,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
             when (destination) {
                 HermexDestination.CHATS -> if (account.kind == ServerKind.HERMES) {
                     io.github.jcartu.hermex.ui.feature.hermes.home.HermesHome(account, container, navigation::openSettings)
-                } else ChatsArea(navigation)
+                } else ChatsArea(navigation, container)
                 HermexDestination.KANBAN -> {
                     val source = kanbanDataSource
                     if (source == null) {
@@ -446,7 +446,7 @@ private fun DestinationHost(
  * second hinge itself.
  */
 @Composable
-private fun ChatsArea(navigation: AppNavigationViewModel) {
+private fun ChatsArea(navigation: AppNavigationViewModel, container: AppContainer) {
     val paneCount = LocalPaneCount.current
     val selectedSessionId = navigation.selectedSessionId
     val newChat = navigation.isNewChat
@@ -456,6 +456,7 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
     // provides the action set via LocalSessionListShortcutActions.
     val shortcutActions = LocalSessionListShortcutActions.current
 
+    io.github.jcartu.hermex.ui.feature.bots.WebuiBotsHost(container, navigation) { botsEntry ->
     Box(Modifier.fillMaxSize().onKeyEvent { handleSessionListShortcutKey(it, shortcutActions) }) {
     if (paneCount == 1) {
         if (selectedSessionId == null && !newChat) {
@@ -465,6 +466,7 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
                     navigation.startNewChat(request.projectId, request.profileName)
                 },
                 onOpenSettings = navigation::openSettings,
+                botsEntry = botsEntry,
             )
         } else {
             BackHandler { navigation.showSessionList() }
@@ -485,6 +487,7 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
                     },
                     onOpenSettings = navigation::openSettings,
                     modifier = modifier,
+                    botsEntry = botsEntry,
                 )
             },
             remaining = { modifier ->
@@ -497,6 +500,7 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
                 )
             },
         )
+    }
     }
     }
 }

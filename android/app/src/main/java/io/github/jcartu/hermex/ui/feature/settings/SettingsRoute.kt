@@ -336,7 +336,8 @@ private fun ServerPage(
         },
     )
     val state by page.uiState.collectAsStateWithLifecycle()
-    SettingsServerPageContent(page, state, viewModel, uiState, onOpenArchived)
+    SettingsServerPageContent(page, state, viewModel, uiState, onOpenArchived,
+        botModeSetting = { io.github.jcartu.hermex.ui.feature.bots.BotModeSetting(container.botModeGate) })
 }
 
 @Composable

@@ -240,7 +240,7 @@ class HermesChatTurnCoordinator(
                 if (error.code != 4033 || !discardsLaterPrompts) throw error
                 writeOnce(HermesCall.PromptRewind(runtime, text, before, true), runtime)
             }
-            if (reply["status"].text != "streaming") throw BotFailure.Unsupported
+            if (reply["status"].text != "streaming") unconfirmedHistoryWrite()
             history = history.cutting(before)
             updateMessages(state.value.messages.filterNot { it.id in cut })
             state.update { current -> current.copy(
@@ -258,7 +258,7 @@ class HermesChatTurnCoordinator(
         val runtime = connectedRuntime()
         val attempt = engine.generation
         val reply = writeOnce(HermesCall.SessionUndo(runtime), runtime)
-        val removed = reply["removed"].integer ?: throw BotFailure.Unsupported
+        val removed = reply["removed"].integer?.takeIf { it >= 0 } ?: unconfirmedHistoryWrite()
         if (removed == 0) return
         activity.newestTurnWasUndone()
         readNewestRows(attempt)
@@ -282,8 +282,8 @@ class HermesChatTurnCoordinator(
             "compressed" -> if (reply["removed"].integer == 0) return Compression.Unchanged(reason)
             "aborted" -> return Compression.Unchanged(reason)
             "pending" -> { compactionPending = true; return Compression.Unchanged(reason) }
-            null -> if (reply["lock_held"].flag == true) return Compression.Unchanged(reason) else throw BotFailure.Unsupported
-            else -> { history = HermesTranscriptHistory(); needsRebuild = true; throw BotFailure.Unsupported }
+            null -> if (reply["lock_held"].flag == true) return Compression.Unchanged(reason) else { history = HermesTranscriptHistory(); unconfirmedHistoryWrite() }
+            else -> { history = HermesTranscriptHistory(); unconfirmedHistoryWrite() }
         }
         compactionPending = false
         historyRefresh?.cancel()
@@ -311,7 +311,7 @@ class HermesChatTurnCoordinator(
             }
             count = HermesBranchCount.count(through, history.rows) ?: throw BranchRowGone()
         }
-        return writeOnce(HermesCall.SessionBranch(runtime, name, count), runtime)["stored_session_id"].text?.takeIf(String::isNotEmpty) ?: throw BotFailure.Unsupported
+        return writeOnce(HermesCall.SessionBranch(runtime, name, count), runtime)["stored_session_id"].text?.takeIf(String::isNotEmpty) ?: unconfirmedHistoryWrite()
     }
 
     private fun connectedRuntime(): String {
@@ -324,8 +324,13 @@ class HermesChatTurnCoordinator(
         try { return engine.write(call, engine.generation, runtime) { dispatched = true } }
         catch (error: Throwable) {
             if (HermesChatSideTasks.isReaped(error)) reattach()
+            if (dispatched && error !is BotFailure.Rejected && error !is BotSettingFailure.Rejected && error !is CancellationException && error != BotFailure.Stale) recoverAfterLostAnswer()
             throw if (dispatched) error else NotSent(error)
         }
+    }
+    private fun unconfirmedHistoryWrite(): Nothing {
+        recoverAfterLostAnswer()
+        throw BotSettingFailure.UnknownOutcome
     }
 
     private fun beginTurn(startedAt: Double?, prompt: String?, showsPrompt: Boolean = prompt != null || submittingSend) {

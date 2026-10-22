@@ -33,6 +33,7 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
 
     private val lock = Any()
     private val entries = HashMap<Key, Entry>()
+    private var generation = 0L
     private val _version = MutableStateFlow(0)
 
     /** Bumps on every change, so a composition can re-read [images] without holding bitmaps in state. */
@@ -49,7 +50,10 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
     }
 
     fun removeAll(connectionID: String) {
-        synchronized(lock) { entries.keys.removeAll { it.connectionID == connectionID } }
+        synchronized(lock) {
+            generation++
+            entries.keys.removeAll { it.connectionID == connectionID }
+        }
         bump()
     }
 
@@ -60,6 +64,7 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
      */
     fun setImage(image: Bitmap?, connectionID: String, profile: String, revision: Int?) {
         synchronized(lock) {
+            generation++
             val key = Key(connectionID, profile)
             if (image != null) entries[key] = Entry(revision, image) else entries.remove(key)
         }
@@ -81,7 +86,11 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
         onUpdate: () -> Unit,
     ) {
         val wanted = profiles.filter { it.hasAvatar }.map { it.id }.toSet()
-        synchronized(lock) { entries.keys.removeAll { it.connectionID != connectionID || it.profile !in wanted } }
+        val owner = synchronized(lock) {
+            generation++
+            entries.keys.removeAll { it.connectionID != connectionID || it.profile !in wanted }
+            generation
+        }
         bump()
         onUpdate()
         for (profile in profiles) {
@@ -100,6 +109,7 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
             val asset = withContext(Dispatchers.Default) { asset(reply, profile.isPhoto, decoder) }
             if (!currentCoroutineContext().isActive) return
             synchronized(lock) {
+                if (generation != owner) return
                 if (asset != null) entries[key] = Entry(profile.lookRevision, asset.image) else entries.remove(key)
             }
             bump()
@@ -139,10 +149,10 @@ class BotAvatarStore(private val decoder: BotAvatarDecoder = BotAvatarDecoder.An
         fun asset(reply: BotJSON, photo: Boolean, decoder: BotAvatarDecoder = BotAvatarDecoder.Android): Asset? {
             if (reply["found"].flag != true) return null
             val text = reply["data"].text ?: return null
-            if (text.toByteArray(Charsets.UTF_8).size > MAX_PAYLOAD_BYTES) return null
+            if (text.length > MAX_PAYLOAD_BYTES) return null
             val bytes = dataURLBytes(text) ?: return null
-            if (!photo && isDesktopFaceCopy(bytes)) return Asset.FaceCopy
             val bitmap = decoder.decode(bytes, MAX_PIXEL_SIZE) ?: return null
+            if (!photo && isDesktopFaceCopy(bytes)) return Asset.FaceCopy
             return Asset.Image(bitmap)
         }
 

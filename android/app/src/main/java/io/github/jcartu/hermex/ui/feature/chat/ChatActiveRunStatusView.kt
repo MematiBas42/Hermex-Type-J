@@ -41,7 +41,7 @@ fun ChatActiveRunStatusRow(
     val visible = state.isStreaming ||
         state.recoveryState != ActiveStreamRecoveryState.IDLE ||
         state.isStartingChat ||
-        state.isCancellingStream
+        state.isCancellingStream || waitingForInput
     if (!visible) return
 
     val runningToolName = state.liveToolCalls.lastOrNull { !it.isCompleted }?.displayName

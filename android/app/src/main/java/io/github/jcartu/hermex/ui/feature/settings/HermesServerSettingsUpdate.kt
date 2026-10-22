@@ -67,7 +67,10 @@ class HermesUpdateModel(
         }
         if (_state.value.run != null || task != null || _state.value.isChecking) return
         val client = makeClient() ?: return
-        val status = try { client.status() } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
+        val status = try { client.status() } catch (error: CancellationException) { throw error } catch (error: Exception) {
+            if (signInRejected(error) || error === BotFailure.Stale) return
+            null
+        }
         if (status?.running == true && _state.value.run == null && task == null) {
             _state.update { it.copy(run = HermesUpdateUiState.Run.Following(HermesUpdateMachine.started(status.receipt, status.pid, now()))) }
             follow(readFirst = false)
@@ -150,7 +153,7 @@ class HermesUpdateModel(
 
     private suspend fun start(client: HermesUpdateClient, baseline: HermesUpdateReceipt?): HermesUpdateStart {
         try { return client.start() } catch (error: Exception) {
-            if (error is CancellationException || error === BotFailure.Stale) throw error
+            if (error is CancellationException || error === BotFailure.Stale || signInRejected(error)) throw error
             val status = try { client.status() } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { null }
             if (status != null && (status.running || status.receipt?.let { it != baseline } == true)) return HermesUpdateStart.Started(status.pid)
             throw error
@@ -207,10 +210,15 @@ class HermesUpdateModel(
     } catch (error: Exception) {
         when {
             error === BotFailure.Stale -> null
+            // The root sign-in form owns recovery after rejection; never resend that saved secret.
+            error == BotFailure.Rejected(401) || error === BotFailure.SignInExpired || error === BotFailure.SignInChanged -> null
             error == BotFailure.Rejected(404) && read == HermesUpdateMachine.Read.STATUS -> HermesUpdateMachine.Event.StatusMissing
             else -> HermesUpdateMachine.Event.Unreachable
         }
     }
+
+    private fun signInRejected(error: Throwable): Boolean = error == BotFailure.Rejected(401) ||
+        error === BotFailure.SignInExpired || error === BotFailure.SignInChanged
 
     private fun message(error: Throwable): String {
         if (error is BotFailure.Rejected && error.code in 404..501 && error.code != 429)
