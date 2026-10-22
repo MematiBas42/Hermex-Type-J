@@ -660,6 +660,43 @@ class ChatDraftStore(
     }
 
     /**
+     * Reconciles a server-accepted composer submission against the draft context
+     * that owned it. Content is consumed only while it still exactly matches the
+     * captured submission; later text or quote edits survive. Attachment records
+     * are independently consumed by identity so files added while the request was
+     * pending are never touched.
+     *
+     * Returns the records removed from the draft so the caller can release their
+     * leases and delete copies after persisting this mutation.
+     */
+    suspend fun consumeAcceptedSubmission(
+        submittedText: String,
+        submittedQuotes: List<ComposerQuote>,
+        submittedAttachmentIds: Set<String>,
+        key: ChatDraftKey,
+    ): List<ChatDraftAttachment> {
+        loadIfNeeded()
+        var consumed = emptyList<ChatDraftAttachment>()
+        updateDraft(key) { draft ->
+            val contentUnchanged = draft.text == submittedText && draft.quotes == submittedQuotes
+            if (submittedAttachmentIds.isEmpty()) {
+                draft.copy(
+                    text = if (contentUnchanged) "" else draft.text,
+                    quotes = if (contentUnchanged) emptyList() else draft.quotes,
+                )
+            } else {
+                consumed = draft.attachments.filter { it.id in submittedAttachmentIds }
+                draft.copy(
+                    text = if (contentUnchanged) "" else draft.text,
+                    quotes = if (contentUnchanged) emptyList() else draft.quotes,
+                    attachments = draft.attachments.filterNot { it.id in submittedAttachmentIds },
+                )
+            }
+        }
+        return consumed
+    }
+
+    /**
      * Moves the entire draft (text, quotes, attachments, settings) between
      * contexts, e.g. a new-chat draft into its created session. The target's
      * existing draft is replaced only when the source holds one.

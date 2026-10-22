@@ -48,6 +48,7 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -66,7 +67,6 @@ import io.github.jcartu.hermex.data.ChatDraftKey
 import io.github.jcartu.hermex.data.ChatDraftSettings
 import io.github.jcartu.hermex.data.ChatDraftShareFile
 import io.github.jcartu.hermex.data.ChatDraftStore
-import io.github.jcartu.hermex.data.QueuedDraftMessage
 import io.github.jcartu.hermex.net.ChatSteerOutcome
 import io.github.jcartu.hermex.net.NetworkAvailability
 import kotlinx.coroutines.flow.drop
@@ -80,6 +80,36 @@ import kotlinx.coroutines.sync.withLock
 private data class QueuedSlashMessage(
     val text: String,
     val attachments: List<PendingAttachment>,
+    /** Composer revision whose submission placed this message in the queue. */
+    val submittedComposerRevision: Int? = null,
+)
+
+/** One immutable composer submission and the ownership of any run it starts. */
+private data class ComposerSubmission(
+    val id: Long,
+    val text: String,
+    val quotes: List<ComposerQuote>,
+    val attachments: List<PendingAttachment>,
+    val revision: Int,
+    val generation: Int,
+    var sourceKey: ChatDraftKey? = null,
+    var ownsRunStart: Boolean = false,
+)
+
+private data class SubmittedComposerContent(
+    val text: String,
+    val quotes: List<ComposerQuote>,
+)
+
+/**
+ * A definitively rejected submission retained while continuation discovery is
+ * only deciding where to navigate. [lastRetainedContent] makes repeated
+ * persistence idempotent while the visible composer still holds newer edits.
+ */
+private data class RejectedComposerSubmission(
+    val submitted: SubmittedComposerContent,
+    val attachments: List<ChatDraftAttachment>,
+    var lastRetainedContent: SubmittedComposerContent? = null,
 )
 
 /**
@@ -212,6 +242,11 @@ class ChatViewModel(
     private var newChatProfileName: String? = null
     private var compressionContinuationId: String? = null
     private val sealedSessions = mutableMapOf<ChatDraftKey, Pair<String?, String>>()
+    private var nextComposerSubmissionId = 0L
+    private var runStartOwnerId: Long? = null
+    private var runStartOwnerGeneration: Int? = null
+    private var runStartOwnerRevision: Int? = null
+    private val rejectedSubmissions = mutableMapOf<ChatDraftKey, RejectedComposerSubmission>()
     private val transcriptLoadMutex = Mutex()
     private var sendErrorIsFromRecovery = false
     private val composerFileListings = mutableMapOf<String, List<ComposerFileSuggestion>>()
@@ -675,48 +710,115 @@ class ChatViewModel(
 
     /** Port of `ChatView.sendDraftMessage(behavior:)`: capture the submission; never erase newer edits. */
     override fun send(mode: SendMode) {
-        if (_uiState.value.isStartingChat || _uiState.value.isClearingConversation) return
-        val submitted = _uiState.value
-        val revision = composerRevision
-        val generation = sessionGeneration
+        val state = _uiState.value
+        if (state.isClearingConversation) return
+        if (runStartOwnerGeneration == sessionGeneration && runStartOwnerRevision == composerRevision) return
+        val submission = ComposerSubmission(
+            id = ++nextComposerSubmissionId,
+            text = state.draft,
+            quotes = state.draftQuotes,
+            attachments = state.pendingAttachments,
+            revision = composerRevision,
+            generation = sessionGeneration,
+        )
+        // A run-start submission owns the composer before activation or lazy
+        // session creation can suspend. Streaming queue/steer submissions stay
+        // independent and therefore remain usable once a run is active.
+        if (state.activeStreamId == null && !claimRunStart(submission)) return
         clearSteerFailure()
         viewModelScope.launch {
-            activationJob?.join()
-            if (sessionGeneration != generation) return@launch
-            val sourceKey = draftKey
-            var successful = false
-            if (submitted.draftQuotes.isEmpty() && submitted.draft.trim().startsWith("/")) {
-                val command = SlashCommandExecutor.parse(submitted.draft)?.command
-                if (command?.handler == SlashCommandHandler.ClientSide(ClientSideAction.CLEAR) && clearConversationRefusal == null) {
-                    _uiState.update { it.copy(pendingClearConfirmation = true) }
-                    return@launch
+            try {
+                activationJob?.join()
+                if (sessionGeneration != submission.generation) return@launch
+                submission.sourceKey = draftKey
+                var successful = false
+                if (submission.quotes.isEmpty() && submission.text.trim().startsWith("/")) {
+                    val command = SlashCommandExecutor.parse(submission.text)?.command
+                    if (command?.handler == SlashCommandHandler.ClientSide(ClientSideAction.CLEAR) &&
+                        clearConversationRefusal == null
+                    ) {
+                        _uiState.update { it.copy(pendingClearConfirmation = true) }
+                        return@launch
+                    }
+                    val result = executeSlashCommandText(submission.text, submission)
+                    if (result != SlashCommandExecutionResult.SendAsMessage) {
+                        successful = result is SlashCommandExecutionResult.Executed ||
+                            result is SlashCommandExecutionResult.OpenedSession
+                        handleSlashExecutionResult(result, command)
+                        if (successful && composerRevision == submission.revision &&
+                            sessionGeneration == submission.generation
+                        ) {
+                            clearSubmittedComposer()
+                        }
+                        if (!successful) {
+                            retainAndOpenContinuation(
+                                submission,
+                                submission.sourceKey ?: draftKey,
+                                submission.generation,
+                            )
+                        }
+                        return@launch
+                    }
                 }
-                val result = executeSlashCommandText(submitted.draft)
-                if (result != SlashCommandExecutionResult.SendAsMessage) {
-                    successful = result is SlashCommandExecutionResult.Executed || result is SlashCommandExecutionResult.OpenedSession
-                    handleSlashExecutionResult(result, command)
-                    if (successful && composerRevision == revision && sessionGeneration == generation) clearSubmittedComposer()
-                    if (!successful) retainAndOpenContinuation(submitted, sourceKey, generation)
-                    return@launch
+                val outbound = ComposerQuote.message(submission.text, submission.quotes)
+                if (_uiState.value.activeStreamId != null) {
+                    val result = when (mode) {
+                        SendMode.DEFAULT, SendMode.STEER -> steerResponseFromSlashCommand(outbound, submission)
+                        SendMode.QUEUE -> queueMessageFromSlashCommand(outbound, submission)
+                        SendMode.STOP_AND_SEND -> interruptResponseFromSlashCommand(outbound, submission)
+                    }
+                    successful = result is SlashCommandExecutionResult.Executed
+                    if (result is SlashCommandExecutionResult.Unsupported &&
+                        _uiState.value.steerFailureMessage == null
+                    ) {
+                        _uiState.update { it.copy(sendErrorMessage = result.friendlyMessage) }
+                    }
+                } else {
+                    successful = sendMessage(outbound, submission)
                 }
+                if (sessionGeneration == submission.generation && successful &&
+                    composerRevision == submission.revision
+                ) {
+                    clearSubmittedComposer()
+                }
+                if (!successful) {
+                    retainAndOpenContinuation(
+                        submission,
+                        submission.sourceKey ?: draftKey,
+                        submission.generation,
+                    )
+                }
+                persistComposer()
+            } finally {
+                releaseRunStart(submission)
             }
-            val outbound = ComposerQuote.message(submitted.draft, submitted.draftQuotes)
-            if (_uiState.value.activeStreamId != null) {
-                val result = when (mode) {
-                    SendMode.DEFAULT, SendMode.STEER -> steerResponseFromSlashCommand(outbound)
-                    SendMode.QUEUE -> queueMessageFromSlashCommand(outbound)
-                    SendMode.STOP_AND_SEND -> interruptResponseFromSlashCommand(outbound)
-                }
-                successful = result is SlashCommandExecutionResult.Executed
-                if (result is SlashCommandExecutionResult.Unsupported && _uiState.value.steerFailureMessage == null) {
-                    _uiState.update { it.copy(sendErrorMessage = result.friendlyMessage) }
-                }
-            } else {
-                successful = sendMessage(outbound)
-            }
-            if (sessionGeneration == generation && successful && composerRevision == revision) clearSubmittedComposer()
-            if (!successful) retainAndOpenContinuation(submitted, sourceKey ?: draftKey, generation)
-            persistComposer()
+        }
+    }
+
+    private fun claimRunStart(submission: ComposerSubmission): Boolean {
+        if (submission.ownsRunStart) return true
+        if (submission.generation != sessionGeneration) return false
+        val ownerIsCurrent = runStartOwnerId != null && runStartOwnerGeneration == submission.generation
+        if (ownerIsCurrent || (_uiState.value.isStartingChat && runStartOwnerId != submission.id)) return false
+        runStartOwnerId = submission.id
+        runStartOwnerGeneration = submission.generation
+        submission.ownsRunStart = true
+        runStartOwnerRevision = submission.revision
+        _uiState.update { it.copy(isStartingChat = true) }
+        return true
+    }
+
+    private fun releaseRunStart(submission: ComposerSubmission) {
+        if (runStartOwnerId != submission.id) {
+            submission.ownsRunStart = false
+            return
+        }
+        runStartOwnerId = null
+        runStartOwnerGeneration = null
+        submission.ownsRunStart = false
+        runStartOwnerRevision = null
+        if (sessionGeneration == submission.generation) {
+            _uiState.update { it.copy(isStartingChat = false) }
         }
     }
 
@@ -1020,7 +1122,13 @@ class ChatViewModel(
     // MARK: - Sending (port of sendMessage/performChatSend)
 
     /** Port of `sendMessage(_:modelContext:)`. Creates the session lazily in new-chat mode. */
-    private suspend fun sendMessage(draft: String): Boolean {
+    private suspend fun sendMessage(
+        draft: String,
+        submission: ComposerSubmission? = null,
+    ): Boolean {
+        // A streaming submission can reach here after the previous run ended.
+        // Claim ownership before any lazy session creation in that case too.
+        if (submission != null && !submission.ownsRunStart && !claimRunStart(submission)) return false
         if (_uiState.value.isViewingCachedData) {
             _uiState.update { it.copy(sendErrorMessage = "Reconnect to the server to send a message.") }
             return false
@@ -1034,11 +1142,12 @@ class ChatViewModel(
         if (message.isEmpty() && _uiState.value.pendingAttachments.isEmpty()) return false
 
         val sessionId = ensureSessionForSend() ?: return false
-
+        val sourceKey = draftKey
+        submission?.sourceKey = sourceKey
         val localMessageId = "local-${UUID.randomUUID()}"
         val preparation = attachmentCoordinator.prepareForSend()
 
-        return performChatSend(
+        val accepted = performChatSend(
             sessionId = sessionId,
             localMessageId = localMessageId,
             displayContent = message.ifEmpty { preparation.chatMessageText(message) },
@@ -1046,7 +1155,17 @@ class ChatViewModel(
             messageAttachments = preparation.messageAttachments,
             apiPayloads = preparation.apiPayloads,
             attachmentsToRestoreOnFailure = preparation.attachments,
+            sourceKey = sourceKey,
+            submission = submission,
         )
+        if (accepted) {
+            if (submission != null && sourceKey != null) {
+                reconcileAcceptedSubmission(submission, sourceKey, preparation.attachments)
+            } else {
+                consumeSentAttachments(preparation.attachments)
+            }
+        }
+        return accepted
     }
 
     /** New-chat mode: create the session on first send (`POST /api/session/new`). */
@@ -1099,9 +1218,10 @@ class ChatViewModel(
         messageAttachments: List<MessageAttachment>,
         apiPayloads: List<kotlinx.serialization.json.JsonElement>?,
         attachmentsToRestoreOnFailure: List<PendingAttachment>,
+        sourceKey: ChatDraftKey?,
+        submission: ComposerSubmission?,
     ): Boolean {
         val generation = sessionGeneration
-        val sourceKey = draftKey
         val profile = currentProfile
         val sentAt = currentEpochSeconds()
         _uiState.update { it.copy(isStartingChat = true, sendErrorMessage = null) }
@@ -1150,7 +1270,8 @@ class ChatViewModel(
             if (generation != sessionGeneration) return true
             completeExplicitModelPickForChatStart(explicitModelPick)
             streamCoordinator.start(streamId, runStartedAt = response.runStartedAt(sentAt))
-            consumeSentAttachments(attachmentsToRestoreOnFailure)
+            // Durable submission reconciliation is source-keyed in [sendMessage];
+            // visible stream attachment stays scoped to the still-current chat.
             // The host already accepted this run; a local offer-storage failure cannot roll back its message.
             runCatching { onRunStarted() }
             return true
@@ -1162,7 +1283,7 @@ class ChatViewModel(
                 cacheCurrentMessages()
                 attachmentCoordinator.restorePendingAttachments(attachmentsToRestoreOnFailure)
             } else if (sourceKey != null) {
-                withContext(kotlinx.coroutines.NonCancellable + ioDispatcher) {
+                withContext(NonCancellable + ioDispatcher) {
                     val cached = cacheStore.cachedMessages(sourceKey.serverId, sessionId)
                     cacheStore.cacheMessages(cached.filterNot { it.messageId == localMessageId }, sourceKey.serverId, sessionId)
                 }
@@ -1171,6 +1292,13 @@ class ChatViewModel(
             if (apiError is ApiError.Http && apiError.statusCode == 409 && apiError.serverCode == "session_rotated") {
                 val target = apiError.sessionRotation?.continuationSessionId
                 if (sourceKey != null) sealedSessions[sourceKey] = target to apiError.message
+                if (sourceKey != null && submission != null) {
+                    retainRejectedSubmissionBeforeLookup(
+                        submission = submission,
+                        sourceKey = sourceKey,
+                        attachments = attachmentsToRestoreOnFailure.mapNotNull { it.draftRecord() },
+                    )
+                }
                 if (generation == sessionGeneration) {
                     compressionContinuationId = target
                     _uiState.update { it.copy(isCompressionRotated = true, sendErrorMessage = apiError.message) }
@@ -1192,7 +1320,11 @@ class ChatViewModel(
                 agentRuntimeStaleFixPrompt = apiError?.agentRuntimeStale?.fixPrompt) }
             return false
         } finally {
-            if (generation == sessionGeneration) _uiState.update { it.copy(isStartingChat = false) }
+            if (submission != null) {
+                releaseRunStart(submission)
+            } else if (generation == sessionGeneration) {
+                _uiState.update { it.copy(isStartingChat = false) }
+            }
         }
     }
 
@@ -1219,7 +1351,13 @@ class ChatViewModel(
     // MARK: - Slash command execution
 
     /** Port of `SlashCommandExecutor.execute(text:viewModel:)`. */
-    internal suspend fun executeSlashCommandText(text: String): SlashCommandExecutionResult {
+    internal suspend fun executeSlashCommandText(text: String): SlashCommandExecutionResult =
+        executeSlashCommandText(text, submission = null)
+
+    private suspend fun executeSlashCommandText(
+        text: String,
+        submission: ComposerSubmission?,
+    ): SlashCommandExecutionResult {
         val parsed = SlashCommandExecutor.parse(text) ?: return SlashCommandExecutionResult.SendAsMessage
         if (parsed.name.isEmpty()) return SlashCommandExecutionResult.NeedsSubArg
 
@@ -1233,18 +1371,24 @@ class ChatViewModel(
             if (parsed.name.lowercase() == "skill") {
                 return SlashCommandExecutionResult.Unsupported("Use `/skills [query]` to search skills.")
             }
-            executeSkillShortcutCommand(name = parsed.name, args = parsed.args)?.let { return it }
+            executeSkillShortcutCommand(parsed.name, parsed.args, submission)?.let { return it }
             // Match WebUI: let the agent/runtime handle unknown, non-blocked slash text.
             return SlashCommandExecutionResult.SendAsMessage
         }
 
-        return executeSlashCommand(command, parsed.args)
+        return executeSlashCommand(command, parsed.args, submission)
     }
 
     /** Port of `executeSlashCommand(_:args:)`. */
     internal suspend fun executeSlashCommand(
         command: SlashCommand,
         args: String = "",
+    ): SlashCommandExecutionResult = executeSlashCommand(command, args, submission = null)
+
+    private suspend fun executeSlashCommand(
+        command: SlashCommand,
+        args: String,
+        submission: ComposerSubmission?,
     ): SlashCommandExecutionResult = when (val handler = command.handler) {
         is SlashCommandHandler.ClientSide -> when (handler.action) {
             ClientSideAction.CLEAR -> clearConversationFromSlashCommand()
@@ -1259,7 +1403,7 @@ class ChatViewModel(
             ClientSideAction.HELP -> SlashCommandExecutionResult.Executed(message = SLASH_COMMAND_HELP_TEXT)
         }
 
-        is SlashCommandHandler.ServerSide -> executeServerSideSlashCommand(handler.action, args)
+        is SlashCommandHandler.ServerSide -> executeServerSideSlashCommand(handler.action, args, submission)
 
         SlashCommandHandler.Unsupported ->
             SlashCommandExecutionResult.Unsupported(SlashCommandExecutor.unsupportedMessage(command.name))
@@ -1268,20 +1412,21 @@ class ChatViewModel(
     private suspend fun executeServerSideSlashCommand(
         action: ServerSideAction,
         args: String,
+        submission: ComposerSubmission?,
     ): SlashCommandExecutionResult = when (action) {
         ServerSideAction.MODEL -> switchModelFromSlashCommand(args)
         ServerSideAction.WORKSPACE -> switchWorkspaceFromSlashCommand(args)
         ServerSideAction.REASONING -> switchReasoningFromSlashCommand(args)
         ServerSideAction.TITLE -> renameSessionFromSlashCommand(args)
         ServerSideAction.PERSONALITY -> setPersonalityFromSlashCommand(args)
-        ServerSideAction.SKILLS -> searchSkillsFromSlashCommand(args)
+        ServerSideAction.SKILLS -> searchSkillsFromSlashCommand(args, submission)
         ServerSideAction.BRANCH -> branchSessionFromSlashCommand(args)
         ServerSideAction.UNDO -> undoLastExchangeFromSlashCommand()
         ServerSideAction.RETRY -> retryLastTurnFromSlashCommand()
         ServerSideAction.COMPRESS -> compressSessionFromSlashCommand(args)
-        ServerSideAction.QUEUE -> queueMessageFromSlashCommand(args)
-        ServerSideAction.STEER -> steerResponseFromSlashCommand(args)
-        ServerSideAction.INTERRUPT -> interruptResponseFromSlashCommand(args)
+        ServerSideAction.QUEUE -> queueMessageFromSlashCommand(args, submission)
+        ServerSideAction.STEER -> steerResponseFromSlashCommand(args, submission)
+        ServerSideAction.INTERRUPT -> interruptResponseFromSlashCommand(args, submission)
         ServerSideAction.STATUS -> SlashCommandExecutionResult.Executed(message = statusMessageFromSlashCommand())
         ServerSideAction.BTW -> askBtwFromSlashCommand(args)
         ServerSideAction.BACKGROUND -> startBackgroundFromSlashCommand(args)
@@ -1289,14 +1434,17 @@ class ChatViewModel(
     }
 
     /** Port of `queueMessageFromSlashCommand(_:)`. */
-    private suspend fun queueMessageFromSlashCommand(args: String): SlashCommandExecutionResult {
+    private suspend fun queueMessageFromSlashCommand(
+        args: String,
+        submission: ComposerSubmission? = null,
+    ): SlashCommandExecutionResult {
         val message = args.trim()
         if (message.isEmpty()) {
             return SlashCommandExecutionResult.Unsupported("Usage: /queue <message>")
         }
 
         if (_uiState.value.activeStreamId == null) {
-            val sent = sendMessage(message)
+            val sent = sendMessage(message, submission)
             return if (sent) {
                 SlashCommandExecutionResult.Executed(message = null)
             } else {
@@ -1306,12 +1454,19 @@ class ChatViewModel(
             }
         }
 
-        enqueueQueuedSlashMessage(message, attachmentCoordinator.consumePendingAttachments())
+        enqueueQueuedSlashMessage(
+            message,
+            attachmentCoordinator.consumePendingAttachments(),
+            submittedComposerRevision = submission?.revision,
+        )
         return SlashCommandExecutionResult.Executed(message = null)
     }
 
     /** Port of `steerResponseFromSlashCommand(_:)` — also the streaming-send default path. */
-    private suspend fun steerResponseFromSlashCommand(args: String): SlashCommandExecutionResult {
+    private suspend fun steerResponseFromSlashCommand(
+        args: String,
+        submission: ComposerSubmission? = null,
+    ): SlashCommandExecutionResult {
         val message = args.trim()
         if (message.isEmpty()) {
             return SlashCommandExecutionResult.Unsupported("Usage: /steer <message>")
@@ -1321,7 +1476,7 @@ class ChatViewModel(
             ?: return SlashCommandExecutionResult.Unsupported("The server did not provide a session ID.")
 
         if (_uiState.value.activeStreamId == null) {
-            val sent = sendMessage(message)
+            val sent = sendMessage(message, submission)
             return if (sent) {
                 SlashCommandExecutionResult.Executed(message = null)
             } else {
@@ -1359,9 +1514,13 @@ class ChatViewModel(
                 _uiState.update { it.copy(steeringConfirmation = "Steering hint delivered.") }
                 consumeSentAttachments(files)
             }
-            ChatSteerOutcome.ServerQueued -> enqueueQueuedSlashMessage(message, files)
+            ChatSteerOutcome.ServerQueued -> enqueueQueuedSlashMessage(
+                message, files, submittedComposerRevision = submission?.revision,
+            )
             else -> {
-                enqueueQueuedSlashMessage(message, files, atFront = true)
+                enqueueQueuedSlashMessage(
+                    message, files, atFront = true, submittedComposerRevision = submission?.revision,
+                )
                 steeredStreamId?.let { streamCoordinator.refreshTranscriptIfCompleted(it) }
             }
         }
@@ -1370,14 +1529,17 @@ class ChatViewModel(
     }
 
     /** Port of `interruptResponseFromSlashCommand(_:)`. */
-    private suspend fun interruptResponseFromSlashCommand(args: String): SlashCommandExecutionResult {
+    private suspend fun interruptResponseFromSlashCommand(
+        args: String,
+        submission: ComposerSubmission? = null,
+    ): SlashCommandExecutionResult {
         val message = args.trim()
         if (message.isEmpty()) {
             return SlashCommandExecutionResult.Unsupported("Usage: /interrupt <message>")
         }
 
         if (_uiState.value.activeStreamId == null) {
-            val sent = sendMessage(message)
+            val sent = sendMessage(message, submission)
             return if (sent) {
                 SlashCommandExecutionResult.Executed(message = null)
             } else {
@@ -1387,7 +1549,12 @@ class ChatViewModel(
             }
         }
 
-        enqueueQueuedSlashMessage(message, attachmentCoordinator.consumePendingAttachments(), atFront = true)
+        enqueueQueuedSlashMessage(
+            message,
+            attachmentCoordinator.consumePendingAttachments(),
+            atFront = true,
+            submittedComposerRevision = submission?.revision,
+        )
         cancelActiveStream()
 
         if (_uiState.value.activeStreamId != null) {
@@ -1812,11 +1979,14 @@ class ChatViewModel(
     }
 
     /** Port of `searchSkillsFromSlashCommand(_:)`. */
-    private suspend fun searchSkillsFromSlashCommand(args: String): SlashCommandExecutionResult = try {
+    private suspend fun searchSkillsFromSlashCommand(
+        args: String,
+        submission: ComposerSubmission?,
+    ): SlashCommandExecutionResult = try {
         val suggestions = skillSuggestionsForSlashCommand()
         val invocation = SlashSkillFormatter.invocation(args, suggestions)
         if (invocation != null) {
-            val sent = sendMessage(SlashSkillFormatter.messageText(invocation))
+            val sent = sendMessage(SlashSkillFormatter.messageText(invocation), submission)
             if (sent) {
                 SlashCommandExecutionResult.Executed(message = null)
             } else {
@@ -1837,6 +2007,12 @@ class ChatViewModel(
     internal suspend fun executeSkillShortcutCommand(
         name: String,
         args: String,
+    ): SlashCommandExecutionResult? = executeSkillShortcutCommand(name, args, submission = null)
+
+    private suspend fun executeSkillShortcutCommand(
+        name: String,
+        args: String,
+        submission: ComposerSubmission?,
     ): SlashCommandExecutionResult? = try {
         val suggestions = skillSuggestionsForSlashCommand()
         val skill = SlashSkillFormatter.skill(name, suggestions)
@@ -1848,7 +2024,7 @@ class ChatViewModel(
                 SlashCommandExecutionResult.Executed(message = SlashSkillFormatter.detailMessage(skill))
             } else {
                 val commandText = "/${skill.slashName} $message"
-                val sent = sendMessage(commandText)
+                val sent = sendMessage(commandText, submission)
                 if (sent) {
                     SlashCommandExecutionResult.Executed(message = null)
                 } else {
@@ -2234,8 +2410,13 @@ class ChatViewModel(
         text: String,
         attachments: List<PendingAttachment>,
         atFront: Boolean = false,
+        submittedComposerRevision: Int? = null,
     ): Int {
-        val message = QueuedSlashMessage(text = text, attachments = attachments)
+        val message = QueuedSlashMessage(
+            text = text,
+            attachments = attachments,
+            submittedComposerRevision = submittedComposerRevision,
+        )
         if (atFront) {
             queuedSlashMessages.add(0, message)
         } else {
@@ -2351,14 +2532,42 @@ class ChatViewModel(
     private fun persistComposer() {
         val key = draftKey ?: return
         val state = _uiState.value
-        drafts.setContent(state.draft, state.draftQuotes, key)
+        val rejection = rejectedSubmissions[key]
+        if (rejection == null) {
+            drafts.setContent(state.draft, state.draftQuotes, key)
+        } else {
+            val retained = rejection.retain(
+                SubmittedComposerContent(text = state.draft, quotes = state.draftQuotes),
+            )
+            drafts.setContent(retained.text, retained.quotes, key)
+        }
         val records = state.pendingAttachments.mapNotNull { pending -> pending.draftRecord() }
         // Keep records whose re-upload has not succeeded yet; a send/removal explicitly removes them.
         val seen = records.mapTo(HashSet()) { it.id }
-        draftRecords = records + draftRecords.filter { it.id !in seen }
+        val retainedRecords = draftRecords.filter { seen.add(it.id) }
+        // Continuation discovery is navigation-only. Until it resolves, the
+        // rejected submission's files stay owned even as newer work is staged.
+        val rejectedRecords = rejection?.attachments.orEmpty().filter { seen.add(it.id) }
+        draftRecords = records + retainedRecords + rejectedRecords
         drafts.setAttachments(draftRecords, key)
         drafts.setSettings(ChatDraftSettings(currentModel, currentModelProvider, selectedReasoningEffort,
             requestProfileName, currentWorkspace), key)
+    }
+
+    private fun RejectedComposerSubmission.retain(
+        current: SubmittedComposerContent,
+    ): SubmittedComposerContent {
+        if (current == lastRetainedContent) return current
+        val recovered = SubmittedComposerContent(
+            text = if (current.text.isEmpty() || current.text == submitted.text) {
+                submitted.text
+            } else {
+                listOf(submitted.text, current.text).filter { it.isNotEmpty() }.joinToString("\n\n")
+            },
+            quotes = submitted.quotes + current.quotes.filter { it !in submitted.quotes },
+        )
+        lastRetainedContent = recovered
+        return recovered
     }
 
     private fun PendingAttachment.draftRecord(): ChatDraftAttachment? = draftFileName?.let {
@@ -2413,9 +2622,26 @@ class ChatViewModel(
         val queued = queuedSlashMessages.toList()
         queuedSlashMessages.clear()
         val current = _uiState.value
-        val text = (queued.map { it.text } + current.draft).filter { it.isNotEmpty() }.joinToString("\n\n")
+        // A pending queue/interrupt still owns the unchanged composer text. Its
+        // queued form replaces that text instead of being appended to itself.
+        val queuedCurrentSubmission = queued.any {
+            it.submittedComposerRevision != null && it.submittedComposerRevision == composerRevision
+        }
+        val retainedDraft = current.draft.takeUnless { queuedCurrentSubmission }.orEmpty()
+        val retainedQuotes = current.draftQuotes.takeUnless { queuedCurrentSubmission }.orEmpty()
+        val text = (queued.map { it.text } + retainedDraft).filter { it.isNotEmpty() }.joinToString("\n\n")
         attachmentCoordinator.restorePendingAttachments(queued.flatMap { it.attachments })
-        _uiState.update { it.copy(draft = text, draftTokens = parseComposerTokens(text), queuedMessagesReceipt = null) }
+        // Parking is a composer mutation even though it was not a keystroke.
+        // Any in-flight submission captured the prior revision and may not clear it.
+        composerRevision += 1
+        _uiState.update {
+            it.copy(
+                draft = text,
+                draftTokens = parseComposerTokens(text),
+                draftQuotes = retainedQuotes,
+                queuedMessagesReceipt = null,
+            )
+        }
         persistComposer()
     }
 
@@ -2430,6 +2656,87 @@ class ChatViewModel(
                 attachmentLease.files.remove(file)
                 drafts.deleteAttachmentIfUnreferenced(file)
             }
+        }
+    }
+
+    /**
+     * The host accepted [submission], so consume only the content and files it
+     * carried from its captured draft context. This runs even when navigation
+     * has made another composer current.
+     */
+    private suspend fun reconcileAcceptedSubmission(
+        submission: ComposerSubmission,
+        sourceKey: ChatDraftKey,
+        attachments: List<PendingAttachment>,
+    ) {
+        if (draftKey == sourceKey &&
+            sessionGeneration == submission.generation &&
+            composerRevision == submission.revision
+        ) {
+            // Make stale lifecycle persistence observe the accepted ownership
+            // before the durable flush below can suspend.
+            _uiState.update { it.copy(draft = "", draftTokens = emptyList(), draftQuotes = emptyList()) }
+        }
+        val ids = if (attachments.isEmpty()) emptySet() else attachments.mapTo(HashSet()) { it.id }
+        val consumedRecords = withContext(NonCancellable) {
+            val consumed = drafts.consumeAcceptedSubmission(
+                submittedText = submission.text,
+                submittedQuotes = submission.quotes,
+                submittedAttachmentIds = ids,
+                key = sourceKey,
+            )
+            // The accepted content must not reappear after a process death.
+            runCatching { drafts.flush() }
+            consumed
+        }
+        rejectedSubmissions.remove(sourceKey)
+        if (attachments.isEmpty()) return
+        if (draftKey == sourceKey) {
+            draftRecords = draftRecords.filterNot { it.id in ids }
+            attachmentCoordinator.replacePendingAttachments(
+                _uiState.value.pendingAttachments.filterNot { it.id in ids },
+            )
+        }
+
+        val files = LinkedHashSet<String>()
+        files += consumedRecords.mapNotNull { it.file }
+        files += attachments.mapNotNull { it.draftFileName }
+        for (attachment in attachments) {
+            attachmentLease.slotIds.remove(attachment.id)
+            attachmentLease.filesByAttachmentId.remove(attachment.id)
+        }
+        attachmentLease.files.removeAll(files)
+        withContext(NonCancellable) {
+            for (file in files) runCatching { drafts.deleteAttachmentIfUnreferenced(file) }
+        }
+    }
+
+    /**
+     * A rotation response definitively rejected the POST. Persist its complete
+     * source-owned composer before the continuation GET, which is only a
+     * navigation lookup and may be cancelled when the ViewModel is cleared.
+     */
+    private suspend fun retainRejectedSubmissionBeforeLookup(
+        submission: ComposerSubmission,
+        sourceKey: ChatDraftKey,
+        attachments: List<ChatDraftAttachment>,
+    ) {
+        val rejected = rejectedSubmissions.getOrPut(sourceKey) {
+            RejectedComposerSubmission(
+                submitted = SubmittedComposerContent(submission.text, submission.quotes),
+                attachments = attachments,
+            )
+        }
+        withContext(NonCancellable) {
+            val stored = drafts.draft(sourceKey) ?: ChatDraft()
+            val recovered = rejected.retain(
+                SubmittedComposerContent(stored.text, stored.quotes),
+            )
+            drafts.setContent(recovered.text, recovered.quotes, sourceKey)
+            drafts.retainRejectedAttachments(rejected.attachments, sourceKey)
+            // Do not begin navigation discovery until the rejected input has a
+            // durable source draft.
+            runCatching { drafts.flush() }
         }
     }
 
@@ -2468,19 +2775,39 @@ class ChatViewModel(
     private fun String?.orDefaultProfile(): String = this ?: "default"
 
     /** Rejected input is restored before handoff; an existing destination draft is never overwritten. */
-    private suspend fun retainAndOpenContinuation(submitted: ChatUiState, source: ChatDraftKey?, generation: Int) {
+    private suspend fun retainAndOpenContinuation(
+        submission: ComposerSubmission,
+        source: ChatDraftKey?,
+        generation: Int,
+    ) {
         source ?: return
         if (source !in sealedSessions) return
-        val current = if (generation == sessionGeneration) _uiState.value else null
-        val original = drafts.draft(source) ?: ChatDraft()
-        val text = current?.draft ?: original.text
-        val recovered = if (text.isEmpty() || text == submitted.draft) submitted.draft
-            else listOf(submitted.draft, text).filter { it.isNotEmpty() }.joinToString("\n\n")
-        val quotes = submitted.draftQuotes + (current?.draftQuotes ?: original.quotes).filter { it !in submitted.draftQuotes }
-        drafts.setContent(recovered, quotes, source)
-        drafts.retainRejectedAttachments(submitted.pendingAttachments.mapNotNull { it.draftRecord() }, source)
-        if (generation != sessionGeneration) return
-        _uiState.update { it.copy(draft = recovered, draftTokens = parseComposerTokens(recovered), draftQuotes = quotes) }
+        val rejected = rejectedSubmissions[source] ?: RejectedComposerSubmission(
+            submitted = SubmittedComposerContent(submission.text, submission.quotes),
+            attachments = submission.attachments.mapNotNull { it.draftRecord() },
+        )
+        val visible = _uiState.value.takeIf { draftKey == source }
+        val stored = if (visible == null) drafts.draft(source) ?: ChatDraft() else null
+        val recovered = rejected.retain(
+            SubmittedComposerContent(
+                text = visible?.draft ?: stored!!.text,
+                quotes = visible?.draftQuotes ?: stored!!.quotes,
+            ),
+        )
+        withContext(NonCancellable) {
+            drafts.setContent(recovered.text, recovered.quotes, source)
+            drafts.retainRejectedAttachments(rejected.attachments, source)
+            runCatching { drafts.flush() }
+        }
+        if (rejectedSubmissions[source] === rejected) rejectedSubmissions.remove(source)
+        if (generation != sessionGeneration || draftKey != source) return
+        _uiState.update {
+            it.copy(
+                draft = recovered.text,
+                draftTokens = parseComposerTokens(recovered.text),
+                draftQuotes = recovered.quotes,
+            )
+        }
         persistComposer()
         val continuation = _uiState.value.compressionContinuation ?: return
         val target = ChatDraftKey(source.serverId, continuation.sessionId ?: return)
