@@ -3,21 +3,14 @@ package io.github.jcartu.hermex.ui.feature.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import io.github.jcartu.hermex.core.crypto.StringCipher
-import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
-import io.github.jcartu.hermex.model.DefaultModelResponse
-import io.github.jcartu.hermex.model.ProfileSummary
-import io.github.jcartu.hermex.model.ProfilesResponse
-import io.github.jcartu.hermex.model.ModelsResponse
-import io.github.jcartu.hermex.model.SettingsResponse
-import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
-import io.github.jcartu.hermex.ui.feature.models.DefaultProfileSelection
-import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
-import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
-import io.mockk.coEvery
-import io.mockk.mockk
+import io.github.jcartu.hermex.core.prefs.ThinkingAndToolsMode
+import io.github.jcartu.hermex.core.security.AppLock
+import io.github.jcartu.hermex.ui.feature.onboarding.AuthTestFixture
+import io.github.jcartu.hermex.ui.theme.Palette
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,16 +36,10 @@ class SettingsViewModelTest {
     @get:Rule
     val tmpFolder = TemporaryFolder()
 
-    private lateinit var api: HermesApi
+    private lateinit var prefs: DataStore<Preferences>
+    private lateinit var visibility: DataStore<Preferences>
     private lateinit var settingsRepository: SettingsRepository
-    private lateinit var visibilitySettings: VisibilitySettings
-    private lateinit var serverConfig: ServerConfigRepository
-    private lateinit var authManager: AuthManager
-
-    private class FakeCipher : StringCipher {
-        override fun encrypt(plainText: String) = plainText
-        override fun decrypt(cipherText: String) = cipherText
-    }
+    private lateinit var fixture: AuthTestFixture
 
     private fun dataStore(name: String): DataStore<Preferences> {
         val scope = CoroutineScope(UnconfinedTestDispatcher() + Job())
@@ -63,11 +50,10 @@ class SettingsViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        api = mockk()
-        settingsRepository = SettingsRepository(dataStore("settings"))
-        visibilitySettings = VisibilitySettings(dataStore("visibility"))
-        serverConfig = ServerConfigRepository(dataStore("server"), FakeCipher())
-        authManager = AuthManager(api, serverConfig, sessionResetter = {})
+        prefs = dataStore("settings")
+        visibility = dataStore("visibility")
+        settingsRepository = SettingsRepository(prefs, visibility)
+        fixture = AuthTestFixture(tmpFolder)
     }
 
     @After
@@ -75,247 +61,132 @@ class SettingsViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun stubHealthyServer(
-        version: String? = "0.51.85",
-        defaultModel: String? = "gpt-5",
-        activeProfile: String? = "default",
-    ) {
-        coEvery { api.settings() } returns SettingsResponse(webuiVersion = version)
-        coEvery { api.models() } returns ModelsResponse(defaultModel = defaultModel)
-        coEvery { api.profiles() } returns ProfilesResponse(
-            profiles = listOf(ProfileSummary(name = activeProfile, isActive = true)),
-            active = activeProfile,
-        )
-    }
-
     private fun viewModel(): SettingsViewModel = SettingsViewModel(
-        api = api,
         settingsRepository = settingsRepository,
-        visibilitySettings = visibilitySettings,
-        serverConfig = serverConfig,
-        authManager = authManager,
+        authManager = fixture.manager(),
+        appLock = AppLock(settingsRepository, fixture.scope),
     )
 
     @Test
-    fun `load populates server version model and profile`() = runBlocking {
-        serverConfig.save("https://server.example.com", "pw")
-        stubHealthyServer()
-
-        val state = viewModel().uiState.value
-
-        assertEquals("0.51.85", state.serverVersion)
-        assertNull(state.serverSettingsError)
-        assertEquals("Connected", state.serverStatusLabel)
-        assertTrue(state.isServerStatusHealthy)
-        assertEquals("gpt-5", state.defaultModel)
-        assertEquals("gpt-5", state.defaultModelLabel)
-        assertEquals("default", state.defaultProfileName)
-        assertEquals("Default", state.defaultProfileLabel)
-        assertEquals("https://server.example.com", state.serverBaseUrl)
+    fun `settings decode with every key missing`() = runBlocking {
+        val decoded = settingsRepository.settings.first()
+        assertEquals(SettingsRepository.Settings(), decoded)
+        assertEquals(Palette.DEFAULT, decoded.palette)
+        assertEquals(ThinkingAndToolsMode.COLLAPSED, decoded.thinkingAndToolsMode)
+        assertTrue(decoded.foldsSettledTurns)
+        assertFalse(decoded.dismissKeyboardAfterSend)
+        assertFalse(decoded.readCompletedResponseFromStart)
+        assertFalse(decoded.appLockEnabled)
+        assertTrue(decoded.notifyReplies && decoded.notifyApprovals && decoded.notifyQuestions && decoded.notifyFailedRuns)
+        assertTrue(decoded.showsTasksEntry && decoded.showsKanbanEntry && decoded.showsActiveProfileEntry && decoded.showsGitActions)
     }
 
     @Test
-    fun `unreachable server degrades to unavailable`() {
-        coEvery { api.settings() } throws ApiError.Network(RuntimeException("offline"))
-        coEvery { api.models() } throws ApiError.Network(RuntimeException("offline"))
-        coEvery { api.profiles() } throws ApiError.Network(RuntimeException("offline"))
+    fun `settings tolerate unknown raw values and keep upgraded files`() = runBlocking {
+        prefs.edit {
+            it[stringPreferencesKey("appTheme")] = "SEPIA"
+            it[stringPreferencesKey("sessionChat.completionPosition")] = "sideways"
+            it[stringPreferencesKey("appPalette")] = "nonsense"
+        }
+        // The fork's older visibility file keeps its choices.
+        visibility.edit { it[booleanPreferencesKey("sectionVisibility.tasks")] = false }
 
-        val state = viewModel().uiState.value
-
-        assertEquals("Unavailable", state.serverSettingsError)
-        assertEquals("Unavailable", state.serverStatusLabel)
-        assertFalse(state.isServerStatusHealthy)
-        assertNull(state.defaultModel)
-        assertEquals("Not set", state.defaultModelLabel)
-        assertEquals("Not set", state.defaultProfileLabel)
+        val decoded = settingsRepository.settings.first()
+        assertEquals(SettingsRepository.Theme.SYSTEM, decoded.theme)
+        assertFalse(decoded.readCompletedResponseFromStart)
+        assertEquals(Palette.DEFAULT, decoded.palette)
+        assertFalse(decoded.showsTasksEntry)
+        assertTrue(decoded.showsSkillsEntry)
     }
 
     @Test
-    fun `server without a version reports unknown`() {
-        stubHealthyServer(version = null)
-
-        val state = viewModel().uiState.value
-
-        assertEquals("Unknown", state.serverSettingsError)
-        assertNull(state.serverVersion)
-        assertFalse(state.isServerStatusHealthy)
-    }
-
-    @Test
-    fun `a 401 during load demotes the auth state`() = runBlocking {
-        serverConfig.save("https://server.example.com", "pw")
-        coEvery { api.settings() } throws ApiError.Unauthorized
-        coEvery { api.models() } throws ApiError.Unauthorized
-        coEvery { api.profiles() } throws ApiError.Unauthorized
-
+    fun `thinking and tools mode maps to and from the three legacy keys`() = runBlocking {
         val vm = viewModel()
 
-        assertTrue(authManager.state.value is AuthState.LoggedOut)
-        assertEquals("Unavailable", vm.uiState.value.serverSettingsError)
+        vm.setThinkingAndToolsMode(ThinkingAndToolsMode.EXPANDED)
+        var persisted = settingsRepository.settings.first()
+        assertTrue(persisted.showsThinkingAndToolCards)
+        assertTrue(persisted.thinkingCardsStartExpanded && persisted.toolCardsStartExpanded)
+        assertEquals(ThinkingAndToolsMode.EXPANDED, persisted.thinkingAndToolsMode)
+
+        vm.setThinkingAndToolsMode(ThinkingAndToolsMode.HIDDEN)
+        persisted = settingsRepository.settings.first()
+        assertFalse(persisted.showsThinkingAndToolCards)
+        assertEquals(ThinkingAndToolsMode.HIDDEN, persisted.thinkingAndToolsMode)
+
+        vm.setThinkingAndToolsMode(ThinkingAndToolsMode.COLLAPSED)
+        persisted = settingsRepository.settings.first()
+        assertTrue(persisted.showsThinkingAndToolCards)
+        assertFalse(persisted.thinkingCardsStartExpanded || persisted.toolCardsStartExpanded)
+        assertEquals(ThinkingAndToolsMode.COLLAPSED, persisted.thinkingAndToolsMode)
+
+        // Legacy keys written by an older build read as the right mode (iOS migration rules).
+        settingsRepository.setShowsThinkingAndToolCards(true)
+        settingsRepository.setToolCardsStartExpanded(true)
+        assertEquals(ThinkingAndToolsMode.EXPANDED, settingsRepository.settings.first().thinkingAndToolsMode)
+        settingsRepository.setShowsThinkingAndToolCards(false)
+        assertEquals(ThinkingAndToolsMode.HIDDEN, settingsRepository.settings.first().thinkingAndToolsMode)
+        assertEquals(ThinkingAndToolsMode.COLLAPSED, ThinkingAndToolsMode.fromToggles(true, false, false))
     }
 
     @Test
-    fun `theme and toggle changes persist through the repository`() = runBlocking {
-        stubHealthyServer()
+    fun `new keys persist through the view model`() = runBlocking {
         val vm = viewModel()
 
         vm.setTheme(SettingsRepository.Theme.DARK)
-        vm.setHapticsEnabled(false)
-        vm.setWrapsCodeBlockLines(true)
-        vm.setRtlChatLayoutEnabled(true)
+        vm.setDismissKeyboardAfterSend(true)
+        vm.setReadCompletedResponseFromStart(true)
+        vm.setFoldsSettledTurns(false)
+        vm.setNotifyFailedRuns(false)
+        vm.setShowsKanbanEntry(false)
+        vm.setShowsGitActions(false)
+        vm.setShowsSessionRowStates(false)
 
         val persisted = settingsRepository.settings.first()
         assertEquals(SettingsRepository.Theme.DARK, persisted.theme)
-        assertFalse(persisted.hapticsEnabled)
-        assertTrue(persisted.wrapsCodeBlockLines)
-        assertTrue(persisted.rtlChatLayoutEnabled)
-
+        assertTrue(persisted.dismissKeyboardAfterSend)
+        assertTrue(persisted.readCompletedResponseFromStart)
+        assertFalse(persisted.foldsSettledTurns)
+        assertFalse(persisted.notifyFailedRuns)
+        assertTrue(persisted.notifyReplies)
+        assertFalse(persisted.showsKanbanEntry)
+        assertFalse(persisted.showsGitActions)
+        assertFalse(persisted.showsSessionRowStates)
         // The ViewModel mirrors the repository stream.
-        val state = vm.uiState.value
-        assertEquals(SettingsRepository.Theme.DARK, state.settings.theme)
-        assertFalse(state.settings.hapticsEnabled)
+        assertEquals(SettingsRepository.Theme.DARK, vm.uiState.value.settings.theme)
     }
 
     @Test
-    fun `accent color persists`() = runBlocking {
-        stubHealthyServer()
-        val vm = viewModel()
+    fun `accent color edits the active server and mirrors into the global key`() = runBlocking {
+        fixture.stubHealthy("https://a.example.com", authEnabled = false)
+        val auth = fixture.manager()
+        auth.configure("a.example.com", "")
+        val vm = SettingsViewModel(settingsRepository, auth, AppLock(settingsRepository, fixture.scope))
 
         vm.setHeaderLogoColor("#5B7CFF")
 
-        assertEquals(
-            "#5B7CFF",
-            settingsRepository.settings.first().headerLogoColorHex,
-        )
-        assertEquals("Blue", HeaderLogoColor.displayName(vm.uiState.value.settings.headerLogoColorHex))
+        assertEquals("#5B7CFF", auth.servers.value.single().headerLogoColorHex)
+        assertEquals("#5B7CFF", fixture.identityDefaults.values["headerLogoColorHex"])
+        assertEquals("Blue", HeaderLogoColor.displayName("#5B7CFF"))
     }
 
     @Test
-    fun `section visibility persists under the swift keys`() = runBlocking {
-        stubHealthyServer()
+    fun `navigation flags round trip`() = runBlocking {
         val vm = viewModel()
+        vm.openPage(SettingsPage.Server("https://a.example.com"))
+        vm.openDetail(SettingsDetail.PROVIDERS)
+        assertEquals(SettingsDetail.PROVIDERS, vm.uiState.value.detail)
+        vm.closeDetail()
+        assertNull(vm.uiState.value.detail)
 
-        vm.setSectionVisible(VisibilitySettings.Section.TASKS, false)
-        vm.setSectionVisible(VisibilitySettings.Section.INSIGHTS, false)
-
-        val persisted = visibilitySettings.state.first()
-        assertFalse(persisted.tasks)
-        assertFalse(persisted.insights)
-        assertTrue(persisted.skills)
-        assertTrue(persisted.memory)
-        assertTrue(persisted.projects)
-
-        val state = vm.uiState.value
-        assertFalse(state.visibility.tasks)
-        assertFalse(state.visibility.insights)
-    }
-
-    @Test
-    fun `saveDefaultModel commits only on ok`() {
-        stubHealthyServer(defaultModel = "old-model")
-        coEvery { api.saveDefaultModel("new-model") } returns DefaultModelResponse(ok = true)
-
-        val vm = viewModel()
-        vm.saveDefaultModel("new-model")
-
-        val state = vm.uiState.value
-        assertEquals("new-model", state.defaultModel)
-        assertNull(state.defaultModelSaveError)
-        assertFalse(state.isSavingDefaultModel)
-    }
-
-    @Test
-    fun `saveDefaultModel surfaces an unconfirmed change`() {
-        stubHealthyServer(defaultModel = "old-model")
-        coEvery { api.saveDefaultModel("new-model") } returns DefaultModelResponse(ok = false)
-
-        val vm = viewModel()
-        vm.saveDefaultModel("new-model")
-
-        val state = vm.uiState.value
-        assertEquals("old-model", state.defaultModel)
-        assertEquals("The server did not confirm the change.", state.defaultModelSaveError)
-    }
-
-    @Test
-    fun `saveDefaultModel surfaces api errors`() {
-        stubHealthyServer(defaultModel = "old-model")
-        coEvery { api.saveDefaultModel(any()) } throws ApiError.Http(500, null)
-
-        val vm = viewModel()
-        vm.saveDefaultModel("new-model")
-
-        val state = vm.uiState.value
-        assertEquals("old-model", state.defaultModel)
-        assertTrue(state.defaultModelSaveError.orEmpty().isNotEmpty())
-    }
-
-    @Test
-    fun `profile switch mirrors the selection and adopts its default model`() {
-        stubHealthyServer(defaultModel = "old-model", activeProfile = "default")
-
-        val vm = viewModel()
-        vm.onDefaultProfileSaved(
-            DefaultProfileSelection(name = "work", displayName = "work", defaultModel = "work-model"),
-        )
-
-        val state = vm.uiState.value
-        assertEquals("work", state.defaultProfileName)
-        assertEquals("work", state.defaultProfileLabel)
-        assertEquals("work-model", state.defaultModel)
-        assertFalse(state.isShowingProfilePicker)
-    }
-
-    @Test
-    fun `profile switch without a default model keeps the current one`() {
-        stubHealthyServer(defaultModel = "old-model")
-
-        val vm = viewModel()
-        vm.onDefaultProfileSaved(
-            DefaultProfileSelection(name = "work", displayName = "Work", defaultModel = null),
-        )
-
-        assertEquals("old-model", vm.uiState.value.defaultModel)
-        assertEquals("Work", vm.uiState.value.defaultProfileLabel)
-    }
-
-    @Test
-    fun `sign out resets state through the auth manager`() = runBlocking {
-        serverConfig.save("https://server.example.com", "pw")
-        stubHealthyServer()
-        coEvery { api.logout() } returns io.github.jcartu.hermex.model.LoginResponse(ok = true)
-
-        val vm = viewModel()
-        vm.requestSignOut()
-        assertTrue(vm.uiState.value.isConfirmingSignOut)
-
-        vm.confirmSignOut()
-
-        val state = vm.uiState.value
-        assertFalse(state.isConfirmingSignOut)
-        assertFalse(state.isSigningOut)
-        assertEquals(AuthState.Unconfigured, authManager.state.value)
-    }
-
-    @Test
-    fun `detail flags round trip`() {
-        stubHealthyServer()
-        val vm = viewModel()
-
-        vm.openProviders()
-        assertTrue(vm.uiState.value.isShowingProviders)
-        vm.closeProviders()
-        assertFalse(vm.uiState.value.isShowingProviders)
-
-        vm.openModelPicker()
-        assertTrue(vm.uiState.value.isShowingModelPicker)
-        vm.dismissModelPicker()
-        assertFalse(vm.uiState.value.isShowingModelPicker)
-
-        vm.openProfilePicker()
-        assertTrue(vm.uiState.value.isShowingProfilePicker)
-        vm.dismissProfilePicker()
-        assertFalse(vm.uiState.value.isShowingProfilePicker)
+        vm.openPage(SettingsPage.Chat)
+        assertEquals(SettingsPage.Chat, vm.uiState.value.page)
+        vm.closePage()
+        assertNull(vm.uiState.value.page)
+        vm.openAddServer()
+        assertTrue(vm.uiState.value.isAddingServer)
+        vm.dismissAddServer()
+        assertFalse(vm.uiState.value.isAddingServer)
     }
 }
 
@@ -336,7 +207,6 @@ class HeaderLogoColorTest {
         assertTrue(HeaderLogoColor.prefersDarkForeground("#FFD700"))
         assertFalse(HeaderLogoColor.prefersDarkForeground("#FF3B30"))
         assertFalse(HeaderLogoColor.prefersDarkForeground("#5B7CFF"))
-        // Malformed input falls back to the default (dark foreground).
         assertTrue(HeaderLogoColor.prefersDarkForeground("garbage"))
     }
 
@@ -345,5 +215,17 @@ class HeaderLogoColorTest {
         assertEquals("Yellow", HeaderLogoColor.displayName("#FFD700"))
         assertEquals("Blue", HeaderLogoColor.displayName("#5b7cff"))
         assertEquals("Custom", HeaderLogoColor.displayName("#123456"))
+    }
+}
+
+class ServerIdentityTest {
+
+    @Test
+    fun `initials follow stored then display name then host then UZ`() {
+        assertEquals("AB", ServerIdentity.displayInitials("Alpha Beta", "ab", "host.example.com"))
+        assertEquals("AB", ServerIdentity.displayInitials("Alpha Beta", "", "host.example.com"))
+        assertEquals("HE", ServerIdentity.displayInitials("", "", "host-example"))
+        assertEquals("UZ", ServerIdentity.displayInitials("", "", ""))
+        assertEquals("A1B", ServerIdentity.normalizedInitials("a-1 b c"))
     }
 }

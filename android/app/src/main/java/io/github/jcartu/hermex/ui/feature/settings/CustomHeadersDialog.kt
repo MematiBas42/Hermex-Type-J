@@ -53,26 +53,26 @@ data class CustomHeadersUiState(
     val saved: Boolean = false,
 )
 
+/**
+ * The Connection Headers editor's state for one server (`CustomHeadersSettingsView`,
+ * #16): rows are read from and saved under that server's own origin, so editing
+ * server A's headers never touches server B's; the live request store follows
+ * only when the edited server is the active one.
+ */
 class CustomHeadersViewModel(
     private val repository: EncryptedCustomHeaderRepository,
-    private val serverConfig: ServerConfigRepository,
+    private val serverUrl: String,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(CustomHeadersUiState())
+    private val _uiState = MutableStateFlow(CustomHeadersUiState(headers = repository.snapshotFor(serverUrl)))
     val uiState: StateFlow<CustomHeadersUiState> = _uiState.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            repository.headers.collect { headers -> _uiState.update { it.copy(headers = headers) } }
-        }
-    }
 
     fun validate(headers: List<CustomHeader>): List<String> = repository.validate(headers)
 
     fun save(headers: List<CustomHeader>) = viewModelScope.launch {
         _uiState.update { it.copy(isSaving = true, errorMessage = null, saved = false) }
         try {
-            repository.replaceFor(serverConfig.current().baseUrl, headers)
-            _uiState.update { it.copy(isSaving = false, saved = true) }
+            repository.replaceFor(serverUrl, headers)
+            _uiState.update { it.copy(headers = repository.snapshotFor(serverUrl), isSaving = false, saved = true) }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             _uiState.update { it.copy(isSaving = false, errorMessage = error.message ?: "Could not save headers.") }

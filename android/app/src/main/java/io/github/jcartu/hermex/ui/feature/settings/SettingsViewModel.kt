@@ -2,12 +2,12 @@ package io.github.jcartu.hermex.ui.feature.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
-import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
-import io.github.jcartu.hermex.ui.feature.models.DefaultProfileSelection
+import io.github.jcartu.hermex.core.prefs.ThinkingAndToolsMode
+import io.github.jcartu.hermex.core.security.AppLock
+import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
+import io.github.jcartu.hermex.ui.theme.Palette
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,73 +15,45 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * State for the Settings screen. Local preference values stream in from
- * [SettingsRepository]/[VisibilitySettings]; server-derived values follow the
- * load flow of `SettingsView.loadServerSettings()` (version → default model →
- * default profile, each failure isolated). The model/profile pickers come from
- * `ui/feature/models` (ModelPickerSheet / ProfilePickerSheet); this ViewModel
- * only persists the default-model choice and mirrors the results.
+ * The pages Settings' index opens (`SettingsView.swift`, #1252): one per
+ * configured server, then the Hermex pages that apply on this device to every
+ * server, then About.
+ */
+sealed interface SettingsPage {
+    data class Server(val id: String) : SettingsPage
+    data object Appearance : SettingsPage
+    data object Composer : SettingsPage
+    data object Chat : SettingsPage
+    data object Notifications : SettingsPage
+    data object General : SettingsPage
+    data object About : SettingsPage
+}
+
+/** A server page's pushed detail: Providers or the Connection Headers editor. */
+enum class SettingsDetail { PROVIDERS, CONNECTION_HEADERS }
+
+/**
+ * State for the Settings index and its app pages. Local preference values
+ * stream in from [SettingsRepository]; the server list mirrors
+ * [AuthManager.servers]. Navigation (page, detail, Add Server) lives here so it
+ * survives fold/unfold and pane-count changes.
  */
 data class SettingsUiState(
     val settings: SettingsRepository.Settings = SettingsRepository.Settings(),
-    val visibility: VisibilitySettings.State = VisibilitySettings.State(),
-    val serverBaseUrl: String = "",
-    val isLoadingServerSettings: Boolean = false,
-    val serverVersion: String? = null,
-    val serverSettingsError: String? = null,
-    val isLoadingDefaultModel: Boolean = false,
-    val defaultModel: String? = null,
-    val isSavingDefaultModel: Boolean = false,
-    val defaultModelSaveError: String? = null,
-    val isLoadingDefaultProfile: Boolean = false,
-    val defaultProfileName: String? = null,
-    val defaultProfileDisplayName: String? = null,
-    val isConfirmingSignOut: Boolean = false,
-    val isSigningOut: Boolean = false,
-    val isShowingProviders: Boolean = false,
-    val isShowingModelPicker: Boolean = false,
-    val isShowingProfilePicker: Boolean = false,
+    val servers: List<ServerAccount> = emptyList(),
+    val activeServerId: String? = null,
+    val appLock: AppLock.State = AppLock.State(),
+    val page: SettingsPage? = null,
+    val detail: SettingsDetail? = null,
+    val isAddingServer: Boolean = false,
 ) {
-    /** Port of `defaultModelLabel`. */
-    val defaultModelLabel: String
-        get() = when {
-            isSavingDefaultModel -> "Saving"
-            isLoadingDefaultModel -> "Loading"
-            defaultModel.isNullOrEmpty() -> "Not set"
-            else -> defaultModel
-        }
-
-    /** Port of `defaultProfileLabel`. */
-    val defaultProfileLabel: String
-        get() = when {
-            isLoadingDefaultProfile -> "Loading"
-            !defaultProfileDisplayName.isNullOrEmpty() -> defaultProfileDisplayName
-            defaultProfileName.isNullOrEmpty() -> "Not set"
-            defaultProfileName == "default" -> "Default"
-            else -> defaultProfileName
-        }
-
-    /**
-     * Port of `serverStatusPill`: "Connected" only when the latest load
-     * actually succeeded — a stale version must not mask a now-failed load.
-     */
-    val serverStatusLabel: String
-        get() = when {
-            isLoadingServerSettings -> "Loading"
-            serverSettingsError == null && serverVersion != null -> "Connected"
-            else -> serverSettingsError ?: "Unknown"
-        }
-
-    val isServerStatusHealthy: Boolean
-        get() = !isLoadingServerSettings && serverSettingsError == null && serverVersion != null
+    val activeServer: ServerAccount? get() = servers.firstOrNull { it.id == activeServerId }
 }
 
 class SettingsViewModel(
-    private val api: HermesApi,
     private val settingsRepository: SettingsRepository,
-    private val visibilitySettings: VisibilitySettings,
-    private val serverConfig: ServerConfigRepository,
     val authManager: AuthManager,
+    private val appLock: AppLock,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -94,191 +66,125 @@ class SettingsViewModel(
             }
         }
         viewModelScope.launch {
-            visibilitySettings.state.collect { visibility ->
-                _uiState.update { it.copy(visibility = visibility) }
+            authManager.servers.collect { servers ->
+                _uiState.update { state ->
+                    // A page for a server that no longer exists closes itself.
+                    val page = state.page
+                    val stillOpen = page !is SettingsPage.Server || servers.any { it.id == page.id }
+                    state.copy(page = if (stillOpen) page else null, detail = if (stillOpen) state.detail else null, servers = servers)
+                }
             }
         }
         viewModelScope.launch {
-            serverConfig.config.collect { config ->
-                _uiState.update { it.copy(serverBaseUrl = config.baseUrl) }
+            authManager.state.collect { _ ->
+                _uiState.update { it.copy(activeServerId = authManager.activeServerID) }
             }
         }
         viewModelScope.launch {
-            // Restore first so a 401 during the initial load demotes the
-            // correct (restored) auth state instead of racing it.
-            authManager.restoreSavedServer()
-            load()
+            appLock.state.collect { lock -> _uiState.update { it.copy(appLock = lock) } }
         }
     }
 
-    // MARK: Server-derived info (port of loadServerSettings)
+    // MARK: Navigation (survives fold/unfold and pane-count changes)
 
-    fun loadServerSettings() {
-        if (_uiState.value.isLoadingServerSettings) return
-        viewModelScope.launch { load() }
-    }
+    fun openPage(page: SettingsPage) = _uiState.update { it.copy(page = page, detail = null) }
 
-    private suspend fun load() {
-        _uiState.update {
-            it.copy(
-                isLoadingServerSettings = true,
-                isLoadingDefaultModel = true,
-                isLoadingDefaultProfile = true,
-                serverSettingsError = null,
-            )
-        }
+    fun closePage() = _uiState.update { it.copy(page = null, detail = null) }
 
-        try {
-            val settings = api.settings()
-            _uiState.update {
-                it.copy(
-                    serverVersion = settings.webuiVersion,
-                    serverSettingsError = if (settings.webuiVersion == null) "Unknown" else null,
-                    isLoadingServerSettings = false,
-                )
-            }
-        } catch (error: ApiError) {
-            authManager.handleApiError(error)
-            _uiState.update {
-                it.copy(serverSettingsError = "Unavailable", isLoadingServerSettings = false)
-            }
-        }
+    fun openDetail(detail: SettingsDetail) = _uiState.update { it.copy(detail = detail) }
 
-        // Non-fatal: default model is optional info.
-        val defaultModel = runCatching { api.models().defaultModel }.getOrNull()
-        _uiState.update { it.copy(defaultModel = defaultModel, isLoadingDefaultModel = false) }
+    fun closeDetail() = _uiState.update { it.copy(detail = null) }
 
-        // Non-fatal: default profile is optional info.
-        val profiles = runCatching { api.profiles() }.getOrNull()
-        val profileName = profiles?.effectiveDefaultProfileName
-        _uiState.update {
-            it.copy(
-                defaultProfileName = profileName,
-                defaultProfileDisplayName = profiles?.displayName(profileName),
-                isLoadingDefaultProfile = false,
-            )
+    fun openAddServer() = _uiState.update { it.copy(isAddingServer = true) }
+
+    fun dismissAddServer() = _uiState.update { it.copy(isAddingServer = false) }
+
+    // MARK: Appearance
+
+    fun setPalette(palette: Palette) = launchWrite { settingsRepository.setPalette(palette) }
+
+    fun setTheme(theme: SettingsRepository.Theme) = launchWrite { settingsRepository.setTheme(theme) }
+
+    /**
+     * The accent is the active server's Header Logo Color (per server, mirrored
+     * into the global key by the registry, #17); without an active server the
+     * global key is written directly.
+     */
+    fun setHeaderLogoColor(hex: String) {
+        val active = authManager.activeServer
+        if (active != null) {
+            authManager.updateServerIdentity(active, active.displayName, active.initials, hex)
+        } else {
+            launchWrite { settingsRepository.setHeaderLogoColor(hex) }
         }
     }
 
-    // MARK: Local preferences
+    // MARK: Composer
 
-    fun setPalette(palette: io.github.jcartu.hermex.ui.theme.Palette) =
-        launchWrite { settingsRepository.setPalette(palette) }
+    fun setDismissKeyboardAfterSend(enabled: Boolean) = launchWrite { settingsRepository.setDismissKeyboardAfterSend(enabled) }
 
-    fun setTheme(theme: SettingsRepository.Theme) =
-        launchWrite { settingsRepository.setTheme(theme) }
+    fun setShowsFilesButton(visible: Boolean) = launchWrite { settingsRepository.setShowsFilesButton(visible) }
 
-    fun setHeaderLogoColor(hex: String) =
-        launchWrite { settingsRepository.setHeaderLogoColor(hex) }
+    fun setShowsGitActions(visible: Boolean) = launchWrite { settingsRepository.setShowsGitActions(visible) }
 
-    fun setHapticsEnabled(enabled: Boolean) =
-        launchWrite { settingsRepository.setHapticsEnabled(enabled) }
+    // MARK: Chat
 
-    fun setBackgroundRunNotificationsEnabled(enabled: Boolean) =
-        launchWrite { settingsRepository.setBackgroundRunNotificationsEnabled(enabled) }
+    fun setThinkingAndToolsMode(mode: ThinkingAndToolsMode) = launchWrite { settingsRepository.setThinkingAndToolsMode(mode) }
 
-    fun setShowsThinkingAndToolCards(enabled: Boolean) =
-        launchWrite { settingsRepository.setShowsThinkingAndToolCards(enabled) }
+    fun setFoldsSettledTurns(enabled: Boolean) = launchWrite { settingsRepository.setFoldsSettledTurns(enabled) }
 
-    fun setThinkingCardsStartExpanded(enabled: Boolean) =
-        launchWrite { settingsRepository.setThinkingCardsStartExpanded(enabled) }
+    fun setReadCompletedResponseFromStart(enabled: Boolean) =
+        launchWrite { settingsRepository.setReadCompletedResponseFromStart(enabled) }
 
-    fun setToolCardsStartExpanded(enabled: Boolean) =
-        launchWrite { settingsRepository.setToolCardsStartExpanded(enabled) }
-
-    fun setHidesAttachmentPaths(enabled: Boolean) =
-        launchWrite { settingsRepository.setHidesAttachmentPaths(enabled) }
+    fun setHidesAttachmentPaths(enabled: Boolean) = launchWrite { settingsRepository.setHidesAttachmentPaths(enabled) }
 
     fun setShowsAssistantTurnTimestamps(enabled: Boolean) =
         launchWrite { settingsRepository.setShowsAssistantTurnTimestamps(enabled) }
 
-    fun setShowsResponseSpeed(enabled: Boolean) =
-        launchWrite { settingsRepository.setShowsResponseSpeed(enabled) }
+    fun setShowsResponseSpeed(enabled: Boolean) = launchWrite { settingsRepository.setShowsResponseSpeed(enabled) }
 
-    fun setWrapsCodeBlockLines(enabled: Boolean) =
-        launchWrite { settingsRepository.setWrapsCodeBlockLines(enabled) }
+    fun setWrapsCodeBlockLines(enabled: Boolean) = launchWrite { settingsRepository.setWrapsCodeBlockLines(enabled) }
 
-    fun setRtlChatLayoutEnabled(enabled: Boolean) =
-        launchWrite { settingsRepository.setRtlChatLayoutEnabled(enabled) }
+    fun setRtlChatLayoutEnabled(enabled: Boolean) = launchWrite { settingsRepository.setRtlChatLayoutEnabled(enabled) }
 
-    fun setSectionVisible(section: VisibilitySettings.Section, visible: Boolean) =
-        launchWrite { visibilitySettings.setVisible(section, visible) }
+    // MARK: Notifications
 
-    // MARK: Pickers & detail navigation (survives fold/unfold and pane-count changes)
+    fun setNotifyReplies(enabled: Boolean) = launchWrite { settingsRepository.setNotifyReplies(enabled) }
 
-    fun openProviders() = _uiState.update { it.copy(isShowingProviders = true) }
+    fun setNotifyApprovals(enabled: Boolean) = launchWrite { settingsRepository.setNotifyApprovals(enabled) }
 
-    fun closeProviders() = _uiState.update { it.copy(isShowingProviders = false) }
+    fun setNotifyQuestions(enabled: Boolean) = launchWrite { settingsRepository.setNotifyQuestions(enabled) }
 
-    fun openModelPicker() =
-        _uiState.update { it.copy(isShowingModelPicker = true, defaultModelSaveError = null) }
+    fun setNotifyFailedRuns(enabled: Boolean) = launchWrite { settingsRepository.setNotifyFailedRuns(enabled) }
 
-    fun dismissModelPicker() = _uiState.update { it.copy(isShowingModelPicker = false) }
+    // MARK: General
 
-    fun openProfilePicker() = _uiState.update { it.copy(isShowingProfilePicker = true) }
+    fun setHapticsEnabled(enabled: Boolean) = launchWrite { settingsRepository.setHapticsEnabled(enabled) }
 
-    fun dismissProfilePicker() = _uiState.update { it.copy(isShowingProfilePicker = false) }
-
-    /**
-     * Persists a model chosen in the shared ModelPickerSheet as the server's
-     * default model, port of `DefaultModelPickerView.save`: only an `ok: true`
-     * response commits the label; anything else surfaces an inline error.
-     */
-    fun saveDefaultModel(model: String) {
-        val trimmed = model.trim()
-        if (trimmed.isEmpty()) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isSavingDefaultModel = true, defaultModelSaveError = null) }
-            try {
-                val response = api.saveDefaultModel(trimmed)
-                _uiState.update {
-                    if (response.ok == true) {
-                        it.copy(defaultModel = trimmed, isSavingDefaultModel = false)
-                    } else {
-                        it.copy(
-                            defaultModelSaveError = "The server did not confirm the change.",
-                            isSavingDefaultModel = false,
-                        )
-                    }
-                }
-            } catch (error: ApiError) {
-                _uiState.update {
-                    it.copy(defaultModelSaveError = error.message, isSavingDefaultModel = false)
-                }
-            }
-        }
+    /** The app lock toggle: `AppLock` authenticates before it changes, so the switch moves only once the device says yes. */
+    fun setAppLockEnabled(enabled: Boolean) {
+        viewModelScope.launch { appLock.setEnabled(enabled) }
     }
 
-    /** Mirrors a switch performed by the shared ProfilePickerSheet. */
-    fun onDefaultProfileSaved(selection: DefaultProfileSelection) {
-        _uiState.update { state ->
-            state.copy(
-                defaultProfileName = selection.name,
-                defaultProfileDisplayName = selection.displayName,
-                defaultModel = selection.defaultModel?.takeIf { it.isNotEmpty() }
-                    ?: state.defaultModel,
-                isShowingProfilePicker = false,
-            )
-        }
-    }
+    fun refreshAppLockCapability() = appLock.refreshCapability()
 
-    // MARK: Sign out
+    // MARK: Sessions list (server page, Main Page card)
 
-    fun requestSignOut() = _uiState.update { it.copy(isConfirmingSignOut = true) }
+    fun setShowsSessionRowStates(enabled: Boolean) = launchWrite { settingsRepository.setShowsSessionRowStates(enabled) }
 
-    fun cancelSignOut() = _uiState.update { it.copy(isConfirmingSignOut = false) }
+    fun setShowsTasksEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsTasksEntry(visible) }
 
-    fun confirmSignOut() {
-        if (_uiState.value.isSigningOut) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isConfirmingSignOut = false, isSigningOut = true) }
-            // Best-effort server logout + local reset; the app shell observes the
-            // cleared ServerConfig and returns to onboarding.
-            authManager.signOut()
-            _uiState.update { it.copy(isSigningOut = false) }
-        }
-    }
+    fun setShowsKanbanEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsKanbanEntry(visible) }
+
+    fun setShowsSkillsEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsSkillsEntry(visible) }
+
+    fun setShowsMemoryEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsMemoryEntry(visible) }
+
+    fun setShowsInsightsEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsInsightsEntry(visible) }
+
+    fun setShowsActiveProfileEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsActiveProfileEntry(visible) }
+
+    fun setShowsProjectsEntry(visible: Boolean) = launchWrite { settingsRepository.setShowsProjectsEntry(visible) }
 
     private fun launchWrite(block: suspend () -> Unit) {
         viewModelScope.launch { block() }

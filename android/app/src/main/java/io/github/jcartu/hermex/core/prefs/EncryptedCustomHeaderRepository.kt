@@ -58,6 +58,15 @@ class EncryptedCustomHeaderRepository(
         _headers.value = next
     }
 
+    /**
+     * The headers persisted for [baseUrl]'s origin, whether or not it is the
+     * active server — port of the scoped `KeychainStore` read
+     * (`custom_headers::<server>`) the connect form and sign-out paths use
+     * (#16). Empty for an unparseable URL or an origin with no profile.
+     */
+    fun snapshotFor(baseUrl: String): List<CustomHeader> =
+        normalizedOrigin(baseUrl)?.let { profiles.byOrigin[it] }.orEmpty().filter(CustomHeader::isApplicable)
+
     suspend fun replaceFor(baseUrl: String, candidate: List<CustomHeader>) {
         val origin = normalizedOrigin(baseUrl)
             ?: throw CustomHeaderValidationException(listOf("Configure a valid server URL before adding headers."))
