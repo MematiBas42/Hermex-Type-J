@@ -7,11 +7,15 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.jcartu.hermex.core.share.SharedImport
+import io.github.jcartu.hermex.core.prefs.SettingsRepository
 import io.github.jcartu.hermex.data.*
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.model.*
 import io.github.jcartu.hermex.model.hermes.*
 import io.github.jcartu.hermex.net.hermes.*
+import io.github.jcartu.hermex.service.hermes.HermesRunMonitorService
+import io.github.jcartu.hermex.service.hermes.HermesRunTarget
+import io.github.jcartu.hermex.service.hermes.hermesRunTargetForBackground
 import io.github.jcartu.hermex.ui.feature.chat.*
 import io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesProfilePreference
 import kotlinx.coroutines.*
@@ -90,6 +94,7 @@ class HermesChatViewModel(
     private var uncertain = false
     private var uncertainGeneration = -1
     private var pendingStop: Pair<Int, String>? = null
+    private var runMonitorSettings: SettingsRepository.Settings? = null
     private val sentFiles = LinkedHashMap<String, String>()
     private val cacheEpoch = container.hermesCacheStore.hermesCacheEpoch(account.id)
     private var initialization: Job
@@ -104,6 +109,7 @@ class HermesChatViewModel(
     init {
         viewModelScope.launch {
             container.settings.settings.collect { settings ->
+                runMonitorSettings = settings
                 _uiState.update { it.copy(
                     showsThinkingAndToolCards = settings.showsThinkingAndToolCards,
                     thinkingCardsStartExpanded = settings.thinkingCardsStartExpanded,
@@ -683,8 +689,61 @@ class HermesChatViewModel(
 
     fun loadOlderMessages() = launchAction { coordinator?.loadOlderHistory() }
     fun retryLoad() = launchAction { coordinator?.activate(); coordinator?.retryHistoryIfFailed() }
-    fun resumeForForeground() { active = true; viewModelScope.launch { initialization.join(); coordinator?.activate() } }
-    fun suspendForBackground() { active = false; parkPendingGoal(); saveDraft(); viewModelScope.launch { drafts.flush(); coordinator?.suspendConnection() } }
+    fun resumeForForeground() {
+        active = true
+        viewModelScope.launch {
+            initialization.join()
+            val turn = coordinator
+            monitorOwner(turn)?.let { HermesRunMonitorService.stop(context, it) }
+            turn?.activate()
+        }
+    }
+    fun suspendForBackground() {
+        active = false
+        val turn = coordinator
+        val target = backgroundRunTarget(turn)
+        val settings = runMonitorSettings
+        if (target != null && settings != null) handOffRunMonitor(target, settings)
+        parkPendingGoal()
+        saveDraft()
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val resolvedSettings = settings ?: container.settings.settings.first().also { runMonitorSettings = it }
+            if (!active && target != null && settings == null) handOffRunMonitor(target, resolvedSettings)
+            drafts.flush()
+            if (!active) turn?.suspendConnection()
+        }
+    }
+    private fun monitorOwner(turn: HermesChatTurnCoordinator?): HermesRunTarget? {
+        val engine = turn?.engine ?: return null
+        val storedKey = engine.storedKey?.takeIf(String::isNotBlank) ?: return null
+        val ownerProfile = engine.target.profile.takeIf(String::isNotBlank) ?: return null
+        if (engine.server.isBlank() || engine.connection.id.isBlank()) return null
+        return HermesRunTarget(
+            serverId = engine.server,
+            connectionId = engine.connection.id,
+            profile = ownerProfile,
+            storedKey = storedKey,
+            title = _uiState.value.displayTitle,
+        )
+    }
+    private fun backgroundRunTarget(turn: HermesChatTurnCoordinator?): HermesRunTarget? {
+        val engine = turn?.engine ?: return null
+        val request = turn.requests.onScreen
+        return hermesRunTargetForBackground(
+            serverId = engine.server,
+            connectionId = engine.connection.id,
+            profile = engine.target.profile,
+            storedKey = engine.storedKey,
+            title = _uiState.value.displayTitle,
+            hasActiveRun = turn.activeStreamID != null,
+            hasPendingPrompt = request is BotPendingRequest.Approval || request is BotPendingRequest.Question,
+        )
+    }
+    private fun handOffRunMonitor(target: HermesRunTarget, settings: SettingsRepository.Settings) {
+        if (HermesRunMonitorService.canStart(context, settings)) {
+            HermesRunMonitorService.start(context, target)
+        }
+    }
     private fun parkPendingGoal() {
         val argument = pendingGoal ?: return
         pendingGoal = null
@@ -705,10 +764,17 @@ class HermesChatViewModel(
     private fun report(error: Throwable) { val cause = (error as? HermesChatTurnCoordinator.NotSent)?.underlying ?: error; _uiState.update { it.copy(sendErrorMessage = cause.message ?: "The host could not complete that request.") } }
     private fun setMessages(messages: List<ChatMessage>, cached: Boolean) { _uiState.update { it.copy(messages = messages, transcriptMessages = messages.mapIndexed { index, row -> TranscriptMessage(index, "cached:$index", row.id, row) }, isViewingCachedData = cached, isLoading = false) } }
     override fun onCleared() {
+        active = false
         parkPendingGoal()
         saveDraft()
         val turn = coordinator
+        val target = backgroundRunTarget(turn)
+        val settings = runMonitorSettings
+        if (target != null && settings != null) handOffRunMonitor(target, settings)
         container.appScope.launch {
+            if (target != null && settings == null) {
+                handOffRunMonitor(target, container.settings.settings.first())
+            }
             drafts.flush()
             withContext(Dispatchers.Main.immediate) { turn?.suspendConnection() }
             withContext(Dispatchers.IO) { previewDirectory.deleteRecursively() }
