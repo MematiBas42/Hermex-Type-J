@@ -539,7 +539,11 @@ private fun ServerScopedViewModels(serverId: String, content: @Composable () -> 
     val host = checkNotNull(androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current)
     val owner = remember(serverId) { ServerViewModelStoreOwner(host) }
     androidx.compose.runtime.DisposableEffect(owner) {
-        onDispose { owner.viewModelStore.clear() }
+        onDispose {
+            owner.viewModelStore.clear()
+            HermesWorkspaceNavigation.clear(serverId)
+            HermesGitNavigation.clear(serverId)
+        }
     }
     val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel(viewModelStoreOwner = host)
     var previousServerId by rememberSaveable { mutableStateOf(serverId) }
