@@ -209,7 +209,12 @@ private fun RoomMemberPicker(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    BotAvatarView(profile, avatars[profile.id], 40.dp, BotFaceMotion.Still)
+                    BotAvatarView(
+                        profile = profile,
+                        avatar = avatars[profile.id],
+                        size = 40.dp,
+                        motion = BotFaceMotion.Still,
+                    )
                     Column(Modifier.weight(1f)) {
                         Text(profile.name, fontWeight = FontWeight.SemiBold)
                         profile.description?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -235,7 +240,12 @@ private fun SelectedMembersPane(
             state.selected.forEach { profile ->
                 Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 1.dp) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        BotAvatarView(profile, avatars[profile.id], 40.dp, BotFaceMotion.Still)
+                        BotAvatarView(
+                            profile = profile,
+                            avatar = avatars[profile.id],
+                            size = 40.dp,
+                            motion = BotFaceMotion.Still,
+                        )
                         Text(profile.name, Modifier.weight(1f))
                         IconButton(onClick = { actions.onRemove(profile) }, enabled = state.attempt == null) { Icon(Icons.Filled.Close, "Remove ${profile.name}") }
                     }
@@ -301,7 +311,12 @@ private fun SelectedMemberChips(
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    BotAvatarView(profile, avatars[profile.id], 24.dp, BotFaceMotion.Still)
+                    BotAvatarView(
+                        profile = profile,
+                        avatar = avatars[profile.id],
+                        size = 24.dp,
+                        motion = BotFaceMotion.Still,
+                    )
                     Text(profile.name, maxLines = 1)
                     Icon(Icons.Filled.Close, "Remove ${profile.name}", Modifier.size(14.dp))
                 }

@@ -550,7 +550,9 @@ class OnboardingViewModel(
         _uiState.update { it.copy(isWorking = false, isConnectionLocked = false) }
     }
 
-    override fun onCleared() { cancel(); super.onCleared() }
+    override fun onCleared() {
+        cancel()
+    }
 
     /** Onboarding's webui path: probe unless a probe for these inputs already answered, check the password, then `configure`. */
     private suspend fun configureWebui(token: Int) {

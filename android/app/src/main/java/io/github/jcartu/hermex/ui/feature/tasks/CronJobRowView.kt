@@ -48,8 +48,8 @@ fun CronJobRowView(
     job: CronJob,
     group: TaskAgendaGroup,
     runningElapsed: Double?,
-    profile: String? = null,
     modifier: Modifier = Modifier,
+    profile: String? = null,
     zone: ZoneId = ZoneId.systemDefault(),
 ) {
     Row(modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {

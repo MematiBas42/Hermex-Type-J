@@ -56,9 +56,9 @@ Finish with the Hermes address and username to enter in Hermex, where to obtain 
  */
 @Composable
 fun BotConnectionWelcome(
-    isCovered: Boolean = false,
     onConnection: () -> Unit,
     modifier: Modifier = Modifier,
+    isCovered: Boolean = false,
 ) {
     val context = LocalContext.current
     var copied by rememberSaveable { mutableStateOf(false) }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.createBitmap
 import io.github.jcartu.hermex.model.PendingAttachment
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -328,7 +329,7 @@ private fun renderPdfFirstPage(descriptor: ParcelFileDescriptor): ByteArray? {
             val targetWidth = 360
             val targetHeight = max(1, (targetWidth * page.height.toFloat() / max(1, page.width)).roundToInt())
                 .coerceAtMost(480)
-            val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(targetWidth, targetHeight)
             Canvas(bitmap).drawColor(Color.WHITE)
             val scale = minOf(
                 targetWidth / page.width.toFloat(),
@@ -365,7 +366,7 @@ private fun renderTextExcerpt(bytes: ByteArray): ByteArray? {
     }
     val lineHeight = paint.fontSpacing
     val maxLines = ((height - padding * 2) / lineHeight).toInt().coerceAtLeast(1)
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val bitmap = createBitmap(width, height)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.rgb(245, 247, 250))
 

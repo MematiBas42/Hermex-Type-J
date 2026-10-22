@@ -861,7 +861,13 @@ fun BotRoomMemberAvatar(
 ) {
     val profile = roster.firstOrNull { it.id == member?.profile }
     if (profile != null) {
-        BotAvatarView(profile, avatars[profile.id], size, BotFaceMotion.Still, modifier = modifier)
+        BotAvatarView(
+            profile = profile,
+            modifier = modifier,
+            avatar = avatars[profile.id],
+            size = size,
+            motion = BotFaceMotion.Still,
+        )
     } else {
         Surface(modifier.size(size), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, border = BorderStroke(1.dp, MaterialTheme.colorScheme.background)) {
             Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(size * 0.55f)) }

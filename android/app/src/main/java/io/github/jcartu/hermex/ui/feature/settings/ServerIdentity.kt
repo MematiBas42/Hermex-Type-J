@@ -68,7 +68,12 @@ object ServerIdentity {
 
 /** Port of `ServerAvatarBadge`: a tinted circle with the server's initials. */
 @Composable
-fun ServerAvatarBadge(initials: String, colorHex: String, size: Dp = 32.dp, modifier: Modifier = Modifier) {
+fun ServerAvatarBadge(
+    initials: String,
+    colorHex: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 32.dp,
+) {
     val background = HeaderLogoColor.color(colorHex)
     val foreground = if (HeaderLogoColor.prefersDarkForeground(colorHex)) Color.Black else Color.White
     Box(

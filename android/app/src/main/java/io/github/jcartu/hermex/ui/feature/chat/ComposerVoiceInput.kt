@@ -14,6 +14,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.WindowManager
+import androidx.annotation.RequiresApi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -49,6 +50,16 @@ import io.github.jcartu.hermex.core.navigation.VoiceDictationRequest
 import java.util.Locale
 
 private enum class ComposerVoicePhase { IDLE, LISTENING }
+
+private fun isLanguageAvailabilityError(error: Int): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+    return isLanguageAvailabilityErrorApi31(error)
+}
+
+@RequiresApi(Build.VERSION_CODES.S)
+private fun isLanguageAvailabilityErrorApi31(error: Int): Boolean =
+    error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+        error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
 
 /**
  * Android dictation control matching `ComposerVoiceInputController.swift`.
@@ -141,8 +152,7 @@ internal fun ComposerVoiceInput(
 
             override fun onError(error: Int) {
                 val shouldTryNextLanguage =
-                    (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
-                        error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) &&
+                    isLanguageAvailabilityError(error) &&
                         languageAttempt + 1 < languageTags.size
                 if (shouldTryNextLanguage) {
                     runCatching { recognizer.cancel() }

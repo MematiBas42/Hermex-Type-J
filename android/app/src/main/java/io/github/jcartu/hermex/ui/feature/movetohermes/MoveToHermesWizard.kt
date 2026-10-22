@@ -244,14 +244,14 @@ fun MoveToHermesBannerCard(
     kind: MoveBannerKind,
     sourceName: String,
     destinationName: String,
+    onPrimary: () -> Unit,
+    modifier: Modifier = Modifier,
     inHermes: Int? = null,
     total: Int? = null,
-    onPrimary: () -> Unit,
     onDetails: (() -> Unit)? = null,
     onCopyAgain: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
     onDismissInvite: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
 ) {
     val title = when (kind) {
         MoveBannerKind.INVITE -> "Move $sourceName to Hermes"

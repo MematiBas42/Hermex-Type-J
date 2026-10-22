@@ -1,6 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.bots
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,7 +30,7 @@ class BotModeGate(context: Context) {
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
 
     fun setEnabled(enabled: Boolean) {
-        preferences.edit().putBoolean(IS_ENABLED_KEY, enabled).apply()
+        preferences.edit { putBoolean(IS_ENABLED_KEY, enabled) }
         _enabled.value = enabled
     }
 

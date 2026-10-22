@@ -281,7 +281,10 @@ private fun FileTreePane(
                     if (state.searchQuery.isBlank()) "No Files" else "No Matches",
                     message = if (state.searchQuery.isBlank()) "This workspace is empty." else "Try another search.",
                 )
-            else -> WorkspaceTreeRenderSurface(state, actions)
+            else -> WorkspaceTreeRenderSurface(
+                state = state,
+                actions = actions,
+            )
         }
     }
 }
@@ -290,8 +293,8 @@ private fun FileTreePane(
 @Composable
 internal fun WorkspaceTreeRenderSurface(
     state: WorkspaceUiState,
-    actions: WorkspaceActions = WorkspaceActions(),
     modifier: Modifier = Modifier,
+    actions: WorkspaceActions = WorkspaceActions(),
     showFileIcons: Boolean = true,
 ) {
     LazyColumn(modifier.fillMaxSize()) {

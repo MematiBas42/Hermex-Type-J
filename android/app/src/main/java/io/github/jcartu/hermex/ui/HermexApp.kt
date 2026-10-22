@@ -686,11 +686,13 @@ private fun ServerScopedViewModels(serverId: String, content: @Composable () -> 
 private class ServerViewModelStoreOwner(
     private val host: androidx.lifecycle.ViewModelStoreOwner,
 ) : androidx.lifecycle.ViewModelStoreOwner, androidx.lifecycle.HasDefaultViewModelProviderFactory {
+    private val fallbackViewModelProviderFactory = androidx.lifecycle.ViewModelProvider.NewInstanceFactory()
+
     override val viewModelStore = androidx.lifecycle.ViewModelStore()
 
     override val defaultViewModelProviderFactory: androidx.lifecycle.ViewModelProvider.Factory
         get() = (host as? androidx.lifecycle.HasDefaultViewModelProviderFactory)?.defaultViewModelProviderFactory
-            ?: androidx.lifecycle.ViewModelProvider.NewInstanceFactory.instance
+            ?: fallbackViewModelProviderFactory
 
     override val defaultViewModelCreationExtras: androidx.lifecycle.viewmodel.CreationExtras
         get() = (host as? androidx.lifecycle.HasDefaultViewModelProviderFactory)?.defaultViewModelCreationExtras

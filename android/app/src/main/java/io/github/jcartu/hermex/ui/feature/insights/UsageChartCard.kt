@@ -121,7 +121,7 @@ fun UsageChartCard(
                 onSelectBucket = { selectedBucketId = it },
             )
 
-            chartFooter(buckets, metric)
+            ChartFooter(buckets, metric)
 
             if (hourlyNote != null) {
                 Text(
@@ -209,7 +209,7 @@ private fun UsageBarChart(
 }
 
 @Composable
-private fun chartFooter(buckets: List<UsageBucket>, metric: UsageMetric) {
+private fun ChartFooter(buckets: List<UsageBucket>, metric: UsageMetric) {
     val legendSegments = usageChartLegendSegments(buckets, metric)
 
     Row(verticalAlignment = Alignment.Top) {

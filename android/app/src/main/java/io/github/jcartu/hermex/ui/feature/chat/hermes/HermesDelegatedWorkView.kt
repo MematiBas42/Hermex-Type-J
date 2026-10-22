@@ -331,7 +331,7 @@ private fun DelegatedWorkerRow(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = worker.status.uppercase(Locale.getDefault()),
+                    text = worker.status.uppercase(Locale.ROOT),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

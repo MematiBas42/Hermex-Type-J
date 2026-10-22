@@ -74,12 +74,12 @@ import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 fun HermesConnectionForm(
     container: AppContainer,
     account: ServerAccount,
+    modifier: Modifier = Modifier,
     focusesPassword: Boolean = false,
     isRoot: Boolean = false,
     error: String? = null,
     onSaved: () -> Unit = {},
     onDone: () -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val owner = remember(account.id) { object : androidx.lifecycle.ViewModelStoreOwner {
         override val viewModelStore = androidx.lifecycle.ViewModelStore()
@@ -154,8 +154,13 @@ internal fun HermesConnectionFormContent(
             state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp)) }
         }
         SettingsCard("Connection Headers") {
-            CustomHeadersEditor(state.headers, setHeaders, ConnectFormStyle.SETTINGS, enabled = !state.isConnecting,
-                modifier = Modifier.padding(vertical = 8.dp))
+            CustomHeadersEditor(
+                headers = state.headers,
+                onChange = setHeaders,
+                style = ConnectFormStyle.SETTINGS,
+                modifier = Modifier.padding(vertical = 8.dp),
+                enabled = !state.isConnecting,
+            )
             state.headerRejection?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.accessPairWarning?.let { SettingsFootnote(it) }
             SettingsFootnote("Sent with every request to this Hermes host, for a proxy such as Cloudflare Access.")
@@ -268,17 +273,27 @@ fun HermesSignInRoute(container: AppContainer, account: ServerAccount) {
     var settings by rememberSaveable(account.id) { mutableStateOf(false) }
     var switcher by remember { mutableStateOf(false) }
     var adding by rememberSaveable { mutableStateOf(false) }
+    val lastErrorMessage by container.authManager.lastErrorMessage.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Hermes connection", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
             Box {
-                ServerAvatarBadge(ServerIdentity.previewInitials(account), account.headerLogoColorHex,
-                    modifier = Modifier.combinedClickable(onClick = { settings = true }, onLongClick = { switcher = true }))
+                ServerAvatarBadge(
+                    initials = ServerIdentity.previewInitials(account),
+                    colorHex = account.headerLogoColorHex,
+                    modifier = Modifier.combinedClickable(onClick = { settings = true }, onLongClick = { switcher = true }),
+                )
                 ServerSwitcherMenu(switcher, { switcher = false }, { adding = true })
             }
         }
-        HermesConnectionForm(container, account, focusesPassword = true, isRoot = true, error = container.authManager.lastErrorMessage.value,
-            modifier = Modifier.weight(1f))
+        HermesConnectionForm(
+            container = container,
+            account = account,
+            modifier = Modifier.weight(1f),
+            focusesPassword = true,
+            isRoot = true,
+            error = lastErrorMessage,
+        )
     }
     if (settings) Dialog(onDismissRequest = { settings = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {

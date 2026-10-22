@@ -56,12 +56,12 @@ internal enum class ChatComposerSelectorSheet { MODEL, PROFILE, WORKSPACE }
 internal fun ChatComposerSelectorChips(
     state: ChatUiState,
     enabled: Boolean,
-    profileSelectionEnabled: Boolean = true,
     onOpenModel: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenWorkspace: () -> Unit,
     onSelectReasoningEffort: (String) -> Unit,
     modifier: Modifier = Modifier,
+    profileSelectionEnabled: Boolean = true,
     trailingContent: @Composable () -> Unit = {},
 ) {
     var modelEffortMenuOpen by remember { mutableStateOf(false) }

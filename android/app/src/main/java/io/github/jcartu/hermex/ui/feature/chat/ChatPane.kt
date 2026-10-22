@@ -73,9 +73,9 @@ import okhttp3.Request
 fun ChatPane(
     initialSessionId: String?,
     initialNewChat: Boolean,
+    modifier: Modifier = Modifier,
     newChatProjectId: String? = null,
     newChatProfileName: String? = null,
-    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val container = remember(context) {

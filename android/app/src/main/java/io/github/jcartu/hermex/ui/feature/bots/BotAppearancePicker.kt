@@ -1,6 +1,5 @@
 package io.github.jcartu.hermex.ui.feature.bots
 
-import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +35,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.toColorInt
 import io.github.jcartu.hermex.model.ModelCatalogGroup
 import io.github.jcartu.hermex.model.ModelCatalogOption
 import io.github.jcartu.hermex.model.favoriteKey
@@ -118,7 +118,7 @@ fun BotAppearancePicker(
                         val swatch = if (color.hex == BotAvatarColor.ADAPTIVE_HEX) {
                             MaterialTheme.colorScheme.onSurface
                         } else {
-                            Color(AndroidColor.parseColor(color.hex))
+                            Color(color.hex.toColorInt())
                         }
                         Box(
                             modifier = Modifier

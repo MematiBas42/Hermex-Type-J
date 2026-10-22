@@ -76,8 +76,8 @@ private sealed interface ReviewDisplayRow {
 @Composable
 internal fun ReviewDiffScreen(
     files: List<ReviewDiffFileModel>,
-    initialPath: String? = null,
     modifier: Modifier = Modifier,
+    initialPath: String? = null,
     showFileIcons: Boolean = true,
 ) {
     var collapsed by rememberSaveable(stateSaver = stringSetSaver()) {
@@ -107,7 +107,7 @@ internal fun ReviewDiffScreen(
         rows.forEach { row ->
             when (row) {
                 is ReviewDisplayRow.FileHeader -> stickyHeader(key = row.key) {
-                    stickyFileHeader(
+                    StickyFileHeader(
                         model = row.model,
                         collapsed = row.model.file.id in collapsed,
                         viewed = row.model.file.id in viewed,
@@ -151,7 +151,7 @@ internal fun ReviewDiffScreen(
 }
 
 @Composable
-private fun stickyFileHeader(
+private fun StickyFileHeader(
     model: ReviewDiffFileModel,
     collapsed: Boolean,
     viewed: Boolean,

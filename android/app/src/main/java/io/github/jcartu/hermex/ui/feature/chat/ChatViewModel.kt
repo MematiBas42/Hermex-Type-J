@@ -2827,7 +2827,6 @@ class ChatViewModel(
         attachmentLease.key = null
         attachmentLease.files.clear()
         attachmentLease.filesByAttachmentId.clear()
-        super.onCleared()
     }
 
     // MARK: - /btw side stream

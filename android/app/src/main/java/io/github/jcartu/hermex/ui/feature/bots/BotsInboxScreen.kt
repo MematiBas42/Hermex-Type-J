@@ -120,11 +120,11 @@ fun BotsInboxScreen(
     onCreate: (BotProfile?) -> Unit,
     onCreateRoom: () -> Unit,
     onConnection: () -> Unit,
+    modifier: Modifier = Modifier,
     header: (@Composable (onSearch: () -> Unit) -> Unit)? = null,
     bottomBar: (@Composable () -> Unit)? = null,
     bar: BotsInboxBar? = null,
     bottomContentPadding: Dp = 88.dp,
-    modifier: Modifier = Modifier,
 ) {
     var showsSearch by rememberSaveable { mutableStateOf(false) }
     var searchConnectionID by rememberSaveable { mutableStateOf<String?>(null) }

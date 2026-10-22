@@ -48,12 +48,12 @@ fun TaskDetailHeaderCard(
     runningElapsed: Double?,
     isBusy: Boolean,
     canSeeFullOutput: Boolean,
-    showsRunNow: Boolean = true,
-    runNowState: RunNowState = RunNowState.IDLE,
     runNow: () -> Unit,
     togglePauseResume: () -> Unit,
     seeFullOutput: () -> Unit,
     modifier: Modifier = Modifier,
+    showsRunNow: Boolean = true,
+    runNowState: RunNowState = RunNowState.IDLE,
 ) {
     SectionCard(title = "", modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -77,14 +77,14 @@ fun TaskDetailHeaderCard(
                 StatusBadge(text = statusText(job, runningElapsed), color = statusColor(job, runningElapsed))
             }
 
-            nextRunBlock(job, runningElapsed)
+            NextRunBlock(job, runningElapsed)
 
-            job.failureSummary?.let { failure -> failureBlock(failure, canSeeFullOutput, seeFullOutput) }
+            job.failureSummary?.let { failure -> FailureBlock(failure, canSeeFullOutput, seeFullOutput) }
         }
 
         HorizontalDivider(Modifier.padding(vertical = 14.dp))
 
-        actionFooter(
+        ActionFooter(
             showsRunNow = showsRunNow,
             runNowState = runNowState,
             pauseResumeTitle = job.pauseResumeTitle,
@@ -101,7 +101,7 @@ fun TaskDetailHeaderCard(
  * timer.
  */
 @Composable
-private fun nextRunBlock(job: CronJob, runningElapsed: Double?) {
+private fun NextRunBlock(job: CronJob, runningElapsed: Double?) {
     val running = runningElapsed
     val next = job.nextRunAt
     val last = job.lastRunAt
@@ -148,7 +148,7 @@ private fun nextRunBlock(job: CronJob, runningElapsed: Double?) {
 }
 
 @Composable
-private fun failureBlock(
+private fun FailureBlock(
     failure: String,
     canSeeFullOutput: Boolean,
     seeFullOutput: () -> Unit,
@@ -187,7 +187,7 @@ private fun failureBlock(
  * on it. Neither action is the primary one, so they carry equal weight.
  */
 @Composable
-private fun actionFooter(
+private fun ActionFooter(
     showsRunNow: Boolean,
     runNowState: RunNowState,
     pauseResumeTitle: String,

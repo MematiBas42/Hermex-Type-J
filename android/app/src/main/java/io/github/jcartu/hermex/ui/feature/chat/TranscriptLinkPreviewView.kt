@@ -1,6 +1,5 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import io.github.jcartu.hermex.model.ChatMessage
 
 /** Pure URL extraction ported from `TranscriptLinkPreview.swift`. */
@@ -113,7 +113,7 @@ fun TranscriptLinkPreviewView(
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val uri = remember(url) { runCatching { Uri.parse(url) }.getOrNull() }
+    val uri = remember(url) { runCatching { url.toUri() }.getOrNull() }
     val host = uri?.host?.takeIf(String::isNotBlank) ?: "Link"
     Surface(
         onClick = { onOpen(url) },
