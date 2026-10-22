@@ -38,6 +38,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -165,6 +167,29 @@ private fun UserBubble(text: String, hapticsEnabled: Boolean) {
     var expanded by rememberSaveable(text) { mutableStateOf(false) }
     var canFold by remember(text) { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
+    val chipBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    val chipForeground = MaterialTheme.colorScheme.primary
+    val displayText = remember(text, chipBackground, chipForeground) {
+        val annotated = parseComposerTokens(text).toDisplayAnnotatedString()
+        buildAnnotatedString {
+            append(annotated)
+            annotated.getStringAnnotations(
+                tag = COMPOSER_TOKEN_ANNOTATION,
+                start = 0,
+                end = annotated.length,
+            ).forEach { range ->
+                addStyle(
+                    SpanStyle(
+                        color = chipForeground,
+                        background = chipBackground,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    start = range.start,
+                    end = range.end,
+                )
+            }
+        }
+    }
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -175,7 +200,7 @@ private fun UserBubble(text: String, hapticsEnabled: Boolean) {
             Box {
                 SelectionContainer {
                     Text(
-                        text = text,
+                        text = displayText,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = if (expanded) Int.MAX_VALUE else 6,
