@@ -88,8 +88,16 @@ fun HermesChatPane(
         }
         return
     }
+    val modelKey = remember(account.id, saved.id, sessionKey, newChat, profile, botId, parentKey, lineageRoot, botChatRoot, linkedRoot) {
+        buildString {
+            append("hermes-chat:")
+            for (part in listOf(account.id, saved.id, sessionKey, newChat.toString(), profile, botId, parentKey, lineageRoot, botChatRoot, linkedRoot)) {
+                if (part == null) append("-1:") else append(part.length).append(':').append(part)
+            }
+        }
+    }
     val model: HermesChatViewModel = viewModel(
-        key = "hermes-chat|${account.id}|${saved.id}|${botId ?: profile}|${sessionKey ?: "new"}",
+        key = modelKey,
         factory = HermesChatViewModel.factory(container, context, account, sessionKey, newChat, profile, botId, parentKey, lineageRoot, botChatRoot, linkedRoot),
     )
     val state by model.uiState.collectAsStateWithLifecycle()

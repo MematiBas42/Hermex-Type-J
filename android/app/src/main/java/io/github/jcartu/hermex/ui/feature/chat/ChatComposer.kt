@@ -117,9 +117,31 @@ fun ChatComposer(
     val knownBots = remember(mentionReferences, loadMentionSuggestions) {
         mentionReferences.takeIf { loadMentionSuggestions != null }
     }
-    val effectiveTokens = remember(state.draft, draftTokens, knownSkills, knownBots) {
-        draftTokens?.takeIf { it.toServerText() == state.draft }
-            ?: parseComposerTokens(state.draft, knownSkills = knownSkills, knownBots = knownBots)
+    // Bot-mode ViewModel drafts were tokenized without a bot roster, so their
+    // generic @word PathChips are not authoritative. Re-tokenize them against
+    // the roster and only retain files explicitly picked in this composer.
+    var confirmedFilePaths by remember(state.sessionId, attachmentCacheNamespace) {
+        mutableStateOf(emptySet<String>())
+    }
+    val restoredTokens = draftTokens?.takeIf { it.toServerText() == state.draft }
+    val effectiveTokens = remember(
+        state.draft,
+        restoredTokens,
+        knownSkills,
+        knownBots,
+        confirmedFilePaths,
+    ) {
+        if (knownBots == null) {
+            restoredTokens ?: parseComposerTokens(state.draft, knownSkills = knownSkills)
+        } else {
+            parseComposerTokens(
+                text = state.draft,
+                knownPaths = confirmedFilePaths,
+                knownSkills = knownSkills,
+                knownBots = knownBots,
+                preservingTrailing = restoredTokens.orEmpty(),
+            )
+        }
     }
     val fileController = remember(state.sessionId, state.selectedWorkspacePath, attachmentCacheNamespace) {
         ComposerFileAutocompleteController()
@@ -164,8 +186,11 @@ fun ChatComposer(
         if (onDraftTokensChange == null) {
             actions.updateDraft(text)
         } else {
-            val paths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
-                .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
+            val paths = LinkedHashSet<String>(confirmedFilePaths.size + 1)
+            if (knownBots != null) paths.addAll(confirmedFilePaths)
+            for (token in effectiveTokens) {
+                if (token is ComposerToken.PathChip) paths += token.path
+            }
             onDraftTokensChange(
                 parseComposerTokens(
                     text,
@@ -179,11 +204,12 @@ fun ChatComposer(
     }
 
     fun publishTokenCompletion(completion: ComposerCompletion, selectedToken: ComposerToken) {
-        val knownPaths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
-            .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
-            .apply {
-                if (selectedToken is ComposerToken.PathChip) add(selectedToken.path)
-            }
+        val knownPaths = LinkedHashSet<String>(confirmedFilePaths.size + 1)
+        if (knownBots != null) knownPaths.addAll(confirmedFilePaths)
+        for (token in effectiveTokens) {
+            if (token is ComposerToken.PathChip) knownPaths += token.path
+        }
+        if (selectedToken is ComposerToken.PathChip) knownPaths += selectedToken.path
         val completionSkills = knownSkills.toMutableMap().apply {
             if (selectedToken is ComposerToken.SkillChip) {
                 put(io.github.jcartu.hermex.model.SlashSkillFormatter.slug(selectedToken.name), selectedToken.name)
@@ -218,6 +244,7 @@ fun ChatComposer(
             publishDraft(completion.draft)
             moveCaret(completion.caret)
         } else {
+            if (match.path !in confirmedFilePaths) confirmedFilePaths = confirmedFilePaths + match.path
             publishTokenCompletion(completion, ComposerToken.PathChip(match.path))
         }
     }
