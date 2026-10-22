@@ -36,6 +36,12 @@ data class CronMutationResponse(
     val ok: Boolean? = null,
     val job: CronJob? = null,
     val error: String? = null,
+    /**
+     * Set when the server saved the job but warns about it: a Hermes host whose
+     * scheduler could not register a new Task (424, #1040). Never decoded from webui.
+     * Port of `Models/Cron.swift` `CronMutationResponse.warning`.
+     */
+    val warning: String? = null,
 )
 
 @Serializable(with = CronStatusResponseSerializer::class)
@@ -96,9 +102,32 @@ data class CronJob(
     val provider: String? = null,
     val profile: String? = null,
     val toastNotifications: Boolean? = null,
+    /** A Hermes host's claim on a run in progress (`fire_claim`); nil when none is held. */
+    val fireClaim: CronFireClaim? = null,
+    /**
+     * `latest_execution.status` from a Hermes host's executions ledger:
+     * `claimed`, `running`, `completed`, `failed` or `unknown`.
+     */
+    val latestExecutionStatus: String? = null,
+    /**
+     * `scheduler_heartbeat_age_s`: seconds since a Hermes host's scheduler last
+     * ticked for this job's Profile; null when it never has or the host can't tell.
+     */
+    val schedulerHeartbeatAge: Double? = null,
 ) {
     val id: String
         get() = jobId ?: name ?: UUID.randomUUID().toString()
+
+    /**
+     * The job's Profile as a row names it, "Default" for the host's default
+     * Profile; null when the job names none. Port of `CronJob.profileLabel`.
+     */
+    val profileLabel: String?
+        get() {
+            val profile = profile?.trim()
+            if (profile.isNullOrEmpty()) return null
+            return if (profile == "default") "Default" else profile
+        }
 
     val displayName: String
         get() {
@@ -169,6 +198,9 @@ internal object CronJobSerializer : TolerantObjectSerializer<CronJob>("CronJob")
             provider = obj.lossyString("provider"),
             profile = obj.lossyString("profile"),
             toastNotifications = obj.lossyBool("toast_notifications", "toastNotifications"),
+            fireClaim = decodeCronValue(json, obj, CronFireClaim.serializer(), "fire_claim", "fireClaim"),
+            latestExecutionStatus = obj.lossyString("latest_execution_status", "latestExecutionStatus"),
+            schedulerHeartbeatAge = obj.lossyDouble("scheduler_heartbeat_age_s", "schedulerHeartbeatAge"),
         )
 
     override fun toJson(json: Json, value: CronJob): JsonObject = buildJsonObject {
@@ -191,6 +223,32 @@ internal object CronJobSerializer : TolerantObjectSerializer<CronJob>("CronJob")
         value.provider?.let { put("provider", JsonPrimitive(it)) }
         value.profile?.let { put("profile", JsonPrimitive(it)) }
         value.toastNotifications?.let { put("toast_notifications", JsonPrimitive(it)) }
+        value.fireClaim?.let { put("fire_claim", json.encodeToJsonElement(CronFireClaim.serializer(), it)) }
+        value.latestExecutionStatus?.let { put("latest_execution_status", JsonPrimitive(it)) }
+        value.schedulerHeartbeatAge?.let { put("scheduler_heartbeat_age_s", JsonPrimitive(it)) }
+    }
+}
+
+/**
+ * A Hermes host's `fire_claim`, `{at, by}`: a run of the job is in progress.
+ * `by` names the claiming machine and is never decoded.
+ * Port of `Models/Cron.swift` `CronFireClaim`.
+ */
+@Serializable(with = CronFireClaimSerializer::class)
+data class CronFireClaim(
+    val at: Instant? = null,
+)
+
+internal object CronFireClaimSerializer :
+    TolerantObjectSerializer<CronFireClaim>("CronFireClaim") {
+
+    override fun fromJson(json: Json, obj: JsonObject): CronFireClaim =
+        CronFireClaim(
+            at = decodeCronValue(json, obj, CronDateValue.serializer(), "at")?.date,
+        )
+
+    override fun toJson(json: Json, value: CronFireClaim): JsonObject = buildJsonObject {
+        value.at?.let { put("at", json.encodeToJsonElement(CronDateValue.serializer(), CronDateValue(it))) }
     }
 }
 
@@ -473,8 +531,85 @@ data class CronJobEditorDraft(
             return null
         }
 
+    /**
+     * Applies a model picked in the editor, or `null` for "Server default".
+     *
+     * Model and provider always move together, because every picker option
+     * names both: writing one without the other is how a job ends up asking a
+     * provider for a model it does not serve. Clearing writes both back to
+     * empty, which is the server's cue to fall back to the selected profile.
+     * Port of `CronJobEditorDraft.applyModelSelection(_:)`.
+     */
+    fun applyModelSelection(option: ModelCatalogOption?) {
+        model = option?.id ?: ""
+        provider = option?.providerID ?: ""
+    }
+
+    /**
+     * Applies a profile picked in the editor, or `null` for "Server default".
+     *
+     * Deliberately leaves `model` and `provider` alone. Upstream computes both
+     * from the profile's environment only when at least one of them is blank
+     * (`_selected_profile_snapshot_updates`), so prefilling the model here
+     * would suppress the server's own snapshot and move a server decision into
+     * the app. Port of `CronJobEditorDraft.applyProfileSelection(_:)`.
+     */
+    fun applyProfileSelection(profileName: String?) {
+        profile = profileName?.trim() ?: ""
+    }
+
+    /**
+     * Applies a skill selection from the picker.
+     *
+     * `skillsText` stays the storage, so a job created before the picker
+     * existed keeps round-tripping through the same comma-separated form the
+     * server has always received. Port of `CronJobEditorDraft.applySkillSelection(_:)`.
+     */
+    fun applySkillSelection(names: List<String>) {
+        skillsText = names.joinToString(", ")
+    }
+
+    /**
+     * Drops the delivery targets and skills chosen in [earlier], the draft when
+     * another Profile was picked, that the new Profile doesn't offer, once its
+     * lists have loaded (#1040). Choices made since the pick stay. A target is
+     * kept when its platform (`telegram` in `telegram:123`) is offered; with
+     * none left, delivery falls back to `local`, which every Profile offers.
+     * A list that didn't load (null) checks nothing.
+     * Port of `CronJobEditorDraft.keepChoices(madeBefore:offeredTargets:offeredSkills:)`.
+     */
+    fun keepChoices(
+        madeBefore earlier: CronJobEditorDraft,
+        offeredTargets: List<String>?,
+        offeredSkills: List<String>?,
+    ) {
+        if (offeredTargets != null && deliver == earlier.deliver) {
+            val kept = deliver.split(',')
+                .map { it.trim() }
+                .filter { target -> offeredTargets.contains(target.substringBefore(':')) }
+            deliver = if (kept.isEmpty()) "local" else kept.joinToString(",")
+        }
+        if (offeredSkills != null) {
+            applySkillSelection(skills.filter { offeredSkills.contains(it) || !earlier.skills.contains(it) })
+        }
+    }
+
     companion object {
         fun nonEmpty(value: String): String? = value.trim().takeIf { it.isNotEmpty() }
+
+        /**
+         * [selection] with [name] added if absent, removed if present.
+         *
+         * Order is the user's: a newly selected skill goes on the end rather
+         * than re-sorting a list they just read. Matching is exact, because the
+         * server stores back whatever spelling it was sent.
+         * Port of `CronJobEditorDraft.togglingSkill(_:in:)`.
+         */
+        fun togglingSkill(name: String, in selection: List<String>): List<String> {
+            val index = selection.indexOf(name)
+            if (index < 0) return selection + name
+            return selection.toMutableList().also { it.removeAt(index) }
+        }
     }
 }
 
