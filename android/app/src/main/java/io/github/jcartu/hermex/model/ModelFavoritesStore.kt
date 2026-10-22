@@ -2,9 +2,11 @@ package io.github.jcartu.hermex.model
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -57,6 +59,44 @@ private fun decodeFavoriteKeys(raw: String?): List<ModelFavoriteKey> {
 private fun encodeFavoriteKeys(keys: List<ModelFavoriteKey>): String? =
     runCatching { favoritesJson.encodeToString(favoriteKeyListSerializer, keys) }.getOrNull()
 
+private val modelHistoryServerKey = stringPreferencesKey("server.base_url")
+
+/**
+ * Contract C / `docs/agents/multi-server-state-isolation.md`: model history is
+ * scoped to the same normalized server URL as the offline cache. Existing
+ * global history is claimed by the first active server, never copied to every
+ * newly added server. Keep the old value for upgrades and signed-out reads.
+ */
+private fun MutablePreferences.scopedModelHistoryKey(
+    legacyKey: Preferences.Key<String>,
+): Preferences.Key<String> {
+    val server = this[modelHistoryServerKey]?.trim().orEmpty()
+    if (server.isEmpty()) return legacyKey
+    val scopedKey = stringPreferencesKey("${legacyKey.name}|$server")
+    val ownerKey = stringPreferencesKey("${legacyKey.name}.legacyServer")
+    val legacy = this[legacyKey]
+    if (this[scopedKey] == null && legacy != null && this[ownerKey] == null) {
+        this[scopedKey] = legacy
+        this[ownerKey] = server
+    }
+    return scopedKey
+}
+
+private suspend fun DataStore<Preferences>.modelHistoryValue(
+    preferences: Preferences,
+    legacyKey: Preferences.Key<String>,
+): String? {
+    val server = preferences[modelHistoryServerKey]?.trim().orEmpty()
+    if (server.isEmpty()) return preferences[legacyKey]
+    val scopedKey = stringPreferencesKey("${legacyKey.name}|$server")
+    preferences[scopedKey]?.let { return it }
+    if (preferences[legacyKey] == null ||
+        preferences[stringPreferencesKey("${legacyKey.name}.legacyServer")] != null
+    ) return null
+    val migrated = edit { current -> current.scopedModelHistoryKey(legacyKey) }
+    return migrated[scopedKey]
+}
+
 /**
  * Port of `ModelFavoritesStore` from `ModelFavoritesStore.swift`.
  *
@@ -75,7 +115,9 @@ class ModelFavoritesStore(
 
     /** Port of the Swift computed `var favoriteKeys`, as an observable stream. */
     val favoriteKeys: Flow<List<ModelFavoriteKey>> =
-        dataStore.data.map { preferences -> deduplicated(decodeFavoriteKeys(preferences[preferenceKey])) }
+        dataStore.data.map { preferences ->
+            deduplicated(decodeFavoriteKeys(dataStore.modelHistoryValue(preferences, preferenceKey)))
+        }.distinctUntilChanged()
 
     /** One-shot read of `favoriteKeys` (the Swift computed-property access pattern). */
     suspend fun currentFavoriteKeys(): List<ModelFavoriteKey> = favoriteKeys.first()
@@ -89,7 +131,8 @@ class ModelFavoritesStore(
         val key = option.favoriteKey
         var result: List<ModelFavoriteKey> = emptyList()
         dataStore.edit { preferences ->
-            val keys = deduplicated(decodeFavoriteKeys(preferences[preferenceKey])).toMutableList()
+            val scopedKey = preferences.scopedModelHistoryKey(preferenceKey)
+            val keys = deduplicated(decodeFavoriteKeys(preferences[scopedKey])).toMutableList()
             val index = keys.indexOf(key)
             if (index >= 0) {
                 keys.removeAt(index)
@@ -97,7 +140,7 @@ class ModelFavoritesStore(
                 keys.add(key)
             }
             result = deduplicated(keys)
-            encodeFavoriteKeys(result)?.let { preferences[preferenceKey] = it }
+            encodeFavoriteKeys(result)?.let { preferences[scopedKey] = it }
         }
         return result
     }
@@ -107,10 +150,11 @@ class ModelFavoritesStore(
         val favoriteKey = option.favoriteKey
         var result: List<ModelFavoriteKey> = emptyList()
         dataStore.edit { preferences ->
-            val keys = deduplicated(decodeFavoriteKeys(preferences[preferenceKey]))
+            val scopedKey = preferences.scopedModelHistoryKey(preferenceKey)
+            val keys = deduplicated(decodeFavoriteKeys(preferences[scopedKey]))
                 .filter { it != favoriteKey }
             result = deduplicated(keys)
-            encodeFavoriteKeys(result)?.let { preferences[preferenceKey] = it }
+            encodeFavoriteKeys(result)?.let { preferences[scopedKey] = it }
         }
         return result
     }
@@ -118,7 +162,9 @@ class ModelFavoritesStore(
     /** Port of `save(_:)` — deduplicates, then writes; a failed encode skips the write. */
     suspend fun save(keys: List<ModelFavoriteKey>) {
         val encoded = encodeFavoriteKeys(deduplicated(keys)) ?: return
-        dataStore.edit { preferences -> preferences[preferenceKey] = encoded }
+        dataStore.edit { preferences ->
+            preferences[preferences.scopedModelHistoryKey(preferenceKey)] = encoded
+        }
     }
 
     companion object {
@@ -167,8 +213,11 @@ class ModelRecentsStore(
     /** Port of the Swift computed `var recentKeys`, as an observable stream. */
     val recentKeys: Flow<List<ModelFavoriteKey>> =
         dataStore.data.map { preferences ->
-            limitedDeduplicated(decodeFavoriteKeys(preferences[preferenceKey]), limit)
-        }
+            limitedDeduplicated(
+                decodeFavoriteKeys(dataStore.modelHistoryValue(preferences, preferenceKey)),
+                limit,
+            )
+        }.distinctUntilChanged()
 
     /** One-shot read of `recentKeys` (the Swift computed-property access pattern). */
     suspend fun currentRecentKeys(): List<ModelFavoriteKey> = recentKeys.first()
@@ -178,9 +227,10 @@ class ModelRecentsStore(
         val key = option.favoriteKey
         var result: List<ModelFavoriteKey> = emptyList()
         dataStore.edit { preferences ->
-            val existing = limitedDeduplicated(decodeFavoriteKeys(preferences[preferenceKey]), limit)
+            val scopedKey = preferences.scopedModelHistoryKey(preferenceKey)
+            val existing = limitedDeduplicated(decodeFavoriteKeys(preferences[scopedKey]), limit)
             result = limitedDeduplicated(listOf(key) + existing, limit)
-            encodeFavoriteKeys(result)?.let { preferences[preferenceKey] = it }
+            encodeFavoriteKeys(result)?.let { preferences[scopedKey] = it }
         }
         return result
     }
@@ -190,10 +240,11 @@ class ModelRecentsStore(
         val favoriteKey = option.favoriteKey
         var result: List<ModelFavoriteKey> = emptyList()
         dataStore.edit { preferences ->
-            val keys = limitedDeduplicated(decodeFavoriteKeys(preferences[preferenceKey]), limit)
+            val scopedKey = preferences.scopedModelHistoryKey(preferenceKey)
+            val keys = limitedDeduplicated(decodeFavoriteKeys(preferences[scopedKey]), limit)
                 .filter { it != favoriteKey }
             result = limitedDeduplicated(keys, limit)
-            encodeFavoriteKeys(result)?.let { preferences[preferenceKey] = it }
+            encodeFavoriteKeys(result)?.let { preferences[scopedKey] = it }
         }
         return result
     }
@@ -201,7 +252,9 @@ class ModelRecentsStore(
     /** Port of `save(_:)` — dedups + caps, then writes; a failed encode skips the write. */
     suspend fun save(keys: List<ModelFavoriteKey>) {
         val encoded = encodeFavoriteKeys(limitedDeduplicated(keys, limit)) ?: return
-        dataStore.edit { preferences -> preferences[preferenceKey] = encoded }
+        dataStore.edit { preferences ->
+            preferences[preferences.scopedModelHistoryKey(preferenceKey)] = encoded
+        }
     }
 
     companion object {

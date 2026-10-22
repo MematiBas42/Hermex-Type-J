@@ -85,7 +85,9 @@ fun ChatComposer(
     var showsAttachmentPicker by remember { mutableStateOf(false) }
     var dismissedSendError by remember { mutableStateOf<String?>(null) }
     var dismissedConfigurationError by remember { mutableStateOf<String?>(null) }
-    var selection by remember(state.sessionId) { mutableStateOf(TextRange(state.draft.length)) }
+    var selection by remember(state.sessionId, attachmentCacheNamespace) {
+        mutableStateOf(TextRange(state.draft.length))
+    }
     var caretRequestSequence by remember { mutableLongStateOf(0L) }
     var caretRequest by remember { mutableStateOf<ComposerCaretRequest?>(null) }
 
@@ -96,7 +98,7 @@ fun ChatComposer(
         draftTokens?.takeIf { it.toServerText() == state.draft }
             ?: parseComposerTokens(state.draft, knownSkills = knownSkills)
     }
-    val fileController = remember(state.sessionId, state.selectedWorkspacePath) {
+    val fileController = remember(state.sessionId, state.selectedWorkspacePath, attachmentCacheNamespace) {
         ComposerFileAutocompleteController()
     }
     val trigger = remember(state.draft, selection) {
@@ -118,6 +120,16 @@ fun ChatComposer(
         caretRequestSequence += 1
         caretRequest = ComposerCaretRequest(caretRequestSequence, caret)
         selection = TextRange(caret)
+    }
+
+    fun publishDraft(text: String) {
+        if (onDraftTokensChange == null) {
+            actions.updateDraft(text)
+        } else {
+            val paths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
+                .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
+            onDraftTokensChange(parseComposerTokens(text, knownPaths = paths, knownSkills = knownSkills))
+        }
     }
 
     fun publishTokenCompletion(completion: ComposerCompletion, selectedToken: ComposerToken) {
@@ -145,7 +157,7 @@ fun ChatComposer(
         val completion = activeTrigger.applying(selected.replacement, state.draft)
         val token = selected.token
         if (token != null) publishTokenCompletion(completion, token) else {
-            actions.updateDraft(completion.draft)
+            publishDraft(completion.draft)
             moveCaret(completion.caret)
         }
     }
@@ -323,7 +335,7 @@ fun ChatComposer(
                         enabled = !isOfflineReadOnly,
                         keyboardSendEnabled = actionButtonEnabled && !showsStopButton,
                         requestedCaret = caretRequest,
-                        onDraftChange = actions::updateDraft,
+                        onDraftChange = ::publishDraft,
                         onSelectionChange = { selection = it },
                         onKeyboardSend = { actions.send() },
                         recallLastUserMessage = recallLastUserMessage,
@@ -383,6 +395,9 @@ private fun ComposerSendButton(
     val view = LocalView.current
     val choices = composerSendModeChoices(isRunActive = isRunActive, hasPayload = hasPayload)
     val mayOpenMenu = enabled && supportsSendModes && choices.isNotEmpty()
+    LaunchedEffect(mayOpenMenu) {
+        if (!mayOpenMenu) menuOpen = false
+    }
     val visual = when {
         isBusy -> ComposerSendButtonVisual.BUSY
         showsStop -> ComposerSendButtonVisual.STOP
@@ -396,6 +411,7 @@ private fun ComposerSendButton(
                 .combinedClickable(
                     enabled = enabled,
                     role = Role.Button,
+                    hapticFeedbackEnabled = false,
                     onClick = { if (showsStop) onStop() else onSend() },
                     onLongClick = if (mayOpenMenu) {
                         {
@@ -444,7 +460,7 @@ private fun ComposerSendButton(
             }
         }
 
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenu(expanded = menuOpen && mayOpenMenu, onDismissRequest = { menuOpen = false }) {
             choices.forEach { choice ->
                 DropdownMenuItem(
                     text = {

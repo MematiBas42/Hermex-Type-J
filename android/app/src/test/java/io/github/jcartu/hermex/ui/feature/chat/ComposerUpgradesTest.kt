@@ -1,5 +1,11 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -28,6 +34,56 @@ class ComposerUpgradesTest {
                 knownSkills = mapOf("code-review" to "Code Review"),
             ),
         )
+    }
+
+    @Test
+    fun `parsing preserves hand typed sources that are not canonical skill slugs`() {
+        val raw = "Compare /My_Skill with /code-review and @@private.txt"
+        assertEquals(raw, parseComposerTokens(raw).toServerText())
+        assertEquals("@@private.txt", listOf(ComposerToken.PathChip("@private.txt")).toServerText())
+    }
+
+    @Test
+    fun `chip transformation preserves every caret and IME source offset`() {
+        val tokens = listOf(
+            ComposerToken.SkillChip("Code Review"),
+            ComposerToken.Text(" @ "),
+            ComposerToken.PathChip("docs/My File.md"),
+        )
+        val source = tokens.toServerText()
+        val transformed = ComposerChipVisualTransformation(
+            tokens = tokens,
+            chipBackground = Color.Gray,
+            pathContent = Color.White,
+            skillContent = Color.Cyan,
+        ).filter(AnnotatedString(source))
+        assertEquals(source, transformed.text.text)
+        for (offset in 0..source.length) {
+            assertEquals(offset, transformed.offsetMapping.originalToTransformed(offset))
+            assertEquals(offset, transformed.offsetMapping.transformedToOriginal(offset))
+        }
+        assertEquals(2, transformed.text.getStringAnnotations(COMPOSER_TOKEN_ANNOTATION, 0, source.length).size)
+    }
+
+    @Test
+    fun `stale workspace file completion cannot replace the newest query`() = runTest {
+        val controller = ComposerFileAutocompleteController()
+        val oldResult = CompletableDeferred<List<ComposerFileSuggestion>>()
+        val newResult = CompletableDeferred<List<ComposerFileSuggestion>>()
+        val oldJob = launch(start = CoroutineStart.UNDISPATCHED) {
+            controller.search("old") { oldResult.await() }
+        }
+        val newJob = launch(start = CoroutineStart.UNDISPATCHED) {
+            controller.search("new") { newResult.await() }
+        }
+        val newest = ComposerFileSuggestion("new.kt", "new.kt", "", false)
+        newResult.complete(listOf(newest))
+        newJob.join()
+        oldResult.complete(listOf(ComposerFileSuggestion("old.kt", "old.kt", "", false)))
+        oldJob.join()
+        assertEquals(listOf(newest), controller.matches)
+        assertEquals("new", controller.answeredQuery)
+        assertFalse(controller.isLoading)
     }
 
     @Test

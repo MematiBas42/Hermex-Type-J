@@ -63,10 +63,15 @@ internal fun ComposerVoiceInput(
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
+    val onDeviceAvailable = remember(appContext) {
+        Build.VERSION.SDK_INT >= 31 && runCatching {
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)
+        }.getOrDefault(false)
+    }
     val recognitionAvailable = remember(appContext) {
         runCatching { SpeechRecognizer.isRecognitionAvailable(appContext) }.getOrDefault(false)
     }
-    if (!recognitionAvailable) return
+    if (!recognitionAvailable && !onDeviceAvailable) return
 
     val languageTags = remember {
         val preferred = buildList {
@@ -86,8 +91,14 @@ internal fun ComposerVoiceInput(
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
     val currentActions by rememberUpdatedState(actions)
 
-    val recognizer = remember(appContext) {
-        runCatching { SpeechRecognizer.createSpeechRecognizer(appContext) }.getOrNull()
+    val recognizer = remember(appContext, onDeviceAvailable) {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 31 && onDeviceAvailable) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(appContext)
+            }
+        }.getOrNull()
     } ?: return
 
     fun publishTranscript(results: Bundle?) {
@@ -271,6 +282,7 @@ internal fun composerRecognitionIntent(
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, selected)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, selected)
         if (Build.VERSION.SDK_INT >= 34 && tags.size > 1) {

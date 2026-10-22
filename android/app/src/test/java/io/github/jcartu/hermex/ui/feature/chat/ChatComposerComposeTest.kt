@@ -4,10 +4,12 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import io.github.jcartu.hermex.model.PendingAttachment
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.theme.HermexTheme
 import java.lang.reflect.Proxy
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,7 @@ class ChatComposerComposeTest {
         for (paneCount in 1..3) {
             val controller = Robolectric.buildActivity(ComponentActivity::class.java).create()
             val activity = controller.get()
+            var composedPaneCount = 0
             activity.setContent {
                 HermexTheme(darkTheme = true) {
                     CompositionLocalProvider(LocalPaneCount provides paneCount) {
@@ -52,6 +55,7 @@ class ChatComposerComposeTest {
                                 ComposerToken.Text(" "),
                             ),
                         )
+                        SideEffect { composedPaneCount = paneCount }
                     }
                 }
             }
@@ -59,6 +63,7 @@ class ChatComposerComposeTest {
             shadowOf(Looper.getMainLooper()).idle()
 
             assertFalse("pane $paneCount activity finished", activity.isFinishing)
+            assertEquals("pane $paneCount composer did not compose", paneCount, composedPaneCount)
             controller.pause().stop().destroy()
         }
     }
