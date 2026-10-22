@@ -1,5 +1,6 @@
 package io.github.jcartu.hermex.ui.feature.onboarding
 
+import io.github.jcartu.hermex.core.prefs.BotConnectionRecords
 import io.github.jcartu.hermex.core.prefs.CustomHeaderValidationException
 import io.github.jcartu.hermex.core.prefs.EncryptedCustomHeaderRepository
 import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
@@ -10,9 +11,15 @@ import io.github.jcartu.hermex.model.LoginResponse
 import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.model.ServerKind
 import io.github.jcartu.hermex.model.ServerRegistry
+import io.github.jcartu.hermex.model.hermes.BotConnection
+import io.github.jcartu.hermex.model.hermes.BotConnectionAdvice
+import io.github.jcartu.hermex.model.hermes.BotFailure
 import io.github.jcartu.hermex.net.ApiError
 import io.github.jcartu.hermex.net.CustomHeader
 import io.github.jcartu.hermex.net.HermesApi
+import io.github.jcartu.hermex.net.hermes.HermesAddress
+import io.github.jcartu.hermex.net.hermes.HermesConnection
+import io.github.jcartu.hermex.net.hermes.HermesConnections
 import io.github.jcartu.hermex.net.sanitizedForStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,9 +118,14 @@ sealed interface AddServerOutcome {
  * - A probed server gets its own [AuthApiClient] from [clientFactory], bound to
  *   that URL and the headers being tried, so a typo can never bounce the active
  *   server out of its session.
- * - A Hermes server (#899) makes no webui request anywhere here: its sign-in
- *   record is Wave 2's; until one exists it enters [AuthState.LoggedOut] and its
- *   sign-in form shows.
+ * - A Hermes server (#899) makes no webui request anywhere here. Its sign-in is
+ *   the [BotConnection] record saved under its own id in [botConnections]
+ *   (`bot_connection::<server id>`, the iOS Keychain's shape): with a record it
+ *   enters [AuthState.LoggedIn] and its screens sign in through
+ *   [hermesConnections]; without one, or after the host refuses the saved
+ *   sign-in ([hermesSignInRejected]), it enters [AuthState.LoggedOut] and its own
+ *   sign-in form shows. [discardHermesData] drops what this device kept for the
+ *   server's Hermes chats (offline rows, drafts) on sign-out and removal.
  */
 class AuthManager(
     private val clientFactory: (baseUrl: String, headers: List<CustomHeader>) -> AuthApiClient,
@@ -123,11 +135,43 @@ class AuthManager(
     private val customHeaders: EncryptedCustomHeaderRepository,
     private val cookies: SessionCookieStore,
     private val scope: CoroutineScope,
+    private val botConnections: BotConnectionRecords,
+    private val hermesConnections: HermesConnections = HermesConnections(),
+    private val discardHermesData: suspend (server: String, connectionID: String?) -> Unit = { _, _ -> },
     private val logoutTimeoutMillis: Long = 5_000,
 ) {
 
+    /** Port of the `addHermesServer` refusal: a webui server and a Hermes server never share a URL. */
+    class ServerAlreadyConfigured : Exception(ALREADY_CONFIGURED_MESSAGE)
+
+    /** The record write, a sign-in's commit point, failed. */
+    class SignInNotSaved(cause: Throwable?) : Exception(COULD_NOT_SAVE_SIGN_IN_MESSAGE, cause)
+
+    /** [hermesSignIn] on a server with no saved sign-in record. */
+    class HermesSignInUnavailable : Exception("This Hermes server is signed out. Sign in from its form first.")
+
+    /**
+     * A Hermes sign-in a webui server keeps for its Bots, which the connect form offers to copy
+     * into a new Hermes server at the same address (#900). Port of `AuthManager.SavedHermesSignIn`.
+     */
+    data class SavedHermesSignIn(
+        /** The webui server that keeps it, named as Settings → Servers names it. */
+        val serverName: String,
+        val connection: BotConnection,
+    )
+
     private val _state = MutableStateFlow<AuthState>(AuthState.Unconfigured)
     val state: StateFlow<AuthState> = _state.asStateFlow()
+
+    /**
+     * Port of `state.didSet`: leaving a server retires its shared Hermes connection at once,
+     * so a sign-in finishing afterwards stores nothing and resends nothing.
+     */
+    private fun setState(next: AuthState) {
+        val previous = _state.value.account?.id
+        _state.value = next
+        if (previous != null && previous != next.account?.id) hermesConnections.retire(previous)
+    }
 
     private val _lastErrorMessage = MutableStateFlow<String?>(null)
     val lastErrorMessage: StateFlow<String?> = _lastErrorMessage.asStateFlow()
@@ -177,7 +221,7 @@ class AuthManager(
         val legacy = serverConfig.current()
         if (legacy.baseUrl.isBlank()) {
             refreshServers()
-            _state.value = AuthState.Unconfigured
+            setState(AuthState.Unconfigured)
             return
         }
         val id = runCatching { normalizedServerUrl(legacy.baseUrl) }.getOrDefault(legacy.baseUrl.trim())
@@ -242,7 +286,7 @@ class AuthManager(
                 }
                 val loginResponse = client.login(password)
                 if (loginResponse.ok != true) {
-                    _state.value = AuthState.LoggedOut(transientAccount(serverUrl))
+                    setState(AuthState.LoggedOut(transientAccount(serverUrl)))
                     _lastErrorMessage.value = ApiError.Unauthorized.message
                     return
                 }
@@ -334,27 +378,31 @@ class AuthManager(
      * server-side logout bounded by [logoutTimeoutMillis] (an unreachable or
      * slow server never blocks local sign-out — #249), then drops it locally and
      * auto-switches to the next remaining server — returning to onboarding only
-     * when none remain (#17). A Hermes server stays configured and shows its
-     * sign-in form (#899).
+     * when none remain (#17). A Hermes server stays configured: its record and
+     * its Hermes data on this device are deleted and its sign-in form shows,
+     * with its address (#899).
      */
     suspend fun signOut() {
         val active = _state.value.account
         if (active == null) {
             // Defensive: nothing is active. Safe full reset to onboarding.
             clearLocalAuth()
-            _state.value = AuthState.Unconfigured
+            setState(AuthState.Unconfigured)
             return
         }
 
         if (active.kind == ServerKind.HERMES) {
+            discardHermesServerData(active.id)
+            removeBotConnection(active.id)
             _lastErrorMessage.value = null
-            _state.value = AuthState.LoggedOut(active)
+            setState(AuthState.LoggedOut(active))
             return
         }
 
         if (_state.value is AuthState.LoggedIn) {
             attemptBestEffortServerLogout(active)
         }
+        discardHermesServerData(active.id)
         advanceAfterRemoving(active)
     }
 
@@ -362,10 +410,12 @@ class AuthManager(
      * Removes a configured server, port of `removeServer(_:)`. When it's the
      * active one this behaves like [signOut] (best-effort server logout +
      * auto-switch / onboarding). A non-active server is just dropped locally —
-     * its registry row, scoped headers, password and cookies — leaving the
-     * active server's auth untouched (#17).
+     * its registry row, scoped headers, password, Hermes sign-in record and
+     * cookies — leaving the active server's auth untouched (#17). Either way the
+     * server's Hermes data on this device (offline rows, drafts) goes first.
      */
     suspend fun removeServer(account: ServerAccount) {
+        discardHermesServerData(account.id)
         val isActive = _state.value.account?.id == account.id
         if (isActive) {
             if (_state.value is AuthState.LoggedIn && account.kind == ServerKind.WEBUI) {
@@ -377,6 +427,172 @@ class AuthManager(
             registry.remove(account.id)
             refreshServers()
         }
+    }
+
+    // MARK: - Hermes servers (#899)
+
+    /**
+     * Port of `addHermesServer(_:activating:)`: [connection] is a sign-in the connect form
+     * or Move to Hermes has already verified, and becomes the server's own record, saved
+     * under its address, which is also the server's id. Refuses an address already in the
+     * registry with [ServerAlreadyConfigured], as [addServer] does, so a webui server and a
+     * Hermes server never share a URL ([replaceWebuiServer] swaps one for the other). With
+     * [activate] the server becomes active and enters [AuthState.LoggedIn]; a sign-in opened
+     * from Move to Hermes passes `false` and the server is only added (#1266). Returns the
+     * registry entry.
+     */
+    suspend fun addHermesServer(connection: BotConnection, activate: Boolean = true): ServerAccount {
+        _lastErrorMessage.value = null
+        val server = hermesServerID(connection.address)
+        if (registry.servers.any { it.id == server }) {
+            _lastErrorMessage.value = ALREADY_CONFIGURED_MESSAGE
+            throw ServerAlreadyConfigured()
+        }
+        try {
+            botConnections.save(connection, server)
+        } catch (error: Exception) {
+            _lastErrorMessage.value = COULD_NOT_SAVE_SIGN_IN_MESSAGE
+            throw SignInNotSaved(error)
+        }
+        if (!activate) {
+            val account = registry.add(server, ServerKind.HERMES, connection.hermesVersion)
+            refreshServers()
+            return account
+        }
+        val account = registry.activate(server, ServerKind.HERMES, connection.hermesVersion)
+        refreshServers()
+        enterActiveServer(account)
+        return account
+    }
+
+    /**
+     * Port of `replaceWebuiServer(with:)` (#1027): replaces the webui server saved at
+     * [connection]'s address with a Hermes server, for a host that moved from hermes-webui to
+     * the dashboard. The webui server goes as [removeServer] takes it, and the Hermes server
+     * keeps its name, initials and color. Throws [ServerAlreadyConfigured] unless a webui
+     * server is saved there.
+     */
+    suspend fun replaceWebuiServer(connection: BotConnection): ServerAccount {
+        _lastErrorMessage.value = null
+        val server = hermesServerID(connection.address)
+        val webui = _servers.value.firstOrNull { it.id == server }?.takeIf { it.kind == ServerKind.WEBUI }
+        if (webui == null) {
+            _lastErrorMessage.value = ALREADY_CONFIGURED_MESSAGE
+            throw ServerAlreadyConfigured()
+        }
+        // No suspension between the removal's last step and the add, so no screen ever
+        // shows the server the removal falls back to.
+        removeServer(webui)
+        val added = addHermesServer(connection)
+        updateServerIdentity(added, webui.displayName, webui.initials, webui.headerLogoColorHex)
+        return _servers.value.firstOrNull { it.id == added.id } ?: added
+    }
+
+    /**
+     * Port of `savedHermesSignIns(at:)`: the sign-ins configured webui servers keep for
+     * exactly [address], each saved address parsed as the typed one was. Never matched by
+     * `install_id`: it comes from the public `/api/status`, so any host could report
+     * another's and be offered its saved password.
+     */
+    fun savedHermesSignIns(address: HttpUrl): List<SavedHermesSignIn> =
+        _servers.value.mapNotNull { account ->
+            if (account.kind != ServerKind.WEBUI) return@mapNotNull null
+            val saved = runCatching { botConnections.load(account.id) }.getOrNull() ?: return@mapNotNull null
+            val savedAddress = runCatching { HermesAddress.parse(saved.address.toString()) }.getOrNull()
+            if (savedAddress != address) return@mapNotNull null
+            val name = account.displayName.ifEmpty { account.urlString.toHttpUrlOrNull()?.host ?: account.urlString }
+            SavedHermesSignIn(serverName = name, connection = saved)
+        }
+
+    /** The sign-in record saved for [account], or null when it is signed out. */
+    fun hermesSignInRecord(account: ServerAccount): BotConnection? =
+        runCatching { botConnections.load(account.id) }.getOrNull()
+
+    /**
+     * The shared, signed-in connection of a Hermes server: its saved record on
+     * [hermesConnections] after one `signIn()`. Throws [HermesSignInUnavailable] when the
+     * server has no record, and the sign-in's [BotFailure] when the host refuses it (which
+     * also signs the active server out through [hermesSignInRejected]).
+     */
+    suspend fun hermesSignIn(account: ServerAccount): HermesConnection {
+        val saved = hermesSignInRecord(account) ?: throw HermesSignInUnavailable()
+        val connection = hermesConnections.connection(saved, account.id)
+        connection.signIn()
+        return connection
+    }
+
+    /**
+     * Port of `hermesSignInRejected(server:failure:)`: the host refused the active Hermes
+     * server's saved username or password at the login step, or its browser sign-in's refresh
+     * token ([failure], from `HermesConnections.onSignInRejected`), including the one silent
+     * re-sign-in a signed-in 401 starts. Shows that server's sign-in form, with [failure]'s
+     * advice, where no Hermes screen exists to send the refused credential again. Any other
+     * server, and a webui server's own Hermes connection, stays as it is.
+     */
+    fun hermesSignInRejected(server: String, failure: BotFailure = BotFailure.Rejected(401)) {
+        val current = _state.value as? AuthState.LoggedIn ?: return
+        if (current.account.id != server || kind(of = server) != ServerKind.HERMES) return
+        val address = HermesAddress.url(server) ?: return
+        _lastErrorMessage.value = BotConnectionAdvice.message(failure, address)
+        setState(AuthState.LoggedOut(current.account))
+    }
+
+    /**
+     * Port of `hermesSignInSaved(server:)`: the Hermes connection form saved [server]'s
+     * sign-in. Records the release the host reported, and signs the server back in when it is
+     * the active Hermes server waiting on its sign-in form. Token refreshes never call this.
+     * A no-op for a webui server.
+     */
+    fun hermesSignInSaved(server: String) {
+        val account = _servers.value.firstOrNull { it.id == server }?.takeIf { it.kind == ServerKind.HERMES } ?: return
+        val saved = runCatching { botConnections.load(server) }.getOrNull() ?: return
+        var current = account
+        if (account.serverVersion != saved.hermesVersion) {
+            registry.update(account.copy(serverVersion = saved.hermesVersion))
+            refreshServers()
+            current = _servers.value.firstOrNull { it.id == server } ?: account
+        }
+        val state = _state.value
+        if (state is AuthState.LoggedOut && state.account.id == server) {
+            _lastErrorMessage.value = null
+            setState(AuthState.LoggedIn(current))
+        }
+    }
+
+    /**
+     * Port of `hermesServerUpdated(server:to:)` (#1075): an update from Settings installed
+     * [version] on the Hermes server [server]. Records it on the server's saved sign-in and
+     * its registry entry, where a sign-in would have, and changes nothing else: a server
+     * waiting on its sign-in form stays there.
+     */
+    fun hermesServerUpdated(server: String, version: String) {
+        runCatching { botConnections.load(server) }.getOrNull()?.let { saved ->
+            if (saved.hermesVersion != version) runCatching { botConnections.save(saved.copy(hermesVersion = version), server) }
+        }
+        val account = _servers.value.firstOrNull { it.id == server }?.takeIf { it.kind == ServerKind.HERMES } ?: return
+        if (account.serverVersion == version) return
+        registry.update(account.copy(serverVersion = version))
+        refreshServers()
+        val state = _state.value
+        when {
+            state is AuthState.LoggedIn && state.account.id == server -> _servers.value.firstOrNull { it.id == server }?.let { setState(AuthState.LoggedIn(it)) }
+            state is AuthState.LoggedOut && state.account.id == server -> _servers.value.firstOrNull { it.id == server }?.let { setState(AuthState.LoggedOut(it)) }
+        }
+    }
+
+    /** A Hermes server's id: its address as `HermesAddress.parse` normalizes it, else the address as given. */
+    private fun hermesServerID(address: HttpUrl): String =
+        HermesAddress.serverID(runCatching { HermesAddress.parse(address.toString()) }.getOrDefault(address))
+
+    /** Drops the Hermes data this device kept for [server] (offline rows, drafts), keyed by its current record. */
+    private suspend fun discardHermesServerData(server: String) {
+        val connectionID = runCatching { botConnections.load(server) }.getOrNull()?.id
+        runCatching { discardHermesData(server, connectionID) }
+    }
+
+    /** Port of `removeBotConnection(for:)`: deletes [server]'s sign-in record, which also retires its shared connection. */
+    private fun removeBotConnection(server: String) {
+        runCatching { botConnections.remove(server) }
     }
 
     /**
@@ -411,8 +627,8 @@ class AuthManager(
         refreshServers()
         val updated = _servers.value.firstOrNull { it.id == account.id } ?: return
         when (val current = _state.value) {
-            is AuthState.LoggedIn -> if (current.account.id == updated.id) _state.value = AuthState.LoggedIn(updated)
-            is AuthState.LoggedOut -> if (current.account.id == updated.id) _state.value = AuthState.LoggedOut(updated)
+            is AuthState.LoggedIn -> if (current.account.id == updated.id) setState(AuthState.LoggedIn(updated))
+            is AuthState.LoggedOut -> if (current.account.id == updated.id) setState(AuthState.LoggedOut(updated))
             AuthState.Unconfigured -> Unit
         }
     }
@@ -433,7 +649,7 @@ class AuthManager(
         when (val current = _state.value) {
             is AuthState.LoggedIn -> {
                 cookies.clear(current.account.urlString)
-                _state.value = AuthState.LoggedOut(current.account)
+                setState(AuthState.LoggedOut(current.account))
             }
             is AuthState.LoggedOut -> {
                 cookies.clear(current.account.urlString)
@@ -451,19 +667,21 @@ class AuthManager(
      * Enters [account], already active in the registry, port of
      * `enterActiveServer`: a webui server's headers are activated before the
      * projection changes (so the first request carries them) and it enters
-     * `.loggedIn` optimistically; a Hermes server sends no webui headers and,
-     * with no saved sign-in record yet, shows its sign-in form.
+     * `.loggedIn` optimistically; a Hermes server sends no webui headers and is
+     * signed in only while its own record exists; without one its sign-in form
+     * shows (#899).
      */
     private suspend fun enterActiveServer(account: ServerAccount) {
         if (account.kind == ServerKind.HERMES) {
             customHeaders.activate("")
             serverConfig.save(account.urlString, "")
-            _state.value = AuthState.LoggedOut(account)
+            val saved = runCatching { botConnections.load(account.id) }.getOrNull()
+            setState(if (saved == null) AuthState.LoggedOut(account) else AuthState.LoggedIn(account))
             return
         }
         customHeaders.activate(account.urlString)
         serverConfig.save(account.urlString, credentials.password(account.id))
-        _state.value = AuthState.LoggedIn(account)
+        setState(AuthState.LoggedIn(account))
     }
 
     /**
@@ -482,17 +700,21 @@ class AuthManager(
         } else {
             serverConfig.clear()
             customHeaders.activate("")
-            _state.value = AuthState.Unconfigured
+            setState(AuthState.Unconfigured)
         }
     }
 
     /**
      * Deletes one server's local auth artifacts — its scoped custom headers, its
-     * password and (webui only) its cookies — without touching the registry.
+     * password, its Hermes sign-in record (which retires its shared connection)
+     * and (webui only) its cookies — without touching the registry. A Hermes
+     * server's sign-in never uses the shared cookie jar, so the cookies of a
+     * webui server on the same host stay.
      */
     private suspend fun clearLocalArtifacts(account: ServerAccount) {
         runCatching { customHeaders.clearFor(account.urlString) }
         credentials.remove(account.id)
+        removeBotConnection(account.id)
         if (account.kind == ServerKind.WEBUI) cookies.clear(account.urlString)
     }
 
@@ -551,6 +773,12 @@ class AuthManager(
         const val SESSION_EXPIRED_MESSAGE = "Your session expired. Sign in again."
 
         const val ALREADY_CONFIGURED_MESSAGE = "This server is already configured."
+
+        /** The record write that is a Hermes sign-in's commit point failed. */
+        const val COULD_NOT_SAVE_SIGN_IN_MESSAGE = "Could not save sign-in details on this device."
+
+        /** A Hermes dashboard answered at a saved webui server's address (#1027); the form offers Replace. */
+        const val WEBUI_SAVED_AT_ADDRESS_MESSAGE = "A webui server is saved at this address."
 
         /**
          * Port of `unsupportedSignInMessage(for:)`: why the app can't complete

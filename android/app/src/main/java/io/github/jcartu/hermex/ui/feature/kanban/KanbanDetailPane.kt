@@ -104,13 +104,29 @@ internal fun KanbanDetailPane(
             )
             card.assignee?.let { AssistChip(onClick = {}, enabled = false, label = { Text(it) }) }
             AssistChip(onClick = {}, enabled = false, label = { Text("P${card.priority ?: 0}") })
-            if (card.status?.normalized == "blocked") {
-                AssistChip(onClick = { onUnblock(card.cardId.orEmpty()) }, enabled = state.canMutate, label = { Text("Unblock") }, leadingIcon = { Icon(Icons.Filled.LockOpen, null) })
-            } else {
-                AssistChip(onClick = { showBlock = true }, enabled = state.canMutate, label = { Text("Block") }, leadingIcon = { Icon(Icons.Filled.Block, null) })
+            val normalizedStatus = card.status?.normalized
+            if (normalizedStatus == "blocked") {
+                AssistChip(
+                    onClick = { onUnblock(card.cardId.orEmpty()) },
+                    enabled = state.canMutate,
+                    label = { Text("Unblock") },
+                    leadingIcon = { Icon(Icons.Filled.LockOpen, null) },
+                )
+            } else if (state.backend.offersBlock(normalizedStatus)) {
+                AssistChip(
+                    onClick = { showBlock = true },
+                    enabled = state.canMutate,
+                    label = { Text("Block") },
+                    leadingIcon = { Icon(Icons.Filled.Block, null) },
+                )
             }
             DropdownMenu(showStatus, { showStatus = false }) {
-                state.configuration?.columns.orEmpty().filterNot { it.equals("running", true) }.forEach { status ->
+                val moveStatuses = if (state.backend == KanbanBackend.HERMES) {
+                    state.backend.createStatuses
+                } else {
+                    state.configuration?.columns.orEmpty().filterNot { it.equals("running", true) }
+                }
+                moveStatuses.filterNot { it == normalizedStatus }.forEach { status ->
                     DropdownMenuItem(
                         text = { Text(status) },
                         onClick = { showStatus = false; onSetStatus(card.cardId.orEmpty(), status) },
@@ -254,7 +270,9 @@ private fun RunsSection(
                 Column(Modifier.padding(12.dp)) {
                     Text(run.status ?: run.outcome ?: "Run", fontWeight = FontWeight.Bold)
                     run.summary?.let { Text(it) }; run.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    TextButton(onClick = { onLoadLog(card.cardId.orEmpty(), run.runId) }) { Text("Load worker log") }
+                    if (state.capabilities.workerLogs) {
+                        TextButton(onClick = { onLoadLog(card.cardId.orEmpty(), run.runId) }) { Text("Load worker log") }
+                    }
                 }
             }
         }
