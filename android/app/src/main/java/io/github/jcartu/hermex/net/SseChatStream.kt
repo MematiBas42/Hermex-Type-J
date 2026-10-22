@@ -5,28 +5,32 @@ import io.github.jcartu.hermex.model.ChatStreamStatusResponse
 import io.github.jcartu.hermex.model.ClarificationPendingResponse
 import io.github.jcartu.hermex.model.ContextWindowSnapshot
 import io.github.jcartu.hermex.model.SessionDetail
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
+import okhttp3.Call
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
-import okhttp3.sse.EventSource
-import okhttp3.sse.EventSourceListener
-import okhttp3.sse.EventSources
+import okio.BufferedSource
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
  * Port of `Networking/SSEClient.swift` — the chat SSE transport plus the
- * event decoder, on okhttp-sse instead of LDSwiftEventSource.
+ * event decoder, on a plain OkHttp call with a line reader that follows the
+ * `text/event-stream` grammar (the `okhttp-sse` reader swallows comment
+ * lines, and the Swift client needs them).
  *
  * Semantics mirrored from Swift:
  * - No auto-reconnect (`connectionErrorHandler = .shutdown`): a transport
@@ -36,9 +40,9 @@ import java.util.concurrent.TimeUnit
  *   sequence. NEVER re-send the user message on reconnect.
  * - Unknown event types decode to [ChatStreamEvent.Ignored] instead of
  *   failing the stream.
- * - Heartbeat comment lines (`: ping`) are consumed by okhttp-sse's parser
- *   and never surface; [ChatStreamEvent.Heartbeat] exists for parity with the
- *   Swift enum (whose transport reported comments) but is not emitted here.
+ * - Comment lines (`: heartbeat`) surface as [ChatStreamEvent.Heartbeat]
+ *   (`SSEEventHandler.onComment`): they prove the transport is alive without
+ *   semantic progress, which keeps the "Checking stream" chip hidden (#227).
  */
 class SseChatStream(
     httpClient: OkHttpClient,
@@ -47,11 +51,9 @@ class SseChatStream(
     private val customHeaderProvider: () -> List<CustomHeader> = { CustomHeaderStore.shared.snapshot() },
 ) {
     /** SSE connections stay open indefinitely, so the read timeout is disabled. */
-    private val factory = EventSources.createFactory(
-        httpClient.newBuilder()
-            .readTimeout(0, TimeUnit.SECONDS)
-            .build(),
-    )
+    private val client = httpClient.newBuilder()
+        .readTimeout(0, TimeUnit.SECONDS)
+        .build()
 
     /** Last non-blank SSE `id:` seen on the current connection (the server's replay cursor). */
     @Volatile
@@ -65,10 +67,29 @@ class SseChatStream(
      * after a [ChatStreamEvent.TransportError]. Cancelling the collector
      * closes the connection.
      */
-    fun connect(streamId: String, replayAfterSeq: Int? = null): Flow<ChatStreamEvent> = callbackFlow {
+    fun connect(streamId: String, replayAfterSeq: Int? = null): Flow<ChatStreamEvent> =
+        openEventStream { api.chatStreamUrl(streamId, replayAfterSeq) }
+
+    /** `GET /api/approval/stream?session_id=…` — the per-session approval feed (`approvalStreamURL`). */
+    fun connectApprovalStream(sessionId: String): Flow<ChatStreamEvent> =
+        openEventStream { api.approvalStreamUrl(sessionId) }
+
+    /** `GET /api/clarify/stream?session_id=…` — the per-session clarification feed (`clarifyStreamURL`). */
+    fun connectClarifyStream(sessionId: String): Flow<ChatStreamEvent> =
+        openEventStream { api.clarifyStreamUrl(sessionId) }
+
+    private fun openEventStream(url: suspend () -> HttpUrl): Flow<ChatStreamEvent> = callbackFlow {
         lastEventId = null
 
-        val builder = Request.Builder().url(api.chatStreamUrl(streamId, replayAfterSeq))
+        val resolvedUrl = try {
+            url()
+        } catch (error: ApiError) {
+            trySend(ChatStreamEvent.TransportError(error.message))
+            close()
+            awaitClose { }
+            return@callbackFlow
+        }
+        val builder = Request.Builder().url(resolvedUrl)
         // Custom headers merged underneath the built-ins so the built-ins win on
         // collision; an empty list leaves the built-in three unchanged (#255).
         val headers = customHeaderProvider().mergedUnder(
@@ -82,36 +103,60 @@ class SseChatStream(
             builder.header(name, value)
         }
 
-        val source = factory.newEventSource(
-            builder.build(),
-            object : EventSourceListener() {
-                override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                    val eventId = id?.trim()
-                    if (!eventId.isNullOrEmpty()) {
-                        lastEventId = eventId
-                    }
-                    trySend(SseEventDecoder.decode(json, type ?: "message", data))
-                }
+        val call = client.newCall(builder.build())
+        val reader = launch(Dispatchers.IO) {
+            try {
+                readEvents(call) { event -> trySend(event) }
+            } finally {
+                close()
+            }
+        }
 
-                override fun onClosed(eventSource: EventSource) {
-                    close()
-                }
-
-                override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                    trySend(
-                        ChatStreamEvent.TransportError(
-                            t?.message
-                                ?: response?.let { "The stream returned HTTP ${it.code}." }
-                                ?: "The stream connection failed.",
-                        ),
-                    )
-                    close()
-                }
-            },
-        )
-
-        awaitClose { source.cancel() }
+        awaitClose {
+            call.cancel()
+            reader.cancel()
+        }
     }.buffer(Channel.UNLIMITED)
+
+    /** Executes [call] and feeds every frame through [emit]; returns at EOF, failure or cancellation. */
+    private fun readEvents(call: Call, emit: (ChatStreamEvent) -> Unit) {
+        val response = try {
+            call.execute()
+        } catch (error: IOException) {
+            if (!call.isCanceled()) emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."))
+            return
+        }
+        response.use {
+            if (!it.isSuccessful) {
+                emit(ChatStreamEvent.TransportError("The stream returned HTTP ${it.code}."))
+                return
+            }
+            val source = it.body?.source()
+            if (source == null) {
+                emit(ChatStreamEvent.TransportError("The stream connection failed."))
+                return
+            }
+            val parser = SseFrameParser(
+                onComment = { emit(ChatStreamEvent.Heartbeat) },
+                onEventId = { id -> lastEventId = id },
+                onFrame = { type, data -> emit(SseEventDecoder.decode(json, type, data)) },
+            )
+            try {
+                readLines(source, parser)
+            } catch (error: IOException) {
+                if (!call.isCanceled()) {
+                    emit(ChatStreamEvent.TransportError(error.message ?: "The stream connection failed."))
+                }
+            }
+        }
+    }
+
+    private fun readLines(source: BufferedSource, parser: SseFrameParser) {
+        while (true) {
+            val line = source.readUtf8Line() ?: return
+            parser.feed(line)
+        }
+    }
 
     /**
      * `GET /api/chat/stream/status` — ask whether the stream is still alive
@@ -119,6 +164,62 @@ class SseChatStream(
      */
     suspend fun statusCheck(streamId: String): ChatStreamStatusResponse =
         api.chatStreamStatus(streamId)
+}
+
+/**
+ * The `text/event-stream` line grammar: `field: value` lines accumulate into
+ * one frame dispatched on a blank line (`data` lines join with `\n`; a frame
+ * without data is discarded, as the W3C algorithm and OkHttp's reader do);
+ * lines starting with `:` are comments; `retry` is ignored because the
+ * consumers own reconnection.
+ */
+internal class SseFrameParser(
+    private val onComment: (String) -> Unit,
+    private val onEventId: (String) -> Unit,
+    private val onFrame: (type: String, data: String) -> Unit,
+) {
+    private val data = StringBuilder()
+    private var eventType = ""
+    private var hasData = false
+
+    fun feed(rawLine: String) {
+        val line = rawLine.removeSuffix("\r")
+        if (line.isEmpty()) {
+            dispatch()
+            return
+        }
+        if (line.startsWith(":")) {
+            onComment(line.drop(1).trimStart())
+            return
+        }
+        val colon = line.indexOf(':')
+        val field = if (colon >= 0) line.substring(0, colon) else line
+        var value = if (colon >= 0) line.substring(colon + 1) else ""
+        if (value.startsWith(" ")) value = value.drop(1)
+        when (field) {
+            "data" -> {
+                if (hasData) data.append('\n')
+                data.append(value)
+                hasData = true
+            }
+            "event" -> eventType = value
+            "id" -> {
+                val id = value.trim()
+                if (id.isNotEmpty() && !id.contains('\u0000')) onEventId(id)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun dispatch() {
+        val type = eventType.ifEmpty { "message" }
+        val payload = data.toString()
+        val shouldDispatch = hasData
+        data.setLength(0)
+        eventType = ""
+        hasData = false
+        if (shouldDispatch) onFrame(type, payload)
+    }
 }
 
 /** Port of the Swift `SSEEvent` enum — one case per frame the chat stream emits. */

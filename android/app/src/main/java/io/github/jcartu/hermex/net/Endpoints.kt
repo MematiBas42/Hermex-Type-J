@@ -27,6 +27,12 @@ sealed class Endpoint {
 
     data class SessionStatus(val id: String) : Endpoint()
     object NewSession : Endpoint()
+    /** `POST /api/session/import_cli` — imports a CLI/messaging session into the WebUI store. */
+    object ImportCliSession : Endpoint()
+    /** `POST /api/session/duplicate` — a real copy, no fork lineage (#25). */
+    object DuplicateSession : Endpoint()
+    /** `POST /api/session/clear` — truncates the session to empty on the server (#389). Confirm first. */
+    object ClearSession : Endpoint()
     object RenameSession : Endpoint()
     object DeleteSession : Endpoint()
     object PinSession : Endpoint()
@@ -45,14 +51,23 @@ sealed class Endpoint {
     object RenameProject : Endpoint()
     object DeleteProject : Endpoint()
     object ChatStart : Endpoint()
-    data class ChatStream(val streamId: String) : Endpoint()
+    /**
+     * `GET /api/chat/stream`. [replayAfterSeq] is the opt-in reconnect cursor:
+     * omitted on a live attach so the URL stays byte-identical; negative
+     * cursors clamp to 0.
+     */
+    data class ChatStream(val streamId: String, val replayAfterSeq: Int? = null) : Endpoint()
     data class ChatCancel(val streamId: String) : Endpoint()
     data class ChatStreamStatus(val streamId: String) : Endpoint()
     object ChatSteer : Endpoint()
     object SubmitGoal : Endpoint()
     data class ApprovalPending(val sessionId: String) : Endpoint()
+    /** `GET /api/approval/stream` — the per-session approval SSE feed. */
+    data class ApprovalStream(val sessionId: String) : Endpoint()
     object ApprovalRespond : Endpoint()
     data class ClarifyPending(val sessionId: String) : Endpoint()
+    /** `GET /api/clarify/stream` — the per-session clarification SSE feed. */
+    data class ClarifyStream(val sessionId: String) : Endpoint()
     object ClarifyRespond : Endpoint()
     object Btw : Endpoint()
     object Background : Endpoint()
@@ -160,6 +175,9 @@ sealed class Endpoint {
             is Session -> "/api/session"
             is SessionStatus -> "/api/session/status"
             NewSession -> "/api/session/new"
+            ImportCliSession -> "/api/session/import_cli"
+            DuplicateSession -> "/api/session/duplicate"
+            ClearSession -> "/api/session/clear"
             RenameSession -> "/api/session/rename"
             DeleteSession -> "/api/session/delete"
             PinSession -> "/api/session/pin"
@@ -200,8 +218,10 @@ sealed class Endpoint {
             ChatSteer -> "/api/chat/steer"
             SubmitGoal -> "/api/goal"
             is ApprovalPending -> "/api/approval/pending"
+            is ApprovalStream -> "/api/approval/stream"
             ApprovalRespond -> "/api/approval/respond"
             is ClarifyPending -> "/api/clarify/pending"
+            is ClarifyStream -> "/api/clarify/stream"
             ClarifyRespond -> "/api/clarify/respond"
             Btw -> "/api/btw"
             Background -> "/api/background"
@@ -295,11 +315,19 @@ sealed class Endpoint {
             }
 
             is SessionStatus -> listOf("session_id" to id)
-            is ChatStream -> listOf("stream_id" to streamId)
+            is ChatStream -> buildList {
+                add("stream_id" to streamId)
+                if (replayAfterSeq != null) {
+                    add("replay" to "1")
+                    add("after_seq" to "${maxOf(0, replayAfterSeq)}")
+                }
+            }
             is ChatCancel -> listOf("stream_id" to streamId)
             is ChatStreamStatus -> listOf("stream_id" to streamId)
             is ApprovalPending -> listOf("session_id" to sessionId)
+            is ApprovalStream -> listOf("session_id" to sessionId)
             is ClarifyPending -> listOf("session_id" to sessionId)
+            is ClarifyStream -> listOf("session_id" to sessionId)
             is BackgroundStatus -> listOf("session_id" to sessionId)
             is SessionYolo -> sessionId?.let { listOf("session_id" to it) } ?: emptyList()
 

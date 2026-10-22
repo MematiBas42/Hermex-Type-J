@@ -38,6 +38,12 @@ data class PendingAttachment(
     val size: Int? = null,
     val isImage: Boolean,
     val thumbnailData: ByteArray? = null,
+    /**
+     * Name of the durable app-owned copy in `ChatDraftAttachmentStore`, so the
+     * attachment can be re-uploaded after the process or the server's
+     * per-session upload inbox is gone. Voice notes leave it null.
+     */
+    val draftFileName: String? = null,
 ) {
     companion object {
         const val maximumUploadBytes: Int = 20 * 1_024 * 1_024
@@ -49,20 +55,50 @@ data class PendingAttachment(
         /**
          * Composer draft text with the attachments appended as a reference list, e.g.
          * `"…draft\n\n[Attached files: a.png, notes.txt]"`. Returns the draft unchanged
-         * when no attachment carries a non-empty reference.
+         * when no attachment carries a non-empty reference. An attachment-only send
+         * (blank draft) synthesizes the message the web UI sends (`static/messages.js`),
+         * since the server requires non-empty text.
          */
         fun chatMessageText(draft: String, attachments: List<PendingAttachment>): String {
-            val references = attachments
-                .map { it.chatReference }
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-
+            val references = agentReferences(attachments)
             if (references.isEmpty()) {
                 return draft
             }
 
+            if (draft.trim().isEmpty()) {
+                return "I've uploaded ${references.size} file(s): ${references.joinToString(", ")}"
+            }
+
             return "$draft\n\n[Attached files: ${references.joinToString(", ")}]"
         }
+
+        private val attachmentOnlyMessagePattern = Regex("""I've uploaded \d+ file\(s\): .+""", RegexOption.DOT_MATCHES_ALL)
+
+        /** True for the text [chatMessageText] makes up for an attachment-only send. */
+        fun isAttachmentOnlyMessageText(text: String): Boolean = attachmentOnlyMessagePattern.matches(text)
+
+        /**
+         * The steer text with the web UI's attached-files note appended verbatim
+         * (`static/commands.js`, `_steerTextWithPendingFiles`), so a steer reads
+         * the same from either client.
+         */
+        fun steerMessageText(draft: String, attachments: List<PendingAttachment>): String {
+            val references = agentReferences(attachments)
+            if (references.isEmpty()) {
+                return draft
+            }
+
+            val note = "[Attached files for this steer: ${references.joinToString(", ")}]\n" +
+                "Use the file tools/read_file to inspect these documents if needed."
+            return "$draft\n\n$note"
+        }
+
+        /** Where the agent reads each attachment: its uploaded path, or its name when the upload returned no path. */
+        private fun agentReferences(attachments: List<PendingAttachment>): List<String> =
+            attachments
+                .map { it.chatReference }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
     }
 
     /**

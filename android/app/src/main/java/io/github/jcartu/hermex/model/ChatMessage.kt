@@ -16,9 +16,10 @@ import kotlin.math.truncate
 
 /**
  * Port of `ChatMessage.swift`. Wire format is snake_case (the Swift APIClient
- * decodes with `.convertFromSnakeCase`); the special keys `_ts` and `_turn_tps`
- * mirror the Swift `underscoredTimestamp`/`turnTps` CodingKeys. camelCase
- * spellings are accepted as fallbacks, matching the Swift plain-decoder paths.
+ * decodes with `.convertFromSnakeCase`); the special keys `_ts`, `_turn_tps`
+ * and `_turn_duration` mirror the Swift `underscoredTimestamp`/`turnTps`/
+ * `turnDuration` CodingKeys. camelCase spellings are accepted as fallbacks,
+ * matching the Swift plain-decoder paths (the SSE `done` payload).
  */
 @Serializable(with = ChatMessageSerializer::class)
 data class ChatMessage(
@@ -33,12 +34,63 @@ data class ChatMessage(
     val contentParts: List<JSONValue>? = null,
     val reasoning: String? = null,
     val attachments: List<MessageAttachment>? = null,
+    /**
+     * Display-only server semantics: `"steer"` marks a mid-turn steering hint;
+     * unknown values fall back to ordinary rendering.
+     */
+    val displayKind: String? = null,
+    val displayMetadata: Map<String, JSONValue>? = null,
     val turnTps: Double? = null,
+    /**
+     * Server-measured wall-clock seconds for the whole turn, set on its final
+     * assistant message (`_turnDuration`). Absent on older transcripts.
+     */
+    val turnDuration: Double? = null,
 ) {
     val id: String
         get() = messageId ?: "${role ?: "unknown"}-${timestamp ?: 0.0}-${content ?: ""}"
 
+    /**
+     * True for a steering hint: either the server flagged it with
+     * `display_kind: "steer"`, or the content is exactly the out-of-band
+     * marker block (older rows, or rows that lost the flag).
+     */
+    val isSteerMessage: Boolean
+        get() = displayKind == STEER_DISPLAY_KIND || (role == "user" && isSteerWrappedContent(content))
+
+    /** The steer text with the out-of-band wrapper stripped; raw content for other messages. */
+    val steerText: String
+        get() = strippedSteerText(content) ?: content ?: ""
+
     companion object {
+        /** `display_kind` value the server persists for a mid-turn steering hint. */
+        const val STEER_DISPLAY_KIND = "steer"
+
+        /**
+         * The exact out-of-band wrapper hermes-agent ≥ 2026.9.11 persists around
+         * each mid-turn steer. Recognition requires this exact text.
+         */
+        private const val STEER_MARKER_OPEN =
+            "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position; " +
+                "not tool output and not a new delivery when replayed from conversation history]"
+        private const val STEER_MARKER_CLOSE = "[/OUT-OF-BAND USER MESSAGE]"
+
+        /**
+         * Port of `strippedSteerText(from:)`: null unless the content is exactly a
+         * marker-wrapped block (first line the opening marker, last line the
+         * closing marker); otherwise the trimmed inner text.
+         */
+        fun strippedSteerText(content: String?): String? {
+            content ?: return null
+            val lines = content.trim().split('\n').map { it.trimEnd('\r') }
+            if (lines.size < 2) return null
+            if (lines.first().trim() != STEER_MARKER_OPEN) return null
+            if (lines.last().trim() != STEER_MARKER_CLOSE) return null
+            return lines.subList(1, lines.size - 1).joinToString("\n").trim()
+        }
+
+        fun isSteerWrappedContent(content: String?): Boolean = strippedSteerText(content) != null
+
         internal fun fromJson(json: kotlinx.serialization.json.Json, obj: JsonObject): ChatMessage {
             val role = obj.lossyString("role")
             val (content, contentParts) = decodeContentTolerantly(obj)
@@ -55,7 +107,12 @@ data class ChatMessage(
                 contentParts = contentParts,
                 reasoning = obj.lossyString("reasoning"),
                 attachments = attachments(decodedAttachments, enrichedByMarkerIn = content),
+                // Both key spellings: the REST client decodes snake_case, while the
+                // SSE `done` payload's primary path uses a plain decoder.
+                displayKind = obj.lossyString("display_kind", "displayKind"),
+                displayMetadata = decodeJsonValueMap(obj.presentElement("display_metadata", "displayMetadata")),
                 turnTps = obj.lossyDouble("_turn_tps", "_turnTps"),
+                turnDuration = obj.lossyDouble("_turn_duration", "_turnDuration"),
             )
         }
 
@@ -170,6 +227,12 @@ data class ChatMessage(
             val array = element as? JsonArray ?: return null
             return array.map { JSONValue(it) }
         }
+
+        /** `[String: JSONValue]?` decode (`try? decodeIfPresent`): a non-object is null, never an error. */
+        internal fun decodeJsonValueMap(element: JsonElement?): Map<String, JSONValue>? {
+            val obj = element as? JsonObject ?: return null
+            return obj.mapValues { (_, entry) -> JSONValue(entry) }
+        }
     }
 }
 
@@ -197,7 +260,12 @@ internal object ChatMessageSerializer : TolerantObjectSerializer<ChatMessage>("C
                 json.encodeToJsonElement(ListSerializer(MessageAttachment.serializer()), attachments),
             )
         }
+        value.displayKind?.let { put("display_kind", JsonPrimitive(it)) }
+        value.displayMetadata?.let { metadata ->
+            put("display_metadata", JsonObject(metadata.mapValues { (_, entry) -> entry.element }))
+        }
         value.turnTps?.let { put("_turn_tps", JsonPrimitive(it)) }
+        value.turnDuration?.let { put("_turn_duration", JsonPrimitive(it)) }
     }
 }
 

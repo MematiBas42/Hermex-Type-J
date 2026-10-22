@@ -79,26 +79,7 @@ fun ChatPane(
     }
 
     val viewModel: ChatViewModel = viewModel(
-        factory = viewModelFactory {
-            initializer {
-                ChatViewModel(
-                    api = container.api,
-                    sse = SseChatStream(
-                        httpClient = container.okHttpClient,
-                        json = container.json,
-                        api = container.api,
-                        customHeaderProvider = { container.customHeaderStore.snapshot() },
-                    ),
-                    cacheStore = container.cacheStore,
-                    serverConfig = container.serverConfig,
-                    settings = container.settings,
-                    favorites = container.modelFavorites,
-                    recents = container.modelRecents,
-                    initialSessionId = initialSessionId,
-                    initialNewChat = initialNewChat,
-                )
-            }
-        },
+        factory = ChatViewModel.factory(container, initialSessionId, initialNewChat),
     )
 
     // Outside selection changes reload the transcript; switchToSession is

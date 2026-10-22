@@ -10,6 +10,7 @@ import io.github.jcartu.hermex.model.PendingApproval
 import io.github.jcartu.hermex.model.PendingAttachment
 import io.github.jcartu.hermex.model.PendingClarification
 import io.github.jcartu.hermex.model.ProfileSummary
+import io.github.jcartu.hermex.model.SessionSummary
 import io.github.jcartu.hermex.model.SkillSlashSuggestion
 import io.github.jcartu.hermex.model.ToolCall
 import io.github.jcartu.hermex.model.ToolCallGroup
@@ -19,8 +20,90 @@ import java.util.UUID
 /**
  * Port of the Swift `ActiveStreamRecoveryState` enum from `ChatViewModel.swift`:
  * the reconnect status surfaced by the active-run status row.
+ * `WAITING_FOR_NETWORK` parks recovery while the device is offline (#869):
+ * "Waiting for network" instead of exhausting the retry budget.
  */
-enum class ActiveStreamRecoveryState { IDLE, CHECKING, RECONNECTING }
+enum class ActiveStreamRecoveryState { IDLE, CHECKING, RECONNECTING, WAITING_FOR_NETWORK }
+
+/**
+ * Port of `StreamingSendBehavior` (`Config/AppTheme.swift`) plus the plain
+ * tap: what Send does to a running response. `DEFAULT` is the Send While
+ * Responding default (steer, `StreamingSendBehavior.storedValue`); a
+ * long-press on Send picks one of the others for a single message (1.8.0).
+ */
+enum class SendMode { DEFAULT, QUEUE, STEER, STOP_AND_SEND }
+
+/**
+ * Port of `ComposerQuote` (`ComposerQuote.swift`): a passage the user selected
+ * from a completed response ("Ask Hermex about selection", 1.7.0). Quotes stay
+ * separate from typed text; on send they become `> ` blockquotes ahead of it.
+ */
+data class ComposerQuote(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String,
+) {
+    /** A single-line label for the chip; the full passage remains in [text]. */
+    val preview: String
+        get() {
+            val collapsed = text.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+            if (collapsed.length <= 72) return collapsed
+            return collapsed.take(71) + "…"
+        }
+
+    companion object {
+        /** Port of `ComposerQuoteMessageFormatter.message(text:quotes:)`. */
+        fun message(text: String, quotes: List<ComposerQuote>): String {
+            val quotedPassages = quotes.map { quote ->
+                quote.text.split("\n").joinToString("\n") { line -> if (line.isEmpty()) ">" else "> $line" }
+            }
+            return (quotedPassages + (if (text.isEmpty()) emptyList() else listOf(text))).joinToString("\n\n")
+        }
+    }
+}
+
+/** Port of `TranscriptTurnRunOutcome.Ending` — how a run stopped counting. */
+enum class ChatRunEnding { COMPLETED, CANCELLED, FAILED }
+
+/**
+ * Port of `TranscriptTurnRunOutcome` (`ChatViewModel.swift`): the latest run's
+ * span keyed to the turn it answered, so the transcript can label the settled
+ * fold ("Worked for 12s" / "Stopped" / "Failed") and pick which turn stays open.
+ * Timestamps are epoch seconds.
+ */
+data class TranscriptTurnRunOutcome(
+    val turnKey: String,
+    val startedAt: Double,
+    val endedAt: Double,
+    val ending: ChatRunEnding,
+) {
+    val durationSeconds: Double get() = maxOf(0.0, endedAt - startedAt)
+}
+
+/**
+ * Port of `ForkOrigin` (`ForkOrigin.swift`): where a forked chat came from, for
+ * the "Forked from" row at the top of its transcript. Only sessions upstream
+ * stamps `session_source: "fork"` with a `parent_session_id` count.
+ */
+data class ForkOrigin(
+    val parentSessionId: String,
+    /** The parent as cached/fetched; null means a tap fetches it. */
+    val parent: SessionSummary?,
+) {
+    val title: String
+        get() {
+            val parent = parent ?: return "Forked from another chat"
+            val parentTitle = parent.title?.trim()?.takeIf { it.isNotEmpty() } ?: "Untitled Session"
+            return "Forked from $parentTitle"
+        }
+
+    companion object {
+        /** Port of `ForkOrigin.parentSessionID(of:)`. */
+        fun parentSessionId(sessionSource: String?, parentSessionId: String?): String? {
+            if (sessionSource?.trim()?.lowercase() != "fork") return null
+            return parentSessionId?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+}
 
 /** Port of `ReasoningGroup` from `ChatViewModel.swift`. */
 data class ReasoningGroup(
@@ -67,6 +150,12 @@ data class ChatUiState(
     val sessionId: String? = null,
     val displayTitle: String = "",
     val isReadOnly: Boolean = false,
+    /**
+     * The active server's base URL exactly as `ServerConfigRepository.current().baseUrl`
+     * returns it ("" before it resolves): the key that keeps caches, drafts and
+     * composer thumbnails per server (1.7.0).
+     */
+    val serverCacheNamespace: String = "",
 
     // Transcript
     val messages: List<ChatMessage> = emptyList(),
@@ -98,6 +187,12 @@ data class ChatUiState(
     /** Tool-call groups of completed turns, anchored to assistant messages. */
     val completedToolCallGroups: List<ToolCallGroup> = emptyList(),
     val recoveryState: ActiveStreamRecoveryState = ActiveStreamRecoveryState.IDLE,
+    /**
+     * True while the SSE transport is provably alive (an event or heartbeat
+     * arrived within `transportFreshInterval`), so the "Checking stream" chip
+     * stays hidden during a semantically quiet window (#227).
+     */
+    val isStreamHeartbeatFresh: Boolean = false,
     /** Live tokens/second from `metering` frames; null when unavailable. */
     val liveTokensPerSecond: Double? = null,
     val contextWindow: ContextWindowSnapshot? = null,
@@ -105,6 +200,39 @@ data class ChatUiState(
     val responseCompletionTrigger: Int = 0,
     /** Monotonic counter bumped when streamed content grew (drives auto-scroll). */
     val streamingContentTrigger: Int = 0,
+    /**
+     * Epoch seconds the current run started: the server's `pending_started_at`,
+     * else the latest user message's timestamp, else the local send time. "Working
+     * for" counts from here and a same-stream reattach never restarts it.
+     */
+    val activeRunStartedAt: Double? = null,
+    /** How the latest run ended, keyed to the turn it answered; null until a run finishes. */
+    val latestRunOutcome: TranscriptTurnRunOutcome? = null,
+    /** Receipt shown while messages wait behind the run (Swift `queuedMessagesReceipt`). */
+    val queuedMessagesReceipt: String? = null,
+    /** "Couldn't steer[\n<reason>]" card with Retry; the run keeps going (1.8.0). */
+    val steerFailureMessage: String? = null,
+    /** Transient "Steering hint delivered." confirmation. */
+    val steeringConfirmation: String? = null,
+    /**
+     * After an `agent_runtime_stale` 409 (#955): the prompt "Copy fix prompt"
+     * puts on the clipboard; null while the update is still running or when
+     * the last send error was something else.
+     */
+    val agentRuntimeStaleFixPrompt: String? = null,
+    /**
+     * The continuation session a `session_rotated` 409 named, once its Profile
+     * was verified and the rejected composer submission restored. The pane opens
+     * it (DEVELOPMENT.md § Compression continuation recovery); null otherwise.
+     */
+    val compressionContinuation: SessionSummary? = null,
+    /** True once this session was sealed by compression: Send stays refused. */
+    val isCompressionRotated: Boolean = false,
+    /** "Forked from …" row data for a `/branch` or Fork From Here child; null otherwise. */
+    val forkOrigin: ForkOrigin? = null,
+    /** `/clear` was typed: ask before wiping the server-side history. */
+    val pendingClearConfirmation: Boolean = false,
+    val isClearingConversation: Boolean = false,
 
     // Pending server prompts
     val approvalPrompt: ApprovalPromptState? = null,
@@ -116,6 +244,10 @@ data class ChatUiState(
 
     // Composer
     val draft: String = "",
+    /** [draft] parsed into chips (`parseComposerTokens`); the text stays the source of truth. */
+    val draftTokens: List<ComposerToken> = emptyList(),
+    /** Quoted passages ahead of the typed text ("Ask Hermex about selection"). */
+    val draftQuotes: List<ComposerQuote> = emptyList(),
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val isUploadingAttachment: Boolean = false,
     val isProcessingVoiceNote: Boolean = false,
@@ -164,17 +296,27 @@ data class ChatUiState(
  * interface (and [ChatUiState]) so the two files compile independently.
  */
 interface ChatComposerActions {
+    /** Replaces the typed draft; [ChatUiState.draftTokens] is re-derived from it. */
     fun updateDraft(text: String)
 
+    /** Replaces the draft from chip tokens; the draft text becomes `tokens.toServerText()`. */
+    fun updateDraftTokens(tokens: List<ComposerToken>)
+
     /**
-     * Send the current draft + staged attachments. While a stream is active
-     * this steers the running turn instead (Swift steer semantics: fallback
-     * responses queue the text). Slash commands are parsed and executed.
+     * Send the current draft + quotes + staged attachments. Idle: a plain send.
+     * While a run is active, [mode] picks what happens to the running response
+     * (port of `ChatViewModel.submitStreamingMessage(_:behavior:)`): `DEFAULT`
+     * is the Send While Responding default (steer); `STEER` → `/api/chat/steer`;
+     * `QUEUE` → sent when the run finishes; `STOP_AND_SEND` → cancel, then send.
+     * Slash commands are parsed and executed first.
      */
-    fun send()
+    fun send(mode: SendMode = SendMode.DEFAULT)
 
     /** Cancel the active stream (`GET /api/chat/cancel`). */
     fun stopStream()
+
+    /** Drops one "Ask Hermex about selection" quote chip. */
+    fun removeDraftQuote(id: String)
 
     fun selectModel(option: ModelCatalogOption)
     fun toggleFavoriteModel(option: ModelCatalogOption)
@@ -182,13 +324,18 @@ interface ChatComposerActions {
     /** Silent one-shot catalog refresh when the model picker opens. */
     fun refreshModelCatalogForPickerOpen()
 
+    /** Session-scoped reasoning effort (`POST /api/reasoning` with `session_id`, 1.6.0). */
     fun selectReasoningEffort(effort: String)
     fun selectWorkspace(path: String)
     fun loadWorkspaceSuggestions(prefix: String)
     fun switchProfile(profile: ProfileSummary, startNewSession: Boolean)
 
-    /** Upload a picked file; on success it joins [ChatUiState.pendingAttachments]. */
-    fun uploadAttachment(bytes: ByteArray, filename: String)
+    /**
+     * Upload a picked file; on success it joins [ChatUiState.pendingAttachments].
+     * [previewData] (image/PDF/text thumbnail bytes the composer rendered) rides
+     * along as `PendingAttachment.thumbnailData` for the strip.
+     */
+    fun uploadAttachment(bytes: ByteArray, filename: String, previewData: ByteArray? = null)
     fun importVoiceNote(bytes: ByteArray, filename: String)
     fun removePendingAttachment(id: String)
     fun clearPendingAttachments()

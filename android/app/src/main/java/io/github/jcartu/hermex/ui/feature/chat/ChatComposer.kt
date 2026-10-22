@@ -261,7 +261,7 @@ fun ChatComposer(
                         enabled = !isOfflineReadOnly,
                         keyboardSendEnabled = actionButtonEnabled && !showsStopButton,
                         onDraftChange = actions::updateDraft,
-                        onKeyboardSend = actions::send,
+                        onKeyboardSend = { actions.send() },
                         modifier = Modifier.weight(1f),
                     )
 
