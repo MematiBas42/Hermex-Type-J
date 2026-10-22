@@ -90,6 +90,7 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesBannerSlot
 import io.github.jcartu.hermex.ui.feature.settings.AddServerDialog
 import io.github.jcartu.hermex.ui.feature.settings.HeaderLogoColor
 import io.github.jcartu.hermex.ui.feature.settings.ServerSwitcherMenu
@@ -532,6 +533,10 @@ private fun SessionListScreen(
                         openArchived = openArchived,
                         onNewChat = openNewChatRequest,
                     )
+                }
+
+                item(key = "move-to-hermes-banner") {
+                    MoveToHermesBannerSlot(serverId = serverUrl)
                 }
 
                 if (state.isViewingCachedData) {
@@ -1345,7 +1350,7 @@ internal fun OfflineCacheBanner() {
 }
 
 @Composable
-private fun SessionSectionHeader(title: String, count: Int) {
+internal fun SessionSectionHeader(title: String, count: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1499,7 +1504,7 @@ private fun ActiveProfilePickerRow(
 }
 
 @Composable
-private fun ProjectsSectionHeader(
+internal fun ProjectsSectionHeader(
     isExpanded: Boolean,
     projectCount: Int,
     onToggle: () -> Unit,
@@ -1538,7 +1543,7 @@ private fun ProjectsSectionHeader(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectFilterRow(
+internal fun ProjectFilterRow(
     name: String,
     colorHex: String?,
     count: Int,
@@ -1622,7 +1627,7 @@ private fun ProjectFilterRow(
 }
 
 @Composable
-private fun ScheduledSectionHeader(
+internal fun ScheduledSectionHeader(
     totalCount: Int,
     isExpanded: Boolean,
     isSearchActive: Boolean,
@@ -1876,7 +1881,7 @@ private fun ScheduledSessionsScreen(
 }
 
 @Composable
-private fun SubScreenTopBar(title: String, onBack: () -> Unit) {
+internal fun SubScreenTopBar(title: String, onBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

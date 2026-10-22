@@ -51,6 +51,7 @@ class HermesSessionListViewModel(
     private var reconnectAttempt = 0
     private var reloadJob: Job? = null
     private var reloadWanted = false
+    private val reloadLock = kotlinx.coroutines.sync.Mutex()
     private var debounceJob: Job? = null
     private var statusJob: Job? = null
     private var reconnectJob: Job? = null
@@ -110,6 +111,8 @@ class HermesSessionListViewModel(
     }
 
     fun refresh() { searchAwaitsConnect = _state.value.query.isNotEmpty(); viewModelScope.launch { open() } }
+    fun closeAsync() { viewModelScope.launch { close() } }
+    fun loadMoreAsync() { viewModelScope.launch { loadMore() } }
     fun pause() {
         listening = false
         debounceJob?.cancel(); debounceJob = null
@@ -117,13 +120,14 @@ class HermesSessionListViewModel(
     }
     suspend fun close() {
         pause()
-        reconnectJob?.cancel(); reconnectJob = null
-        reloadJob?.cancel(); reloadJob = null; reloadWanted = false
-        searchJob?.cancel(); searchJob = null
+        val caller = currentCoroutineContext()[Job]
+        reconnectJob?.takeUnless { it === caller }?.cancel(); reconnectJob = null
+        reloadJob?.takeUnless { it === caller }?.cancel(); reloadJob = null; reloadWanted = false
+        searchJob?.takeUnless { it === caller }?.cancel(); searchJob = null
         readSerial++; searchSerial++
         val old = wire; wire = null
         old?.onEvent = null; old?.onDisconnect = null
-        old?.close()
+        withContext(NonCancellable) { old?.close() }
         connecting = false
         _state.update { it.copy(isConnected = false, isLive = false, isLoading = false, isLoadingMore = false, isLoadingMoreScheduled = false, attentionStates = emptyMap()) }
         searchAwaitsConnect = _state.value.query.isNotEmpty()
@@ -131,7 +135,7 @@ class HermesSessionListViewModel(
     override fun onCleared() {
         val old = wire; wire = null
         old?.onEvent = null; old?.onDisconnect = null
-        if (old != null) CoroutineScope(SupervisorJob() + HermesActor.dispatcher).launch { try { old.close() } finally { cancel() } }
+        if (old != null) CoroutineScope(HermesActor.dispatcher).launch { old.close() }
         super.onCleared()
     }
 
@@ -204,8 +208,17 @@ class HermesSessionListViewModel(
         return true
     }
 
-    /** Reload exactly the pages already held; an in-flight mutation invalidates this read before it can undo local state. */
+    /** Coalesces manual opens and event reads as well as the trailing-event queue. */
     suspend fun reload() {
+        if (!reloadLock.tryLock()) { reloadWanted = true; return }
+        try { reloadNow() } finally {
+            reloadLock.unlock()
+            if (reloadWanted && reloadJob?.isActive != true) requestReload()
+        }
+    }
+
+    /** Reload exactly the pages already held; an in-flight mutation invalidates this read before it can undo local state. */
+    private suspend fun reloadNow() {
         val current = wire ?: return
         if (listedProfiles.isEmpty()) return
         if (_state.value.mutating.isNotEmpty()) { reloadWanted = true; return }
@@ -285,6 +298,7 @@ class HermesSessionListViewModel(
     private fun publishPages(live: Boolean = false) {
         val rows = (pages.rows + scheduled.rows).map { (profile, row) -> HermesListedSession(profile, row) }
         _state.update { it.copy(sessions = rows, hasMore = pages.hasMore, hasMoreScheduled = scheduled.hasMore,
+            pageOffset = pages.profiles.sumOf { profile -> pages[profile].nextOffset },
             scheduledTotal = scheduled.totalCount, unreadMarks = marks.mapValues { mark -> mark.value.unread },
             isLive = live || it.isLive, isViewingCachedData = if (live) false else it.isViewingCachedData,
             isCachedCopyProvisional = if (live) false else it.isCachedCopyProvisional) }
@@ -336,7 +350,7 @@ class HermesSessionListViewModel(
     }
     private fun requestReload() {
         reloadWanted = true
-        if (reloadJob?.isActive == true || wire == null || _state.value.mutating.isNotEmpty()) return
+        if (reloadJob?.isActive == true || reloadLock.isLocked || wire == null || _state.value.mutating.isNotEmpty()) return
         reloadJob = viewModelScope.launch {
             while (reloadWanted && wire != null && isActive && _state.value.mutating.isEmpty()) {
                 reloadWanted = false
@@ -357,7 +371,7 @@ class HermesSessionListViewModel(
                     val keyed = rows.mapNotNull { row ->
                         // Hosts that name a Profile let identical stored keys stay separate.
                         val matching = items.filter { it["session_key"].text == row.row.id && (it["profile"].text == null || it["profile"].text == row.profile) }
-                        val value = if (matching.size == items.count) states[row.row.id] else HermesSessionRowStates.from(matching)[row.row.id]
+                        val value = if (matching.size == items.size) states[row.row.id] else HermesSessionRowStates.from(matching)[row.row.id]
                         value?.let { row.key to if (it == HermesSessionRowState.INPUT) SessionRowAttentionState.INPUT else SessionRowAttentionState.WORKING }
                     }.toMap()
                     _state.update { it.copy(attentionStates = keyed) }
@@ -506,7 +520,7 @@ class HermesSessionListViewModel(
     }
     private fun beginMutation(row: HermesListedSession, permitsBot: Boolean = false): Boolean {
         val state = _state.value
-        if (!state.isLive || state.isViewingCachedData || row.key in state.mutating || (!permitsBot && (row.row.isBotChat || row.summary().isSessionReadOnly))) return false
+        if (!state.isLive || state.isViewingCachedData || row.key in state.mutating || (!permitsBot && ((row.row.isBotChat && !archived) || row.summary().isSessionReadOnly))) return false
         readSerial++
         _state.update { it.copy(mutating = it.mutating + row.key, actionErrorMessage = null) }
         return true
@@ -528,7 +542,9 @@ class HermesSessionListViewModel(
         }) }
     }
     private suspend fun forgetCached(row: HermesListedSession) {
-        withContext(ioDispatcher) { cache?.removeHermesSession(row.row.identity, row.profile, serverId) }
+        try { withContext(ioDispatcher) { cache?.removeHermesSession(row.row.identity, row.profile, serverId) } }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (error: Throwable) { _state.update { it.copy(cacheErrorMessage = error.message) } }
     }
 
     suspend fun fillLane(projectId: String) {

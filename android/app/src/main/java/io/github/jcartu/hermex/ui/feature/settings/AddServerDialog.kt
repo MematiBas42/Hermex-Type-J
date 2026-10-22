@@ -53,6 +53,12 @@ import io.github.jcartu.hermex.ui.feature.onboarding.ConnectionModePicker
 import io.github.jcartu.hermex.ui.feature.onboarding.CustomHeadersEditor
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingViewModel
 import java.net.URI
+import androidx.compose.material3.AlertDialog
+import io.github.jcartu.hermex.ui.feature.onboarding.ConnectFormMoveSource
+import io.github.jcartu.hermex.ui.feature.onboarding.HermesConnectMethodFields
+import io.github.jcartu.hermex.ui.feature.hermes.connect.rememberHermesBrowserSignInPresenter
+import io.github.jcartu.hermex.ui.adaptive.HingeAwarePaneRow
+import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 
 /**
  * Port of `AddServerView.swift`: onboarding's connect form (`OnboardingViewModel`,
@@ -63,7 +69,7 @@ import java.net.URI
  * capped so it never stretches full-bleed on a tablet or the unfolded Trifold.
  */
 @Composable
-fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}) {
+fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}, moveSource: ConnectFormMoveSource? = null) {
     val context = LocalContext.current
     val container = remember(context) { (context.applicationContext as HermexApplication).container }
     // The form lives exactly as long as the dialog: a fresh store per open, cleared on dismiss,
@@ -79,7 +85,8 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
     val form: OnboardingViewModel = viewModel(
         viewModelStoreOwner = formOwner,
         factory = viewModelFactory {
-            initializer { OnboardingViewModel(authManager = container.authManager, entry = ConnectFormEntry.ADD_SERVER) }
+            initializer { OnboardingViewModel(authManager = container.authManager, entry = ConnectFormEntry.ADD_SERVER,
+                hermesHttpClient = container.okHttpClient, moveSource = moveSource) }
         },
     )
     val state by form.uiState.collectAsStateWithLifecycle()
@@ -88,21 +95,24 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
     var colorHex by rememberSaveable { mutableStateOf(HeaderLogoColor.defaultHex) }
 
     val canSubmit = state.canSubmit && !state.isWorking && !state.isConnectionLocked
-    val submit = { if (canSubmit) form.connect() }
+    val browser = rememberHermesBrowserSignInPresenter()
+    val submit = { if (canSubmit) form.connect(browser = browser) }
+    var confirmReplace by rememberSaveable { mutableStateOf(false) }
 
     // Port of `applyIdentity(to:)`: the registry seeds the new server from the
     // previous active server's defaults; the chosen values override them.
     LaunchedEffect(state.addedAccount) {
         val added = state.addedAccount ?: return@LaunchedEffect
         val host = runCatching { URI(added.urlString).host }.getOrNull().orEmpty()
-        val finalName = displayName.trim().ifEmpty { host.ifEmpty { added.displayName } }
+        val finalName = displayName.trim().ifEmpty { added.displayName.ifEmpty { host } }
         val finalInitials = ServerIdentity.displayInitials(
             displayName = finalName,
-            storedInitials = initials,
+            storedInitials = initials.ifEmpty { added.initials },
             fallbackFullName = host.ifEmpty { finalName },
         )
-        container.authManager.updateServerIdentity(added, finalName, finalInitials, colorHex)
-        onAdded(added)
+        container.authManager.updateServerIdentity(added, finalName, finalInitials,
+            if (displayName.isEmpty() && initials.isEmpty() && colorHex == HeaderLogoColor.defaultHex) added.headerLogoColorHex else colorHex)
+        onAdded(container.authManager.servers.value.firstOrNull { it.id == added.id } ?: added)
         onDismiss()
     }
 
@@ -130,10 +140,11 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
                 if (state.isWorking) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(end = 12.dp).widthIn(max = 18.dp))
                 }
-                TextButton(onClick = submit, enabled = canSubmit) { Text("Add") }
+                TextButton(onClick = submit, enabled = canSubmit) { Text(state.submitTitle) }
             }
 
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            HingeAwarePaneRow(paneCount = LocalPaneCount.current) { pane, paneModifier ->
+              if (pane == 0) Box(paneModifier, contentAlignment = Alignment.TopCenter) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                     modifier = Modifier
@@ -174,6 +185,7 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            HermesConnectMethodFields(state, ConnectFormStyle.SETTINGS, form::onUsernameChange, form::useSavedSignIn)
                             if (state.showsPasswordField) {
                                 SettingsDivider()
                                 Text("Password", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -203,8 +215,13 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
                             Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
+                    if (state.offersWebuiReplace) TextButton(onClick = { confirmReplace = true }) { Text("Replace webui server") }
+                    state.headerRejection?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
                     SettingsCard(title = "Connection Headers") {
+                        if (state.offersMoveSourceHeaders) TextButton(onClick = form::useMoveSourceHeaders) {
+                            Text("Use ${state.moveSource?.name}'s Headers")
+                        }
                         if (state.connectionMode == ConnectionMode.CLOUDFLARE_TUNNEL) {
                             SettingsFootnote("Cloudflare Access: paste your service token’s Client ID and Client Secret as the values. Leave both empty if Access is off.")
                         }
@@ -227,9 +244,19 @@ fun AddServerDialog(onDismiss: () -> Unit, onAdded: (ServerAccount) -> Unit = {}
                             onInitialsChange = { initials = it },
                             onColorHexChange = { colorHex = it },
                         )
+                        SettingsFootnote("Hermes hosts are detected first. Existing webui servers are marked Legacy.")
                     }
                 }
             }
+              else Column(paneModifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                  Text(if (pane == 1) "Connect directly to Hermes" else "Your sign-in stays private", style = MaterialTheme.typography.titleLarge)
+                  Text(if (pane == 1) state.connectionMode.help else "Sign-in details and connection headers are encrypted on this device and sent only to the host you select.")
+              }
+            }
         }
     }
+    if (confirmReplace) AlertDialog(onDismissRequest = { confirmReplace = false }, title = { Text("Replace webui server?") },
+        text = { Text("Removes the saved webui sign-in, drafts and cache on this device. Its name, initials and color are kept for Hermes.") },
+        confirmButton = { TextButton(onClick = { confirmReplace = false; form.connect(replacingWebuiServer = true, browser = browser) }) { Text("Replace") } },
+        dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text("Cancel") } })
 }

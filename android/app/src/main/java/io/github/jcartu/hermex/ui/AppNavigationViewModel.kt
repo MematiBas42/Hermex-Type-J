@@ -38,6 +38,15 @@ class AppNavigationViewModel(private val savedStateHandle: SavedStateHandle) : V
     var newChatProfileName by mutableStateOf(savedStateHandle.get<String>(NEW_CHAT_PROFILE_KEY))
         private set
 
+    /**
+     * Pending voice auto-start for the next new chat (#338, port of
+     * `NewChatRequest(autoStartsVoiceInput:)`): set by
+     * `startNewChat(autoStartsVoiceInput = true)` from a `new-chat-voice`
+     * link; the composer reads it once when it appears and begins dictation.
+     */
+    var newChatAutoStartsVoiceInput by mutableStateOf(savedStateHandle[NEW_CHAT_VOICE_KEY] ?: false)
+        private set
+
     var kanbanBoardSlug by mutableStateOf(savedStateHandle.get<String>(KANBAN_BOARD_KEY))
         private set
     var kanbanCardId by mutableStateOf(savedStateHandle.get<String>(KANBAN_CARD_KEY))
@@ -57,21 +66,25 @@ class AppNavigationViewModel(private val savedStateHandle: SavedStateHandle) : V
         isNewChat = false
         newChatProjectId = null
         newChatProfileName = null
+        newChatAutoStartsVoiceInput = false
         savedStateHandle[SESSION_KEY] = sessionId
         savedStateHandle[NEW_CHAT_KEY] = false
         savedStateHandle[NEW_CHAT_PROJECT_KEY] = null
         savedStateHandle[NEW_CHAT_PROFILE_KEY] = null
+        savedStateHandle[NEW_CHAT_VOICE_KEY] = false
     }
 
-    fun startNewChat(projectId: String? = null, profileName: String? = null) {
+    fun startNewChat(projectId: String? = null, profileName: String? = null, autoStartsVoiceInput: Boolean = false) {
         selectedSessionId = null
         isNewChat = true
         newChatProjectId = projectId
         newChatProfileName = profileName
+        newChatAutoStartsVoiceInput = autoStartsVoiceInput
         savedStateHandle[SESSION_KEY] = null
         savedStateHandle[NEW_CHAT_KEY] = true
         savedStateHandle[NEW_CHAT_PROJECT_KEY] = projectId
         savedStateHandle[NEW_CHAT_PROFILE_KEY] = profileName
+        savedStateHandle[NEW_CHAT_VOICE_KEY] = autoStartsVoiceInput
     }
 
     fun showSessionList() {
@@ -79,10 +92,12 @@ class AppNavigationViewModel(private val savedStateHandle: SavedStateHandle) : V
         isNewChat = false
         newChatProjectId = null
         newChatProfileName = null
+        newChatAutoStartsVoiceInput = false
         savedStateHandle[SESSION_KEY] = null
         savedStateHandle[NEW_CHAT_KEY] = false
         savedStateHandle[NEW_CHAT_PROJECT_KEY] = null
         savedStateHandle[NEW_CHAT_PROFILE_KEY] = null
+        savedStateHandle[NEW_CHAT_VOICE_KEY] = false
     }
 
     /** Routes to More → Settings (the session-list header avatar tap, #283). */
@@ -134,6 +149,7 @@ class AppNavigationViewModel(private val savedStateHandle: SavedStateHandle) : V
         const val NEW_CHAT_KEY = "ui.new_chat"
         const val NEW_CHAT_PROJECT_KEY = "ui.new_chat_project_id"
         const val NEW_CHAT_PROFILE_KEY = "ui.new_chat_profile"
+        const val NEW_CHAT_VOICE_KEY = "ui.new_chat_voice"
         const val KANBAN_BOARD_KEY = "ui.kanban_board"
         const val KANBAN_CARD_KEY = "ui.kanban_card"
         const val MORE_ROUTE_KEY = "ui.more_route"

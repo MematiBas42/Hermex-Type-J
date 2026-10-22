@@ -153,10 +153,7 @@ private fun TranscriptImageTile(
 ) {
     val context = LocalContext.current
     val model by produceState<Any?>(initialValue = null, reference.id) {
-        value = when (val source = reference.source) {
-            is TranscriptMediaSource.RemoteUrl -> source.url
-            is TranscriptMediaSource.LocalPath -> loadMediaUrl(reference)
-        }
+        value = loadMediaUrl(reference)
     }
     var lightbox by remember(reference.id) { mutableStateOf(false) }
     Surface(

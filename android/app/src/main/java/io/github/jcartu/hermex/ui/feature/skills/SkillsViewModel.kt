@@ -3,7 +3,6 @@ package io.github.jcartu.hermex.ui.feature.skills
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.model.SkillSummary
-import io.github.jcartu.hermex.net.HermesApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,8 +32,7 @@ data class SkillsUiState(
     val groups: List<SkillGroup>
         get() = SkillsViewModel.filteredGroupedSkills(skills, searchText)
 }
-
-class SkillsViewModel(private val api: HermesApi) : ViewModel() {
+class SkillsViewModel(private val client: SkillsDataClient) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SkillsUiState())
     val uiState: StateFlow<SkillsUiState> = _uiState.asStateFlow()
@@ -47,9 +45,9 @@ class SkillsViewModel(private val api: HermesApi) : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             try {
-                val response = api.skills()
+                val skills = client.skills()
                 _uiState.update {
-                    it.copy(skills = response.skills ?: emptyList(), isLoading = false)
+                    it.copy(skills = skills, isLoading = false)
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -85,10 +83,9 @@ class SkillsViewModel(private val api: HermesApi) : ViewModel() {
                 skills = updateSkill(state.skills, name, disabled = !enabled),
             )
         }
-
         viewModelScope.launch {
             try {
-                api.toggleSkill(name = name, enabled = enabled)
+                client.toggleSkill(name = name, enabled = enabled)
                 _uiState.update { it.copy(togglingSkillNames = it.togglingSkillNames - name) }
                 load()
             } catch (cancellation: CancellationException) {

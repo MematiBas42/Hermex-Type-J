@@ -288,7 +288,7 @@ object TranscriptTurnClassifier {
     }
 
     fun isUserTurnBoundary(message: ChatMessage): Boolean {
-        if (message.role != "user") return false
+        if (message.role != "user" || message.isSteerMessage) return false
         return hasVisibleUserContent(message)
     }
 

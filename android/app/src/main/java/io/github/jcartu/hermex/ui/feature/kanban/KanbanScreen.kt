@@ -54,8 +54,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,15 +70,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import io.github.jcartu.hermex.HermexApplication
 import io.github.jcartu.hermex.model.KanbanBoard
 import io.github.jcartu.hermex.model.KanbanBulkActionRequest
 import io.github.jcartu.hermex.model.KanbanCard
@@ -95,17 +94,18 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
 fun KanbanRoute(
+    dataSource: KanbanDataSource,
     initialBoardSlug: String? = null,
     initialCardId: String? = null,
     onDeepLinkConsumed: () -> Unit = {},
 ) {
-    val container = (LocalContext.current.applicationContext as HermexApplication).container
     val viewModel: KanbanViewModel = viewModel(
-        factory = viewModelFactory { initializer { KanbanViewModel(container.api) } },
+        factory = viewModelFactory { initializer { KanbanViewModel(dataSource) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
@@ -116,7 +116,8 @@ fun KanbanRoute(
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var showBulk by rememberSaveable { mutableStateOf(false) }
     var showDispatch by rememberSaveable { mutableStateOf(false) }
-    val snackbar = remember { SnackbarHostState() }
+    var transientMessage by remember { mutableStateOf<String?>(null) }
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { viewModel.load() }
@@ -130,12 +131,33 @@ fun KanbanRoute(
             onDeepLinkConsumed()
         }
     }
-    DisposableEffect(viewModel) {
-        viewModel.startLiveUpdates()
-        onDispose { viewModel.stopLiveUpdates() }
+    DisposableEffect(lifecycleOwner, viewModel) {
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            viewModel.startLiveUpdates()
+        }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.startLiveUpdates()
+                Lifecycle.Event.ON_STOP -> viewModel.stopLiveUpdates()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.stopLiveUpdates()
+        }
     }
-    LaunchedEffect(state.errorMessage, state.actionMessage) {
-        (state.errorMessage ?: state.actionMessage)?.let { snackbar.showSnackbar(it); viewModel.dismissMessage() }
+    LaunchedEffect(state.errorMessage, state.actionMessage, state.columns) {
+        val transient = state.actionMessage ?: state.errorMessage?.takeIf { state.columns.isNotEmpty() }
+        transient?.let { message ->
+            transientMessage = message
+            viewModel.dismissMessage()
+            scope.launch {
+                delay(4_000)
+                if (transientMessage == message) transientMessage = null
+            }
+        }
     }
 
     val editBoard = state.boards.firstOrNull { it.slug == editingBoardSlug }
@@ -201,7 +223,16 @@ fun KanbanRoute(
                 }
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        transientMessage?.let { message ->
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            ) {
+                Text(message, Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            }
+        }
     }
 
     if (showBoardEditor) KanbanBoardEditorDialog(
@@ -213,6 +244,7 @@ fun KanbanRoute(
     state.selectedBoardSlug?.takeIf { showCardEditor }?.let { boardSlug ->
         KanbanCardEditorDialog(
             board = boardSlug,
+            backend = state.backend,
             columns = state.configuration?.columns.orEmpty().ifEmpty { state.columns.mapNotNull { it.name } },
             assignees = state.assignees,
             card = editCard,
@@ -354,7 +386,30 @@ private fun KanbanBoardPane(
             }
             IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "Refresh") }
             IconButton(onClick = onNewCard, enabled = state.canMutate && state.selectedBoardSlug != null) { Icon(Icons.Filled.Add, "New card") }
-            IconButton(onClick = onDispatch, enabled = state.canMutate && state.selectedBoardSlug != null) { Icon(Icons.Filled.AutoAwesome, "Dispatcher") }
+            if (state.capabilities.dispatcher) {
+                IconButton(onClick = onDispatch, enabled = state.canMutate && state.selectedBoardSlug != null) {
+                    Icon(Icons.Filled.AutoAwesome, "Dispatcher")
+                }
+            }
+        }
+        if (state.liveUpdatesDelayed) {
+            Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+                Text(
+                    "Live updates delayed",
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        if (state.isOffline) {
+            Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                Text(
+                    "Offline—showing previously loaded data",
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
         }
         if (state.selectedCardIds.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
@@ -468,12 +523,13 @@ private fun KanbanDispatchDialog(
     onPreview: () -> Unit,
     onRun: () -> Unit,
 ) {
+    var confirmsRun by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Dispatcher") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Preview the dispatcher before starting autonomous work. Running status is entered only through this endpoint.")
+                Text("Preview Dispatch is advisory. Run Dispatcher may start workers and consume API budget.")
                 if (loading) CircularProgressIndicator()
                 (result ?: preview)?.let { summary ->
                     DispatchMetric("Spawned", summary.spawnedCount)
@@ -484,11 +540,34 @@ private fun KanbanDispatchDialog(
                 }
             }
         },
-        confirmButton = { Button(onClick = onRun, enabled = preview != null && !loading) { Text("Run dispatcher") } },
+        confirmButton = {
+            Button(onClick = { confirmsRun = true }, enabled = !loading) { Text("Run Dispatcher") }
+        },
         dismissButton = {
-            Row { TextButton(onClick = onPreview, enabled = !loading) { Text("Refresh preview") }; TextButton(onClick = onDismiss) { Text("Close") } }
+            Row {
+                TextButton(onClick = onPreview, enabled = !loading) { Text("Preview Dispatch") }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
         },
     )
+    if (confirmsRun) {
+        AlertDialog(
+            onDismissRequest = { confirmsRun = false },
+            title = { Text("Run Dispatcher?") },
+            text = { Text("This may start up to 8 workers and consume API budget.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmsRun = false
+                        onRun()
+                    },
+                ) { Text("Run Dispatcher") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmsRun = false }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable

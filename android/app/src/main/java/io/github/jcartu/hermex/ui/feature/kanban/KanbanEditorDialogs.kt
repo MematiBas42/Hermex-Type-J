@@ -89,6 +89,7 @@ internal fun KanbanBoardEditorDialog(
 @Composable
 internal fun KanbanCardEditorDialog(
     board: String,
+    backend: KanbanBackend,
     columns: List<String>,
     assignees: List<String>,
     card: KanbanCard?,
@@ -98,7 +99,11 @@ internal fun KanbanCardEditorDialog(
 ) {
     var title by remember(card) { mutableStateOf(card?.title.orEmpty()) }
     var body by remember(card) { mutableStateOf(card?.body.orEmpty()) }
-    var status by remember(card, columns) { mutableStateOf(card?.status?.rawValue ?: columns.firstOrNull() ?: "triage") }
+    val permittedStatuses = backend.createStatuses
+        .filter { offered -> columns.any { it.equals(offered, ignoreCase = true) } }
+        .ifEmpty { backend.createStatuses }
+    val initialStatus = card?.status?.rawValue ?: permittedStatuses.first()
+    var status by remember(card, permittedStatuses) { mutableStateOf(initialStatus) }
     var priority by remember(card) { mutableIntStateOf(card?.priority ?: 3) }
     var assignee by remember(card) { mutableStateOf(card?.assignee.orEmpty()) }
     var tenant by remember(card) { mutableStateOf(card?.tenant.orEmpty()) }
@@ -120,26 +125,70 @@ internal fun KanbanCardEditorDialog(
                 item {
                     Text("Status", fontWeight = FontWeight.SemiBold)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        columns.take(4).forEach { option ->
+                        val statusOptions = buildList {
+                            card?.status?.rawValue?.takeIf { it !in permittedStatuses }?.let(::add)
+                            addAll(permittedStatuses)
+                        }
+                        statusOptions.forEach { option ->
                             FilterChip(selected = status == option, onClick = { status = option }, label = { Text(option) })
                         }
-                    }
+                }
                 }
                 item {
                     OutlinedTextField(priority.toString(), { priority = it.toIntOrNull()?.coerceIn(0, 9) ?: priority }, label = { Text("Priority 0–9") }, singleLine = true)
                 }
                 item {
-                    OutlinedTextField(assignee, { assignee = it }, label = { Text("Assignee/profile") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    OutlinedTextField(assignee, { assignee = it }, label = { Text("Assigned Profile") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     if (assignees.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             assignees.take(4).forEach { option -> FilterChip(assignee == option, { assignee = option }, { Text(option) }) }
                         }
                     }
                 }
-                item { OutlinedTextField(tenant, { tenant = it }, label = { Text("Tenant") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
-                item { OutlinedTextField(workspacePath, { workspacePath = it }, label = { Text("Workspace path") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
-                item { OutlinedTextField(skills, { skills = it }, label = { Text("Skills, comma-separated") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
-                item { OutlinedTextField(runtime, { runtime = it.filter(Char::isDigit) }, label = { Text("Max runtime seconds") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
+                item {
+                    OutlinedTextField(
+                        tenant,
+                        { tenant = it },
+                        label = { Text("Tenant") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = backend.canEditTenant(isEditing = card != null),
+                        supportingText = if (card != null && backend == KanbanBackend.HERMES) {
+                            { Text("Tenant is fixed after the Card is created.") }
+                        } else {
+                            null
+                        },
+                    )
+                }
+                if (backend == KanbanBackend.WEBUI) {
+                    item {
+                        OutlinedTextField(
+                            workspacePath,
+                            { workspacePath = it },
+                            label = { Text("Workspace path") },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = card == null,
+                        )
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        skills,
+                        { skills = it },
+                        label = { Text("Skills, comma-separated") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = card == null,
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        runtime,
+                        { runtime = it.filter(Char::isDigit) },
+                        label = { Text("Max runtime seconds") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = card == null,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -157,8 +206,18 @@ internal fun KanbanCardEditorDialog(
                                 priority = priority,
                                 assignee = assignee.trim().takeIf(String::isNotEmpty),
                                 tenant = tenant.trim().takeIf(String::isNotEmpty),
-                                workspaceKind = if (workspacePath.isBlank()) "workspace" else "path",
-                                workspacePath = workspacePath.trim().takeIf(String::isNotEmpty),
+                                workspaceKind = if (backend == KanbanBackend.HERMES) {
+                                    card?.workspaceKind ?: "scratch"
+                                } else if (workspacePath.isBlank()) {
+                                    "workspace"
+                                } else {
+                                    "path"
+                                },
+                                workspacePath = if (backend == KanbanBackend.WEBUI) {
+                                    workspacePath.trim().takeIf(String::isNotEmpty)
+                                } else {
+                                    null
+                                },
                                 skills = skillList,
                                 maxRuntimeSeconds = runtime.toIntOrNull(),
                                 idempotencyKey = UUID.randomUUID().toString(),
@@ -167,9 +226,18 @@ internal fun KanbanCardEditorDialog(
                     } else {
                         onEdit(
                             KanbanEditCardRequest(
-                                cardId = card.cardId.orEmpty(), board = board, title = title.trim(), body = body.trim(),
-                                tenant = tenant.trim().takeIf(String::isNotEmpty), priority = priority,
-                                assignee = assignee.trim().takeIf(String::isNotEmpty), status = status,
+                                cardId = card.cardId.orEmpty(),
+                                board = board,
+                                title = title.trim(),
+                                body = body.trim(),
+                                tenant = if (backend == KanbanBackend.HERMES) {
+                                    card.tenant
+                                } else {
+                                    tenant.trim().takeIf(String::isNotEmpty)
+                                },
+                                priority = priority,
+                                assignee = assignee.trim().takeIf(String::isNotEmpty),
+                                status = status.takeIf { it != card.status?.rawValue },
                             ),
                         )
                     }
@@ -209,8 +277,10 @@ internal fun KanbanFilterDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(includeArchived, { includeArchived = it }); Text("Include archived")
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(onlyMine, { onlyMine = it }); Text("Only mine")
+                if (state.capabilities.onlyMineFilter) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(onlyMine, { onlyMine = it }); Text("Only mine")
+                    }
                 }
             }
         },
@@ -227,8 +297,12 @@ internal fun KanbanBulkActionDialog(
     onDismiss: () -> Unit,
     onApply: (KanbanBulkActionRequest) -> Unit,
 ) {
+    val statusOptions = state.configuration?.columns.orEmpty()
+        .filterNot { it in state.backend.unofferedStatuses }
     var action by remember { mutableStateOf(KanbanBulkActionType.CHANGE_STATUS) }
-    var value by remember { mutableStateOf(state.configuration?.columns?.firstOrNull().orEmpty()) }
+    var value by remember(state.selectedBoardSlug, state.backend) {
+        mutableStateOf(statusOptions.firstOrNull().orEmpty())
+    }
     val board = state.selectedBoardSlug.orEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -241,7 +315,13 @@ internal fun KanbanBulkActionDialog(
                         Text(option.name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase))
                     }
                 }
-                if (action != KanbanBulkActionType.ARCHIVE) {
+                if (action == KanbanBulkActionType.CHANGE_STATUS && statusOptions.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        statusOptions.take(4).forEach { status ->
+                            FilterChip(value == status, { value = status }, { Text(status) })
+                        }
+                    }
+                } else if (action != KanbanBulkActionType.ARCHIVE) {
                     OutlinedTextField(value, { value = it }, label = { Text("Value") }, modifier = Modifier.fillMaxWidth())
                 }
             }

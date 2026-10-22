@@ -130,7 +130,6 @@ internal data class PersistedActiveChatStreamSnapshot(
     val server: String,
     val sessionId: String,
     val streamId: String,
-    val savedAt: Long = 0L,
     val messages: List<ChatMessage> = emptyList(),
     val messagesOffset: Int = 0,
     val displayTitle: String = "",
@@ -164,12 +163,11 @@ internal data class PersistedActiveChatStreamSnapshot(
     )
 
     companion object {
-        fun from(key: ActiveChatStreamSnapshotKey, snapshot: ActiveChatStreamSnapshot, savedAt: Long) =
+        fun from(key: ActiveChatStreamSnapshotKey, snapshot: ActiveChatStreamSnapshot) =
             PersistedActiveChatStreamSnapshot(
                 server = key.server,
                 sessionId = key.sessionId,
                 streamId = key.streamId,
-                savedAt = savedAt,
                 messages = snapshot.messages,
                 messagesOffset = snapshot.messagesOffset,
                 displayTitle = snapshot.displayTitle,
@@ -194,15 +192,13 @@ internal data class PersistedActiveChatStreamSnapshot(
  * change is written to `active-stream-snapshots.json` on [scope] so the
  * snapshot is still there after the process dies. Rows decode one at a time
  * and tolerantly: a malformed row never discards the others, and a missing or
- * unreadable file is an empty store. Snapshots older than [maxAgeMillis] are
- * dropped on load — a run that old has long ended on the server.
+ * unreadable file is an empty store. Only authoritative run completion or a
+ * replacement stream removes a snapshot; wall-clock age cannot prove a run ended.
  */
 class ActiveChatStreamSnapshotStore(
     directory: File,
     private val json: Json,
     private val scope: CoroutineScope,
-    private val now: () -> Long = System::currentTimeMillis,
-    private val maxAgeMillis: Long = DEFAULT_MAX_AGE_MILLIS,
 ) {
     private val file = File(directory, "active-stream-snapshots.json")
     private val lock = Any()
@@ -224,7 +220,7 @@ class ActiveChatStreamSnapshotStore(
             val store = loaded()
             // One run per chat: a newer stream for the same session replaces the stale one.
             store.values.removeAll { it.server == server && it.sessionId == sessionId && it.streamId != streamId }
-            store[key] = PersistedActiveChatStreamSnapshot.from(key, snapshot, now())
+            store[key] = PersistedActiveChatStreamSnapshot.from(key, snapshot)
             schedulePersist()
         }
     }
@@ -261,12 +257,10 @@ class ActiveChatStreamSnapshotStore(
         if (!file.isFile) return result
         val rows = runCatching { json.parseToJsonElement(file.readText(StandardCharsets.UTF_8)) as? JsonArray }
             .getOrNull() ?: return result
-        val cutoff = now() - maxAgeMillis
         for (row in rows) {
             val decoded = runCatching {
                 json.decodeFromJsonElement(PersistedActiveChatStreamSnapshot.serializer(), row as? JsonObject ?: return@runCatching null)
             }.getOrNull() ?: continue
-            if (decoded.savedAt < cutoff) continue
             result[decoded.key] = decoded
         }
         return result
@@ -296,8 +290,4 @@ class ActiveChatStreamSnapshotStore(
         }
     }
 
-    companion object {
-        /** A run older than a day is never resumable; its row is dropped on load. */
-        const val DEFAULT_MAX_AGE_MILLIS: Long = 24L * 60 * 60 * 1_000
-    }
 }

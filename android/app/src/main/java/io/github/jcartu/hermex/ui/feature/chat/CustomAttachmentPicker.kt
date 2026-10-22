@@ -11,6 +11,8 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.os.ParcelFileDescriptor
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -157,7 +159,10 @@ internal sealed interface PreparedAttachmentResult {
         val previewData: ByteArray?,
     ) : PreparedAttachmentResult
 
-    data class TooLarge(val filename: String) : PreparedAttachmentResult
+    data class TooLarge(
+        val filename: String,
+        val maximumBytes: Int = PendingAttachment.maximumUploadBytes,
+    ) : PreparedAttachmentResult
     data class Failure(val message: String) : PreparedAttachmentResult
 }
 
@@ -174,19 +179,20 @@ internal suspend fun preparePickedAttachment(
     context: Context,
     uri: Uri,
     serverCacheNamespace: String,
+    maximumBytes: Int = PendingAttachment.maximumUploadBytes,
 ): PreparedAttachmentResult = withContext(Dispatchers.IO) {
     val resolver = context.contentResolver
     val metadata = pickedAttachmentMetadata(context, uri)
-    if (metadata.size != null && metadata.size > PendingAttachment.maximumUploadBytes) {
-        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename)
+    if (metadata.size != null && metadata.size > maximumBytes) {
+        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename, maximumBytes)
     }
 
     val bytes = try {
         resolver.openInputStream(uri)?.use { stream ->
-            stream.readBounded(PendingAttachment.maximumUploadBytes)
+            stream.readBounded(maximumBytes)
         }
     } catch (_: AttachmentTooLargeException) {
-        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename)
+        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename, maximumBytes)
     } catch (_: SecurityException) {
         null
     } catch (_: IOException) {
@@ -196,17 +202,9 @@ internal suspend fun preparePickedAttachment(
     if (bytes == null) {
         PreparedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
     } else {
-        val contentHash = MessageDigest.getInstance("SHA-256").digest(bytes)
-            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
-        val cacheKey = "${metadata.filename}|${metadata.mime}|$contentHash"
-        val preview = ComposerThumbnailCache.get(serverCacheNamespace, cacheKey)
-            ?: try {
-                renderAttachmentPreview(context, uri, metadata, bytes)
-            } catch (_: Exception) {
-                null
-            }?.also { rendered ->
-                ComposerThumbnailCache.put(serverCacheNamespace, cacheKey, rendered)
-            }
+        val preview = cachedAttachmentPreview(serverCacheNamespace, metadata, bytes) {
+            renderPdfFirstPage(context, uri)
+        }
         PreparedAttachmentResult.Success(
             filename = metadata.filename,
             bytes = bytes,
@@ -215,13 +213,16 @@ internal suspend fun preparePickedAttachment(
     }
 }
 
-internal suspend fun prepareCameraAttachment(bitmap: Bitmap): PreparedAttachmentResult = withContext(Dispatchers.IO) {
+internal suspend fun prepareCameraAttachment(
+    bitmap: Bitmap,
+    maximumBytes: Int = PendingAttachment.maximumUploadBytes,
+): PreparedAttachmentResult = withContext(Dispatchers.IO) {
     val bytes = ByteArrayOutputStream().use { output ->
         if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) null else output.toByteArray()
     } ?: return@withContext PreparedAttachmentResult.Failure("Couldn't prepare the camera image.")
 
-    if (bytes.size > PendingAttachment.maximumUploadBytes) {
-        PreparedAttachmentResult.TooLarge("Camera image")
+    if (bytes.size > maximumBytes) {
+        PreparedAttachmentResult.TooLarge("Camera image", maximumBytes)
     } else {
         val preview = downsampleImage(bytes)
         PreparedAttachmentResult.Success(
@@ -277,22 +278,46 @@ private fun InputStream.readBounded(maximumBytes: Int): ByteArray {
     return output.toByteArray()
 }
 
-private fun renderAttachmentPreview(
-    context: Context,
-    uri: Uri,
+/** Restored/shared files use the picker's exact thumbnail pipeline and server-partitioned cache. */
+internal suspend fun regenerateAttachmentPreview(
+    bytes: ByteArray,
+    filename: String,
+    mime: String,
+    serverCacheNamespace: String,
+    localFile: File?,
+): ByteArray? = withContext(Dispatchers.IO) {
+    cachedAttachmentPreview(serverCacheNamespace, PickedAttachmentMetadata(filename, bytes.size.toLong(), mime), bytes) {
+        localFile?.let { renderPdfFirstPage(ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY)) }
+    }
+}
+
+private fun cachedAttachmentPreview(
+    serverCacheNamespace: String,
     metadata: PickedAttachmentMetadata,
     bytes: ByteArray,
-): ByteArray? = when {
-    metadata.mime.startsWith("image/") -> downsampleImage(bytes)
-    metadata.mime.equals("application/pdf", ignoreCase = true) ||
-        metadata.filename.endsWith(".pdf", ignoreCase = true) -> renderPdfFirstPage(context, uri)
-    metadata.isTextDocument() -> renderTextExcerpt(bytes)
-    else -> null
+    pdf: () -> ByteArray?,
+): ByteArray? {
+    val contentHash = MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+    val key = "${metadata.filename}|${metadata.mime}|$contentHash"
+    return ComposerThumbnailCache.get(serverCacheNamespace, key) ?: runCatching {
+        when {
+            metadata.mime.startsWith("image/") -> downsampleImage(bytes)
+            metadata.mime.equals("application/pdf", ignoreCase = true) ||
+                metadata.filename.endsWith(".pdf", ignoreCase = true) -> pdf()
+            metadata.isTextDocument() -> renderTextExcerpt(bytes)
+            else -> null
+        }
+    }.getOrNull()?.also { ComposerThumbnailCache.put(serverCacheNamespace, key, it) }
 }
 
 /** `PdfRenderer` first-page thumbnail, the Android equivalent of Quick Look's PDF thumbnail. */
 private fun renderPdfFirstPage(context: Context, uri: Uri): ByteArray? {
     val descriptor = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull() ?: return null
+    return renderPdfFirstPage(descriptor)
+}
+
+private fun renderPdfFirstPage(descriptor: ParcelFileDescriptor): ByteArray? {
     val renderer = runCatching { PdfRenderer(descriptor) }.getOrElse {
         runCatching { descriptor.close() }
         return null
