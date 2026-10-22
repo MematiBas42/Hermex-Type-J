@@ -10,11 +10,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import io.github.jcartu.hermex.ui.theme.Palette
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material.icons.Icons
@@ -289,6 +291,22 @@ private fun SettingsColumn(
 private fun AppearanceCard(viewModel: SettingsViewModel, uiState: SettingsUiState) {
     SettingsCard(title = "Appearance") {
         Text(
+            "Palette",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+        )
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+            Palette.entries.forEachIndexed { index, palette ->
+                SegmentedButton(
+                    selected = uiState.settings.palette == palette,
+                    onClick = { viewModel.setPalette(palette) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = Palette.entries.size),
+                ) {
+                    Text(palette.displayName)
+                }
+            }
+        }
+        Text(
             "Theme",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
@@ -327,12 +345,13 @@ private fun AppearanceCard(viewModel: SettingsViewModel, uiState: SettingsUiStat
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
         ) {
             val selectedHex = HeaderLogoColor.normalizedHex(uiState.settings.headerLogoColorHex)
-                ?: HeaderLogoColor.defaultHex
+                ?: uiState.settings.palette.defaultAccentHex
             HeaderLogoColor.presets.forEach { preset ->
                 HeaderColorSwatch(
                     preset = preset,

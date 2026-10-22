@@ -3,6 +3,7 @@ package io.github.jcartu.hermex.ui.feature.settings
 import androidx.compose.ui.graphics.Color
 import io.github.jcartu.hermex.ui.theme.Gold
 import io.github.jcartu.hermex.ui.theme.parseHexColor
+import io.github.jcartu.hermex.ui.theme.TokyoNight
 
 /**
  * Port of `HeaderLogoColor` from Config/AppTheme.swift: the accent-color
@@ -17,6 +18,11 @@ object HeaderLogoColor {
     const val defaultHex = "#FFD700"
 
     val presets = listOf(
+        HeaderLogoColorPreset("Tokyo Blue", TokyoNight.DEFAULT_ACCENT_HEX),
+        HeaderLogoColorPreset("Tokyo Magenta", "#BB9AF7"),
+        HeaderLogoColorPreset("Tokyo Cyan", "#7DCFFF"),
+        HeaderLogoColorPreset("Tokyo Green", "#9ECE6A"),
+        HeaderLogoColorPreset("Tokyo Orange", "#FF9E64"),
         HeaderLogoColorPreset("Yellow", "#FFD700"),
         HeaderLogoColorPreset("Blue", "#5B7CFF"),
         HeaderLogoColorPreset("Purple", "#AF52DE"),

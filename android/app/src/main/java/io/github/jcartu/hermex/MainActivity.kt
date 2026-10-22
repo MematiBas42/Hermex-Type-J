@@ -30,7 +30,11 @@ class MainActivity : ComponentActivity() {
                 SettingsRepository.Theme.LIGHT -> false
                 SettingsRepository.Theme.DARK -> true
             }
-            HermexTheme(darkTheme = darkTheme, accentHex = settings.headerLogoColorHex) {
+            HermexTheme(
+                darkTheme = darkTheme,
+                palette = settings.palette,
+                accentHex = settings.headerLogoColorHex,
+            ) {
                 HermexApp(container)
             }
         }

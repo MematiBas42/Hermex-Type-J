@@ -162,6 +162,9 @@ class SettingsViewModel(
 
     // MARK: Local preferences
 
+    fun setPalette(palette: io.github.jcartu.hermex.ui.theme.Palette) =
+        launchWrite { settingsRepository.setPalette(palette) }
+
     fun setTheme(theme: SettingsRepository.Theme) =
         launchWrite { settingsRepository.setTheme(theme) }
 

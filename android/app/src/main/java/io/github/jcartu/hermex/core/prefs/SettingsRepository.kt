@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import io.github.jcartu.hermex.ui.theme.Palette
 
 /**
  * User-tweakable app settings (mirrors the iOS app's @AppStorage defaults;
@@ -15,7 +16,7 @@ import kotlinx.coroutines.flow.map
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     private companion object {
-        const val DEFAULT_HEADER_LOGO_COLOR = "#FFD700"
+        val paletteKey = stringPreferencesKey("appPalette")
         val themeKey = stringPreferencesKey("appTheme")
         val headerLogoColorKey = stringPreferencesKey("headerLogoColorHex")
         val hapticsEnabledKey = booleanPreferencesKey("appHaptics.isEnabled")
@@ -34,8 +35,10 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     enum class Theme { SYSTEM, LIGHT, DARK }
 
     data class Settings(
+        val palette: Palette = Palette.DEFAULT,
         val theme: Theme = Theme.SYSTEM,
-        val headerLogoColorHex: String = DEFAULT_HEADER_LOGO_COLOR,
+        /** Accent hex; when the user has never picked one it is the palette's own accent. */
+        val headerLogoColorHex: String = Palette.DEFAULT.defaultAccentHex,
         val hapticsEnabled: Boolean = true,
         val backgroundRunNotificationsEnabled: Boolean = false,
         val showsThinkingAndToolCards: Boolean = true,
@@ -49,9 +52,11 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     )
 
     val settings: Flow<Settings> = dataStore.data.map { prefs ->
+        val palette = Palette.fromName(prefs[paletteKey])
         Settings(
+            palette = palette,
             theme = prefs[themeKey]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.SYSTEM,
-            headerLogoColorHex = prefs[headerLogoColorKey] ?: DEFAULT_HEADER_LOGO_COLOR,
+            headerLogoColorHex = prefs[headerLogoColorKey] ?: palette.defaultAccentHex,
             hapticsEnabled = prefs[hapticsEnabledKey] ?: true,
             backgroundRunNotificationsEnabled = prefs[backgroundRunNotificationsKey] ?: false,
             showsThinkingAndToolCards = prefs[showsThinkingAndToolCardsKey] ?: true,
@@ -65,6 +70,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         )
     }
 
+    suspend fun setPalette(palette: Palette) = dataStore.edit { it[paletteKey] = palette.name }
     suspend fun setTheme(theme: Theme) = dataStore.edit { it[themeKey] = theme.name }
     suspend fun setHeaderLogoColor(hex: String) = dataStore.edit { it[headerLogoColorKey] = hex }
     suspend fun setHapticsEnabled(enabled: Boolean) = dataStore.edit { it[hapticsEnabledKey] = enabled }

@@ -80,19 +80,36 @@ private fun lightScheme(accent: androidx.compose.ui.graphics.Color): ColorScheme
 private fun androidx.compose.ui.graphics.Color.compositeOverThis(base: androidx.compose.ui.graphics.Color) =
     androidx.compose.ui.graphics.lerp(base, this, alpha).copy(alpha = 1f)
 
+/** Which colour family the app draws with. The user's accent tints primary actions in either. */
+enum class Palette(val displayName: String, val defaultAccentHex: String) {
+    TOKYO_NIGHT("Tokyo Night", TokyoNight.DEFAULT_ACCENT_HEX),
+    CLASSIC("Classic", "#FFD700"),
+    ;
+
+    companion object {
+        val DEFAULT = TOKYO_NIGHT
+
+        fun fromName(raw: String?): Palette = entries.firstOrNull { it.name == raw } ?: DEFAULT
+    }
+}
+
 /**
- * The app theme. [accentHex] is the user-selectable Header Logo Color from
- * Settings (default gold); it tints primary actions exactly like the iOS app's
- * PrimaryActionTintSettings.
+ * The app theme. [palette] picks the colour family (Tokyo Night by default);
+ * [accentHex] is the user-selectable Header Logo Color from Settings and
+ * tints primary actions exactly like the iOS app's PrimaryActionTintSettings.
  */
 @Composable
 fun HermexTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    accentHex: String = "#FFD700",
+    palette: Palette = Palette.DEFAULT,
+    accentHex: String = palette.defaultAccentHex,
     content: @Composable () -> Unit,
 ) {
-    val accent = parseHexColor(accentHex) ?: Gold
-    val scheme = if (darkTheme) darkScheme(accent) else lightScheme(accent)
+    val accent = parseHexColor(accentHex) ?: parseHexColor(palette.defaultAccentHex) ?: Gold
+    val scheme = when (palette) {
+        Palette.TOKYO_NIGHT -> if (darkTheme) tokyoNightDarkScheme(accent) else tokyoNightLightScheme(accent)
+        Palette.CLASSIC -> if (darkTheme) darkScheme(accent) else lightScheme(accent)
+    }
     MaterialTheme(
         colorScheme = scheme,
         typography = HermexTypography,
