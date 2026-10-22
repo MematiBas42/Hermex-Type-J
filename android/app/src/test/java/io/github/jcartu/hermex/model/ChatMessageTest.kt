@@ -191,6 +191,18 @@ class ChatMessageTest {
     }
 
     @Test
+    fun `Hermes context warnings are removed without attachment tokens`() {
+        val parsed = MessageAttachment.hermesReferences(
+            "Please read this\n\n--- Context Warnings ---\nThe host could not load a file.",
+        )
+        assertEquals("Please read this", parsed.text)
+        assertTrue(parsed.attachments.isEmpty())
+
+        val ordinary = "Explain the marker --- Context Warnings --- inline."
+        assertEquals(ordinary, MessageAttachment.hermesReferences(ordinary).text)
+    }
+
+    @Test
     fun `classifier treats tool-result-only user message as non-boundary`() {
         val visibleUser = ChatMessage(role = "user", content = "question", messageId = "u1")
         val toolResultOnly = ChatMessage(role = "user", content = "   ", messageId = "u2")

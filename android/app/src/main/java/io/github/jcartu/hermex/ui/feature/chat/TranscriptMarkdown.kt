@@ -111,7 +111,7 @@ fun TranscriptMarkdown(
                         Markdown(
                             content = segment.content,
                             modifier = Modifier.fillMaxWidth(),
-                            typography = markdownTypography(code = CodeTextStyle, inlineCode = CodeTextStyle),
+                            typography = transcriptMarkdownTypography(),
                             components = components,
                         )
                     }
@@ -120,6 +120,28 @@ fun TranscriptMarkdown(
             }
         }
     }
+}
+
+/**
+ * Chat-scale Markdown type: the renderer's M3 defaults put `h1` at
+ * `displayLarge`, which dwarfs a chat bubble. iOS renders headings a step or
+ * two above body text, so headings here top out at `titleLarge`.
+ */
+@Composable
+private fun transcriptMarkdownTypography() = androidx.compose.material3.MaterialTheme.typography.let { t ->
+    val bold = androidx.compose.ui.text.font.FontWeight.SemiBold
+    markdownTypography(
+        h1 = t.titleLarge.copy(fontWeight = bold),
+        h2 = t.titleMedium.copy(fontWeight = bold),
+        h3 = t.titleSmall.copy(fontWeight = bold),
+        h4 = t.bodyLarge.copy(fontWeight = bold),
+        h5 = t.bodyMedium.copy(fontWeight = bold),
+        h6 = t.bodyMedium.copy(fontWeight = bold),
+        text = t.bodyLarge,
+        paragraph = t.bodyLarge,
+        code = CodeTextStyle,
+        inlineCode = CodeTextStyle,
+    )
 }
 
 @Composable
@@ -303,10 +325,17 @@ private fun MarkdownTableView(table: MarkdownTableSegment.Table) {
                             },
                             border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outline),
                         ) {
-                            Text(
-                                text = row.getOrElse(column) { "" },
-                                style = MaterialTheme.typography.bodySmall,
+                            val cellStyle = MaterialTheme.typography.bodySmall.copy(
                                 fontWeight = if (rowIndex == 0) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                            Markdown(
+                                content = row.getOrElse(column) { "" },
+                                typography = markdownTypography(
+                                    text = cellStyle,
+                                    paragraph = cellStyle,
+                                    code = CodeTextStyle,
+                                    inlineCode = CodeTextStyle,
+                                ),
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                             )
                         }
@@ -316,6 +345,7 @@ private fun MarkdownTableView(table: MarkdownTableSegment.Table) {
         }
     }
 }
+
 
 private fun isWebUri(value: String): Boolean {
     val scheme = runCatching { Uri.parse(value).scheme?.lowercase(Locale.ROOT) }.getOrNull()

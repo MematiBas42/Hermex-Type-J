@@ -5,16 +5,16 @@ Swift sources remain the behavioral source of truth at `../HermesMobile/`.
 This document is the binding contract for every agent working in `android/`.
 ## Hard rules
 
-1. **Never invent API shapes.** Every endpoint, JSON field, and SSE event you
-   encode/decode MUST exist in the Swift sources (or in `../PROJECT_SPEC.md`).
-   The upstream wire format is truth; the pin is `../UPSTREAM_TESTED_SHA`
-   (`nesquena/hermes-webui` v0.51.85). When the Swift code decodes tolerantly,
-   port that tolerance — unknown fields must never crash the app.
+1. **Never invent API shapes.** Every endpoint, JSON field, SSE event, and
+   gateway method must match the current Swift sources and the server contract.
+   `../UPSTREAM_TESTED_SHA` pins WebUI; `../HERMES_AGENT_TESTED_SHA` pins Hermes.
+   Connection and protocol guidance lives in `../docs/agents/hermes-server.md`
+   and `../DEVELOPMENT.md`. Port tolerant decoding; unknown fields must not crash.
 2. **No TODO, no stubs, no placeholders, no "not implemented" comments.**
    Implement the feature completely or leave the file untouched.
-3. **Never add `Origin` or `Referer` headers** to any request. The upstream
-   CSRF check treats requests without them as non-browser clients (see
-   `../PROJECT_SPEC.md` §6.1). OkHttp adds neither by default — keep it that way.
+3. **Never add `Origin` or `Referer` headers** to any request. WebUI treats
+   requests without them as non-browser clients (see `../DEVELOPMENT.md`,
+   "SSE and Cloudflare Stream Verification"). OkHttp adds neither by default.
 4. **Only dependencies from `gradle/libs.versions.toml`** — adding a library
    requires the project owner's approval. Everything needed is already there
    (Compose, Material3 + adaptive, androidx.window, OkHttp + SSE, DataStore,
@@ -31,20 +31,21 @@ app/src/main/java/io/github/jcartu/hermex/
 ├── core/
 │   ├── crypto/                 # AndroidKeystoreCipher (StringCipher)
 │   ├── logging/HermexLog.kt
-│   ├── net/                    # PersistentCookieJar + (networking agent adds ApiClient/SSE)
-│   └── prefs/                  # ServerConfigRepository, SettingsRepository, CookieSerializer
+│   ├── net/                    # persisted cookies and connection helpers
+│   └── prefs/                  # server registry, credentials, settings and cookies
 ├── model/                      # ported Swift Models/ — one Kotlin file per Swift file, same type names
-├── net/                        # ported Networking/ (ApiClient, APIError, Endpoints → HermesApi)
-├── data/                       # offline cache (file-backed, kotlinx.serialization)
+├── net/                        # WebUI REST/SSE; net/hermes contains Hermes REST/RPC
+├── data/                       # server-scoped offline cache and durable chat drafts
 └── ui/
-    ├── HermexRoot.kt           # root composable (integrator owns)
+    ├── HermexApp.kt            # authentication gate and adaptive navigation shell
     ├── adaptive/FoldState.kt   # trifold hinge state + pane-count heuristics
     ├── components/             # shared composables (LoadingState/ErrorState/EmptyState live here)
     └── feature/<name>/         # one package per feature: <Name>Screen.kt, <Name>ViewModel.kt, parts as needed
 ```
 
-Package: `io.github.jcartu.hermex`. Feature packages: `onboarding`, `sessions`,
-`chat`, `models`, `tasks`, `skills`, `workspace`, `memory`, `insights`, `settings`.
+Package: `io.github.jcartu.hermex` (unchanged for in-place upgrades). Feature
+packages include `onboarding`, `sessions`, `chat`, `models`, `tasks`, `skills`,
+`workspace`, `memory`, `insights`, `settings`, `kanban`, and `git`.
 
 ## Swift → Kotlin mapping
 
@@ -56,7 +57,7 @@ Package: `io.github.jcartu.hermex`. Feature packages: `onboarding`, `sessions`,
 | URLSession + APIClient | `OkHttp` via `AppContainer.okHttpClient` + `net/HermesApi` |
 | Keychain | `core/crypto` (already built) |
 | SwiftData cache | `data/` file cache via kotlinx.serialization |
-| String(localized:) | plain English strings inline (v1 is English-only) |
+| String(localized:) | plain English strings inline (the Android client is English-only) |
 | SF Symbols | Material icons (`androidx.compose.material.icons.Icons`) |
 
 Type/field naming: keep Swift type names (`SessionSummary`, `ChatMessage`,
@@ -68,12 +69,16 @@ Type/field naming: keep Swift type names (`SessionSummary`, `ChatMessage`,
 
 Swift's custom `init(from:)` logic (optional-everything, alternate keys,
 string-or-array unions) must be ported to custom serializers or safe secondary
-constructors. For JSON unions use `JsonElement` fields + accessor properties,
-mirroring `JSONValue.swift` (port that first — `model/JsonValue.kt`).
+constructors. For JSON unions use `JsonElement` fields plus accessor properties,
+following the existing `model/JsonValue.kt` and `model/hermes/BotJSON.kt`.
 
-## Networking contract (for the networking agent)
+## Networking contract
 
-Implement `net/HermesApi.kt` as a **class** `HermesApi(httpClient: OkHttpClient, json: Json, configProvider: () -> ServerConfig)`:
+`net/HermesApi.kt` is the WebUI REST client; its suspend configuration provider
+resolves the active server. Feature-specific extension files use the same
+request helpers and `Endpoint.Custom`; do not duplicate authentication or
+redirect handling. Hermes connections use `net/hermes/HermesConnection.kt`,
+`HermesREST`, and `HermesCall`, not WebUI endpoints.
 
 - All endpoints from `../HermesMobile/Networking/Endpoints.swift` + the
   extension files `APIClient+*.swift` — port every one the features below use
@@ -93,8 +98,9 @@ Implement `net/HermesApi.kt` as a **class** `HermesApi(httpClient: OkHttpClient,
 
 ## UI conventions
 
-- `HermexTheme` (dark-first, gold accent) is the only theme. Colors from
-  `ui/theme/Color.kt`. Do not hardcode colors that exist there.
+- `HermexTheme` supplies the selected palette: Tokyo Night by default, Classic
+  as an option, each supporting System/Light/Dark. Use `MaterialTheme.colorScheme`
+  roles rather than fixed black/white/gold values, including onboarding screens.
 - ViewModels expose a single immutable `data class ...UiState` through
   `StateFlow`; mutate via private `MutableStateFlow`. No RxJava, no LiveData.
 - Collect with `collectAsStateWithLifecycle()`.
@@ -148,14 +154,19 @@ widths. Never assume ~400dp.
 
 ## Tests
 
-Every feature ships JVM unit tests under `app/src/test/java/...`:
+Keep deterministic regression coverage under `app/src/test/java/...` for
+consumer-visible boundaries, state transitions, and protocol decisions:
 
-- Decoding tests: JSON fixtures (transcribed from the Swift file's decoding
-  logic or upstream responses referenced in Swift tests) → decoded model
-  assertions. Include at least one "unknown fields ignored" case per model.
-- ViewModel tests: mockk the `HermesApi`, drive events, assert UiState.
-- Network tests may use `okhttp-mockwebserver`.
-- No Robolectric (not on the classpath). Keep tests pure JVM.
+- Transcribe fixtures from current Swift/server sources; test tolerant cases
+  where the server genuinely varies, not implementation details or copy.
+- ViewModel tests drive events and assert resulting state; network tests use
+  `okhttp-mockwebserver` and must close their sockets during teardown.
+- Robolectric is available for Android-dependent behavior. Android resources
+  are not included in JVM tests, so these tests do not replace emulator proof.
+- The integrator builds, installs, and exercises the app on an emulator/device,
+  including folded/unfolded layouts and a restart with saved server settings.
+- Android's regex engine rejects the JVM-only `(?U)` flag. Use portable Unicode
+  classes such as `[\\s\\p{Z}]`; JVM-only tests will not catch this startup crash.
 
 ## Feature ↔ Swift file map
 
@@ -174,6 +185,8 @@ Every feature ships JVM unit tests under `app/src/test/java/...`:
 | `ui/feature/insights` | `Features/Insights/*` |
 | `ui/feature/settings` | `Features/Settings/*` (minus iOS-only icon/streaming-lab sections) |
 
-Out of scope for this port (do not build): Kanban, Live Activities, App
-Intents, share extension, TTS/transcribe, git panels, push. The Swift code for
-those exists but the Android v1 scope excludes them.
+Kanban, Git panels, durable Android sharing, voice transcription/TTS, deep
+links, launcher shortcuts, and foreground run notifications are part of Type-J.
+iOS-only App Intents and Live Activities map to Android shortcuts and ongoing
+notifications. The upstream push relay targets APNs: do not claim Android
+remote-push support or introduce Firebase without an approved Android transport.

@@ -96,7 +96,8 @@ data class MessageAttachment(
             if (
                 "@file:" !in content &&
                 "[The user attached an image: " !in content &&
-                " Context ---" !in content
+                " Context ---" !in content &&
+                "--- Context Warnings ---" !in content
             ) return HermesReferenceResult(content, emptyList())
 
             val footer = HERMES_CONTEXT_FOOTER.find(content)
