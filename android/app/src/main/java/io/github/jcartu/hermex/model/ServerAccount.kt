@@ -12,13 +12,8 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import java.net.URI
 
-/**
- * `HeaderLogoColor.defaultHex` from `Config/AppTheme.swift` — `#FFD700`. Inlined
- * here because `HeaderLogoColor` is a UI/theme type owned outside the model
- * package; the model only needs the default hex constant (and [normalizedHex]
- * below for seeding).
- */
-private const val DEFAULT_HEADER_LOGO_COLOR_HEX = "#FFD700"
+/** Type-J's default Tokyo Night accent; explicitly saved server colors are preserved. */
+private const val DEFAULT_HEADER_LOGO_COLOR_HEX = "#7AA2F7"
 
 /** `HeaderLogoColor.storageKey` (`Config/AppTheme.swift`). */
 private const val HEADER_LOGO_COLOR_STORAGE_KEY = "headerLogoColorHex"

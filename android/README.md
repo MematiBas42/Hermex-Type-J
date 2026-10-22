@@ -229,6 +229,11 @@ Important rules:
 - transport failures do not silently replay non-idempotent Hermes operations;
 - only confirmed authentication-gate 401s permit the guarded re-sign-in/retry path.
 
+Legacy WebUI cookies follow upstream's documented host scope, not port scope.
+Use separate hostnames for independent WebUI servers on the same machine.
+Direct-Hermes connections use separate ephemeral jars. See
+[`multi-server-state-isolation.md`](../docs/agents/multi-server-state-isolation.md).
+
 ## Tests
 
 The suite covers protocol decoding, authentication isolation, replay/recovery,
@@ -270,6 +275,11 @@ Activities/App Intents use Android ongoing notifications and shortcuts instead.
 Document previews use PdfRenderer, the native source/image viewer, or an
 external Android document handler rather than iOS Quick Look. There is no
 separate TTS-engine voice picker; Hermes speech uses the host's configured voice.
+
+Background observation is opt-in and uses Android foreground services for both
+server kinds. Android can refuse starts made too late after backgrounding and
+can time-limit long data-sync services. A refusal or timeout ends local
+observation, not the server's run; reopening the chat reattaches without resending.
 
 ## Contributing
 

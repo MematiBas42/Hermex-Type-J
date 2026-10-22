@@ -108,7 +108,7 @@ fun HermesSessionListScreen(
     }
     DisposableEffect(viewModel) { onDispose { if (viewModel.uiState.value.archived) viewModel.closeAsync() else viewModel.pause() } }
     LaunchedEffect(lifecycle) { lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-        SessionListIdleTicker.run({ System.currentTimeMillis() / 1000 }, { now = it })
+        SessionListIdleTicker.run(nowEpochSeconds = { System.currentTimeMillis() / 1000 }, emit = { now = it })
     } }
     LaunchedEffect(searchText, state.profile, state.showsAllProfiles) { viewModel.search(searchText) }
     LaunchedEffect(appSettings.showsProjectsEntry, state.projects) {

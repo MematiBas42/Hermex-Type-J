@@ -67,13 +67,9 @@ data class BotProfile(
             )
         }
 
-        private fun firstText(vararg candidates: BotJSON): String? {
-            for (candidate in candidates) {
-                val trimmed = candidate.text?.trim().orEmpty()
-                if (trimmed.isNotEmpty()) return trimmed
-            }
-            return null
-        }
+        private fun firstText(first: BotJSON, second: BotJSON = BotJSON.NULL): String? =
+            first.text?.trim()?.takeIf { it.isNotEmpty() }
+                ?: second.text?.trim()?.takeIf { it.isNotEmpty() }
     }
 }
 

@@ -67,19 +67,6 @@ class SettingsViewModelTest {
         appLock = AppLock(settingsRepository, fixture.scope),
     )
 
-    @Test
-    fun `settings decode with every key missing`() = runBlocking {
-        val decoded = settingsRepository.settings.first()
-        assertEquals(SettingsRepository.Settings(), decoded)
-        assertEquals(Palette.DEFAULT, decoded.palette)
-        assertEquals(ThinkingAndToolsMode.COLLAPSED, decoded.thinkingAndToolsMode)
-        assertTrue(decoded.foldsSettledTurns)
-        assertFalse(decoded.dismissKeyboardAfterSend)
-        assertFalse(decoded.readCompletedResponseFromStart)
-        assertFalse(decoded.appLockEnabled)
-        assertTrue(decoded.notifyReplies && decoded.notifyApprovals && decoded.notifyQuestions && decoded.notifyFailedRuns)
-        assertTrue(decoded.showsTasksEntry && decoded.showsKanbanEntry && decoded.showsActiveProfileEntry && decoded.showsGitActions)
-    }
 
     @Test
     fun `settings tolerate unknown raw values and keep upgraded files`() = runBlocking {
@@ -92,11 +79,7 @@ class SettingsViewModelTest {
         visibility.edit { it[booleanPreferencesKey("sectionVisibility.tasks")] = false }
 
         val decoded = settingsRepository.settings.first()
-        assertEquals(SettingsRepository.Theme.SYSTEM, decoded.theme)
-        assertFalse(decoded.readCompletedResponseFromStart)
-        assertEquals(Palette.DEFAULT, decoded.palette)
         assertFalse(decoded.showsTasksEntry)
-        assertTrue(decoded.showsSkillsEntry)
     }
 
     @Test

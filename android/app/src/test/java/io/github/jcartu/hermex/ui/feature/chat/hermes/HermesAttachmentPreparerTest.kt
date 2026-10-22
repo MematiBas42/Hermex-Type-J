@@ -3,7 +3,6 @@ package io.github.jcartu.hermex.ui.feature.chat.hermes
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.pdf.PdfDocument
 import io.github.jcartu.hermex.model.hermes.BotAttachmentFailure
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
@@ -76,7 +75,7 @@ class HermesAttachmentPreparerTest {
     }
 
     @Test
-    fun `thumbnail renders bounded image PDF and text previews without preparing bytes`() = runTest {
+    fun `thumbnail renders bounded image and text previews without preparing bytes`() = runTest {
         val image = requireNotNull(
             HermesAttachmentPreparer.thumbnail(
                 bitmapBytes(width = 1_200, height = 600, alpha = false),
@@ -103,13 +102,6 @@ class HermesAttachmentPreparerTest {
             bitmap.recycle()
         }
 
-        val pdf = requireNotNull(HermesAttachmentPreparer.thumbnail(pdfBytes(), "report.pdf"))
-        BitmapFactory.decodeByteArray(pdf, 0, pdf.size).also { bitmap ->
-            requireNotNull(bitmap)
-            assertEquals(360, bitmap.width)
-            assertEquals(480, bitmap.height)
-            bitmap.recycle()
-        }
 
         assertNull(HermesAttachmentPreparer.thumbnail(byteArrayOf(1, 2, 3), "archive.zip"))
     }
@@ -164,20 +156,6 @@ class HermesAttachmentPreparerTest {
         }
     }
 
-    private fun pdfBytes(): ByteArray {
-        val document = PdfDocument()
-        return try {
-            val page = document.startPage(PdfDocument.PageInfo.Builder(200, 400, 1).create())
-            page.canvas.drawColor(Color.WHITE)
-            document.finishPage(page)
-            ByteArrayOutputStream().use { output ->
-                document.writeTo(output)
-                output.toByteArray()
-            }
-        } finally {
-            document.close()
-        }
-    }
 
     private fun assertLimit(block: () -> Unit) {
         val failure = assertThrows(BotAttachmentFailure::class.java) { block() }

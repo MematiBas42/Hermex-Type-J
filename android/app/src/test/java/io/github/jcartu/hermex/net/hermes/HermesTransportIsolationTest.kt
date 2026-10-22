@@ -114,6 +114,24 @@ class HermesTransportIsolationTest {
         }
     }
 
+    @Test
+    fun safeStatusReadRecoversAfterAPooledSocketDrops() = runBlocking {
+        val origin = MockWebServer()
+        origin.start()
+        try {
+            val status = "{\"auth_required\":true,\"version\":\"0.21.5\"}"
+            origin.enqueue(MockResponse().setBody(status))
+            origin.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            origin.enqueue(MockResponse().setBody(status))
+            val connection = connection(origin)
+            connection.status()
+            assertEquals("0.21.5", connection.status()["version"].text)
+            assertEquals(3, origin.requestCount)
+        } finally {
+            origin.shutdown()
+        }
+    }
+
     private fun connection(server: MockWebServer) = HermesConnection(
         BotConnection(
             name = "Fixture",

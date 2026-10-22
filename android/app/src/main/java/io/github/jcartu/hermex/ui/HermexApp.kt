@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.model.ServerAccount
+import io.github.jcartu.hermex.model.ServerKind
 import io.github.jcartu.hermex.core.navigation.DeepLinkRouter
 import io.github.jcartu.hermex.core.navigation.HermesSessionResolution
 import io.github.jcartu.hermex.core.navigation.LinkRoutingContext
@@ -165,6 +166,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 navigation.startNewChat()
             }
             is ShareRouting.Route.HermesNewChat -> {
+                navigation.selectDestination(HermexDestination.CHATS)
                 // #1181: a new chat on the active Hermes server. The home opens
                 // it and claims the import into the new-session draft via
                 // `HermesShareImport.transfer`, then acknowledges the durable
@@ -227,12 +229,14 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenHermesSession -> {
+                navigation.selectDestination(HermexDestination.CHATS)
                 // The Hermes home resolves the exact session on its saved
                 // connection (#1176) and consumes its own server's request.
                 HermesSessionLookup.open(route.destination)
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenHermesNewChat -> {
+                navigation.selectDestination(HermexDestination.CHATS)
                 // A Hermes voice new chat auto-starts through HermesChatPane's
                 // autoStartsVoiceInput parameter, which the destination carries
                 // end-to-end; VoiceDictationRequest is the webui-only bridge.
@@ -244,6 +248,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenBot -> {
+                navigation.selectDestination(HermexDestination.CHATS)
                 // BotMode's queue; the Hermes home turns to Bots and the inbox
                 // resolves it against the live roster (#554).
                 BotLinkMailbox.post(
@@ -302,28 +307,6 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     LaunchedEffect(settings.showsTasksEntry, selected) {
         if (!settings.showsTasksEntry && selected == HermexDestination.TASKS) {
             navigation.selectDestination(HermexDestination.CHATS)
-        }
-    }
-    LaunchedEffect(pendingDeepLink?.first) {
-        val pending = pendingDeepLink ?: return@LaunchedEffect
-        when (val link = pending.second) {
-            AppDeepLink.NewChat -> {
-                navigation.selectDestination(HermexDestination.CHATS)
-                navigation.startNewChat()
-            }
-            is AppDeepLink.Session -> {
-                navigation.selectDestination(HermexDestination.CHATS)
-                navigation.selectSession(link.sessionId)
-            }
-            is AppDeepLink.Kanban -> navigation.openKanban(link.boardSlug, link.cardId)
-            is AppDeepLink.Git -> navigation.openGit(link.sessionId)
-        }
-        container.deepLinks.acknowledge(pending.first)
-    }
-    LaunchedEffect(sharedImport?.id) {
-        if (sharedImport != null) {
-            navigation.selectDestination(HermexDestination.CHATS)
-            navigation.startNewChat()
         }
     }
     io.github.jcartu.hermex.ui.feature.settings.NotificationOfferHost(container)

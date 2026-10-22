@@ -530,7 +530,7 @@ private fun BoundedRoomTranscript(
     }
     val shown = if (events.isEmpty()) emptyList() else events.subList(start, events.size)
     val ordered = if (overview) shown.asReversed() else shown
-    ordered.forEach(row)
+    ordered.forEach { event -> row(event) }
     if (overview && (hidden || hasEarlier)) {
         TextButton(
             onClick = {

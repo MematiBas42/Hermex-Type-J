@@ -99,10 +99,10 @@ class HermexDeepLinkTest {
 
     @Test fun `bare session id is null for server-named malformed and injection links`() {
         assertNull(HermexDeepLink.bareSessionId(Uri.parse("hermex-type-j://session?server=x&id=abc")))
-        assertNull(HermesDeepLink.bareSessionId(Uri.parse("hermex-type-j://session/")))
-        assertNull(HermesDeepLink.bareSessionId(Uri.parse("hermex-type-j://session/${"x".repeat(300)}")))
+        assertNull(HermexDeepLink.bareSessionId(Uri.parse("hermex-type-j://session/")))
+        assertNull(HermexDeepLink.bareSessionId(Uri.parse("hermex-type-j://session/${"x".repeat(300)}")))
         assertNull(HermexDeepLink.bareSessionId(Uri.parse("hermex-type-j://kanban/abc")))
-        assertNull(HermesDeepLink.bareSessionId(Uri.parse("https://example.com/session/abc")))
+        assertNull(HermexDeepLink.bareSessionId(Uri.parse("https://example.com/session/abc")))
     }
 
     // MARK: - webui-push links (#1185, #1217)

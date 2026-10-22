@@ -122,7 +122,7 @@ class HermesChatSideTasks(
 
     /** Runs one `command.dispatch goal` write and decodes the host's exec/send union. */
     suspend fun dispatchGoal(argument: String): HermesGoalReply {
-        val reply = write { runtime -> HermesCall.CommandDispatch("goal", argument, runtime) }
+        val reply = write(call = { runtime -> HermesCall.CommandDispatch("goal", argument, runtime) })
         return when (reply["type"].text) {
             "exec" -> HermesGoalReply.Exec(reply["output"].text.orEmpty())
             "send" -> {

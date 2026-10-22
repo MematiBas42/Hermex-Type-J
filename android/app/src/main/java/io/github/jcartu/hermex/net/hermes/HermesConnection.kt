@@ -39,9 +39,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * `X-Hermes-Session-Token`; a host restart replaces it, which the 401 below recovers from.
  * Cancelling one waiting consumer never cancels it. A signed-in request the host answers with
  * 401 signs in again once, sharing that sign-in with any other consumer's 401, and is resent.
- * Nothing else is retried, and a transport failure or 5xx leaves the sign-in as it was. After
- * [retire], every call and every late reply throws [BotFailure.Stale], and the gateway socket
- * has ended.
+ * Read-only HTTP requests can recover stale pooled connections. Mutation requests and
+ * WebSocket tickets never replay on transport failure. Failures leave sign-in unchanged;
+ * after [retire], every call and late reply throws [BotFailure.Stale] and the gateway ends.
  *
  * Every method runs on [HermesActor.dispatcher]; the network suspends there rather than
  * blocking it.
@@ -114,6 +114,9 @@ class HermesConnection(
 
     /** [client] without read or call timeouts, for the sockets, whose silence the gateway polices. */
     val socketClient: OkHttpClient
+
+    private val readClient: OkHttpClient
+    private val provisioningReadClient: OkHttpClient
 
     /** The gateway socket every Bot screen on this connection shares. */
     val gateway: HermesGateway by lazy { HermesGateway(this, gatewayOptions) }
@@ -196,6 +199,8 @@ class HermesConnection(
             .writeTimeout(120, TimeUnit.SECONDS)
             .callTimeout(180, TimeUnit.SECONDS)
             .build()
+        readClient = client.newBuilder().retryOnConnectionFailure(true).build()
+        provisioningReadClient = provisioningClient.newBuilder().retryOnConnectionFailure(true).build()
         socketClient = client.newBuilder()
             // OkHttp omits network interceptors for WebSocket calls; never follow upgrades.
             .followRedirects(false)
@@ -510,7 +515,7 @@ class HermesConnection(
         perform: suspend (Request, OkHttpClient) -> T,
     ): T = withContext(HermesActor.dispatcher) {
         val prepared = prepared(request)
-        val client = clientFor(deadline)
+        val client = requestClient(prepared, clientFor(deadline))
         signIn(deadline)
         validateDispatch?.invoke()
         val sentEpoch = epoch
@@ -635,6 +640,16 @@ class HermesConnection(
     private fun clientFor(deadline: Deadline): OkHttpClient =
         if (deadline == Deadline.PROVISIONING) provisioningClient else client
 
+    /** GET/HEAD may recover a stale pooled socket; writes and upgrade tickets never replay. */
+    private fun requestClient(request: Request, baseClient: OkHttpClient): OkHttpClient {
+        if (request.method != "GET" && request.method != "HEAD") return baseClient
+        return when (baseClient) {
+            client -> readClient
+            provisioningClient -> provisioningReadClient
+            else -> baseClient
+        }
+    }
+
     private suspend fun send(request: Request, client: OkHttpClient, accepting: IntRange): ByteArray {
         val (data, response) = exchange(request, client)
         if (response.code !in accepting) throw BotFailure.Rejected(response.code)
@@ -649,7 +664,7 @@ class HermesConnection(
      */
     private suspend fun exchange(request: Request, client: OkHttpClient): HermesExchange {
         val result = try {
-            client.exchange(request)
+            requestClient(request, client).exchange(request)
         } catch (_: io.github.jcartu.hermex.net.UnsafeCrossOriginRedirect) {
             throw BotFailure.Blocked
         } catch (error: IOException) {

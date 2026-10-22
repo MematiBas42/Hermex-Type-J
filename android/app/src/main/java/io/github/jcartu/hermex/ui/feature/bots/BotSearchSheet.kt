@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -49,7 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.LocalFocusManager
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -532,30 +531,9 @@ private fun SearchResultRow(
     }
 }
 
-/** Parses Hermes FTS `>>>match<<<` spans; unmarked substring hits fall back to query bolding. */
-private fun highlightedHermesSnippet(raw: String, query: String): AnnotatedString {
-    val text = SessionSearchExcerpt.displayText(raw)
-    var cursor = 0
-    var bold = false
-    var hasMarks = false
-    val marked = buildAnnotatedString {
-        while (cursor < text.length) {
-            val open = text.indexOf(\">>>\", startIndex = cursor).takeIf { it >= 0 }
-            val close = text.indexOf(\"<<<\", startIndex = cursor).takeIf { it >= 0 }
-            val next = listOfNotNull(open?.let { it to true }, close?.let { it to false })
-                .minByOrNull { it.first }
-            val end = next?.first ?: text.length
-            val piece = text.substring(cursor, end)
-            if (bold) withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(piece) }
-            else append(piece)
-            if (next == null) break
-            hasMarks = true
-            bold = next.second
-            cursor = end + 3
-        }
-    }
-    return if (hasMarks) marked else SessionSearchExcerpt.of(text, query).highlighted()
-}
+/** Uses the shared Hermes FTS marker parser for bot-message search excerpts. */
+private fun highlightedHermesSnippet(raw: String, query: String): AnnotatedString =
+    SessionSearchExcerpt.hermesSnippet(raw, query).highlighted()
 
 @Composable
 private fun SearchStatus(text: String) {

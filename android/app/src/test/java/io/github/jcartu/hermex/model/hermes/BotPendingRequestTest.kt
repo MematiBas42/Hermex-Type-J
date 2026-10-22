@@ -331,6 +331,6 @@ class BotPendingRequestTest {
 
     private fun obj(vararg fields: Pair<String, BotJSON>): BotJSON = BotJSON.objectOf(*fields)
     private fun obj(fields: Map<String, BotJSON>): BotJSON = BotJSON.objectOf(fields)
-    private fun array(vararg values: BotJSON): BotJSON = BotJSON.array(values.toList())
+    private fun array(vararg values: Any): BotJSON = BotJSON.array(values.map { it as BotJSON })
     private fun text(value: String): BotJSON = BotJSON.string(value)
 }

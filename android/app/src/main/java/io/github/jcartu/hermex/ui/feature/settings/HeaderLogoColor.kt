@@ -15,7 +15,7 @@ data class HeaderLogoColorPreset(val name: String, val hex: String) {
 }
 
 object HeaderLogoColor {
-    const val defaultHex = "#FFD700"
+    const val defaultHex = TokyoNight.DEFAULT_ACCENT_HEX
 
     val presets = listOf(
         HeaderLogoColorPreset("Tokyo Blue", TokyoNight.DEFAULT_ACCENT_HEX),

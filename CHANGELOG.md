@@ -13,6 +13,14 @@ Entries use Added / Changed / Fixed / Security sections.
   custom headers, cached sessions, drafts, model favorites, and recent models.
 - Direct Hermes transport plus Tasks, live Kanban, Skills, editable Memory and
   soul, Usage/provider limits, Files, Git, and Profile-bound host speech.
+- Direct Hermes chat with native streaming/requests/media, model/Profile/personality
+  controls, plans, delegated work, goals, BTW, session history actions, and replay.
+- Bots inbox, editable bot Profiles/appearances, rooms/threads, mentions, search,
+  and the optional Bots entry for legacy WebUI servers.
+- Resumable scan/review/copy migration from WebUI to Hermes with draft preservation
+  and moved-session link routing; server-aware sharing, shortcuts, and notification taps.
+- Android foreground observation for direct-Hermes runs, with independent pending
+  approval/question lifetimes and no automatic prompt resubmission.
 - Updated chat transcript and composer: compact activity rows, folded turns,
   file-edit diffs, word-boundary streaming, selection-to-question, file/skill
   chips, per-message Queue/Steer/Stop-and-send, and hardware-keyboard recall.
@@ -46,6 +54,9 @@ Entries use Added / Changed / Fixed / Security sections.
   recovery preserves rejected input across navigation and Profile mismatches.
 - Pending approvals survive stream transitions; restored and shared documents
   regenerate their thumbnails. Notifications retain their owning server/session.
+- Submission ownership prevents double-starts and preserves queued or rejected
+  work across backgrounding/navigation. Cursor-resumed text keeps legitimate
+  repeated suffixes, and run completion no longer clears unanswered prompt alerts.
 - Android-only startup crash caused by JVM-only Unicode regex flags.
 - Chat Markdown uses readable heading sizes and renders formatting inside tables;
   Hermes context-only warning footers no longer leak into user messages.
@@ -60,7 +71,8 @@ Entries use Added / Changed / Fixed / Security sections.
 ### Compatibility
 - Package ID remains `io.github.jcartu.hermex`; existing installations migrate
   their saved WebUI server without losing its credentials or cached data.
-- The upstream source history is merged through the October 22, 2026 snapshot,
+- Merged 470 upstream commits through
+  [`bc285faf`](https://github.com/uzairansaruzi/hermex/commit/bc285faf66f831f7d01be03a53605cbbc73c8673),
   including released 1.6–1.9 changes and the upstream 2.0 development line.
 - iOS APNs remote push and Live Activities are not Android features; Type-J
   uses native foreground monitoring, local notifications, sharing, and shortcuts.

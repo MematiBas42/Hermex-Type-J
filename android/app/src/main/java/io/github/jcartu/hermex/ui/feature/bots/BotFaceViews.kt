@@ -285,16 +285,20 @@ fun BotInteractiveFaceView(
                         val dy = (change.position.y - height / 2f) / height
                         val length = hypot(dx.toDouble(), dy.toDouble()).coerceAtLeast(0.001)
                         val clamp = min(length, 0.5) / length
-                        gazeX.snapTo((dx * clamp * GAZE_REACH * 2.0).toFloat())
-                        gazeY.snapTo((dy * clamp * GAZE_REACH * 2.0).toFloat())
+                        interactionScope.launch {
+                            gazeX.snapTo((dx * clamp * GAZE_REACH * 2.0).toFloat())
+                            gazeY.snapTo((dy * clamp * GAZE_REACH * 2.0).toFloat())
+                        }
                         change.consume()
                     }
                     pressed = change.pressed
                 }
                 if (acceptsTouch) {
                     if (reduceMotion) {
-                        gazeX.snapTo(0f)
-                        gazeY.snapTo(0f)
+                        interactionScope.launch {
+                            gazeX.snapTo(0f)
+                            gazeY.snapTo(0f)
+                        }
                     } else {
                         interactionScope.launch {
                             gazeX.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 500f))

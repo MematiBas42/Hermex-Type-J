@@ -137,6 +137,14 @@ system falls back to measured window width.
 - OkHttp REST, WebSocket RPC, and replay-aware SSE clients
 - native app screens; a sandboxed in-app web viewer only for ordinary external links
 
+### Direct Hermes hosts
+
+- dashboard-first password, browser-PKCE, or explicitly warned open-host sign-in
+- native session streaming, approvals/questions, sudo/secret requests, and media
+- model, Profile, reasoning, personality, and Fast controls from the host catalog
+- plans, turn outcomes, delegated-worker inspection, goals, BTW, and background work
+- host updates from Settings with confirmation and restart/receipt reconciliation
+
 ### Chat and run control
 
 - word-boundary streaming with replay-aware reconnect and offline waiting
@@ -150,6 +158,8 @@ system falls back to measured window width.
 - response speed, timestamps, RTL chat layout, code wrapping, and card display settings
 - durable composer drafts and partial-stream snapshots across process recreation
 - selection-to-question and keyboard recall of the last user message
+- opt-in foreground monitoring for both WebUI and direct-Hermes runs, with
+  source-bound completion and pending-request notifications
 
 ### Composer
 
@@ -173,6 +183,15 @@ system falls back to measured window width.
 - project create, rename, delete, color, filtering, and session counts
 - swipe actions on compact screens and contextual actions on larger screens
 - cached read-only recovery when the server is unreachable
+
+### Bots and moving from WebUI
+
+- Hermes home switches between retained Bots and Sessions views
+- bot creation, editing, capabilities/instructions, faces/photos, sections, and search
+- regular chat with bot identity, rules, and mentions; group rooms and thread replies
+- scan-before-copy WebUI migration with Profile choices, resumable progress,
+  draft-conflict preservation, and old-link forwarding
+- source-server removal is a separate explicit action, never an automatic migration step
 
 ### Tasks and skills
 
@@ -358,7 +377,10 @@ android/app/src/main/java/io/github/jcartu/hermex/
 
 - The app connects only to the server URL you enter.
 - Passwords, saved Hermes sign-in records, and registry data are encrypted with Android Keystore.
-- Authentication, headers, cache, drafts, and selections stay with their owning server.
+- Saved credentials, headers, cache, drafts, and selections stay with their owning server.
+- Legacy WebUI retains upstream's host-scoped cookie jar: different ports on the
+  same hostname can share a login cookie. Use distinct hostnames for independent
+  WebUI instances; direct-Hermes connections have their own cookie jars.
 - Native requests deliberately omit browser `Origin` and `Referer` headers,
   matching hermes-webui's supported non-browser CSRF path.
 - Unknown JSON fields are ignored; malformed optional fields degrade instead of
