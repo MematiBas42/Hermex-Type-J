@@ -1,6 +1,5 @@
 package io.github.jcartu.hermex.ui.feature.chat.hermes
 
-import android.annotation.TargetApi
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -10,10 +9,13 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
-import android.media.ExifInterface
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.webkit.MimeTypeMap
+import androidx.annotation.RequiresApi
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
+import androidx.exifinterface.media.ExifInterface
 import io.github.jcartu.hermex.model.hermes.BotAttachmentFailure
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -161,7 +163,7 @@ object HermesAttachmentPreparer {
         return decoded ?: decodeWithBitmapFactory(data, maximumDimension)
     }
 
-    @TargetApi(28)
+    @RequiresApi(Build.VERSION_CODES.P)
     private fun decodeWithImageDecoder(data: ByteArray, maximumDimension: Int): Bitmap {
         val source = ImageDecoder.createSource(ByteBuffer.wrap(data))
         val decoded = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
@@ -208,11 +210,9 @@ object HermesAttachmentPreparer {
     private fun scaleToBound(bitmap: Bitmap, maximumDimension: Int): Bitmap {
         val longest = max(bitmap.width, bitmap.height)
         if (longest <= maximumDimension) return bitmap
-        val scaled = Bitmap.createScaledBitmap(
-            bitmap,
-            boundedDimension(bitmap.width, longest, maximumDimension),
-            boundedDimension(bitmap.height, longest, maximumDimension),
-            true,
+        val scaled = bitmap.scale(
+            width = boundedDimension(bitmap.width, longest, maximumDimension),
+            height = boundedDimension(bitmap.height, longest, maximumDimension),
         )
         if (scaled !== bitmap) bitmap.recycle()
         return scaled
@@ -254,11 +254,7 @@ object HermesAttachmentPreparer {
                                 1,
                                 (PDF_THUMBNAIL_WIDTH * page.height.toFloat() / max(1, page.width)).roundToInt(),
                             ).coerceAtMost(PDF_THUMBNAIL_MAX_HEIGHT)
-                            val bitmap = Bitmap.createBitmap(
-                                PDF_THUMBNAIL_WIDTH,
-                                targetHeight,
-                                Bitmap.Config.ARGB_8888,
-                            )
+                            val bitmap = createBitmap(PDF_THUMBNAIL_WIDTH, targetHeight)
                             try {
                                 Canvas(bitmap).drawColor(Color.WHITE)
                                 val scale = minOf(
@@ -308,11 +304,7 @@ object HermesAttachmentPreparer {
         }
         val lineHeight = paint.fontSpacing
         val maxLines = ((TEXT_THUMBNAIL_HEIGHT - padding * 2) / lineHeight).toInt().coerceAtLeast(1)
-        val bitmap = Bitmap.createBitmap(
-            TEXT_THUMBNAIL_WIDTH,
-            TEXT_THUMBNAIL_HEIGHT,
-            Bitmap.Config.ARGB_8888,
-        )
+        val bitmap = createBitmap(TEXT_THUMBNAIL_WIDTH, TEXT_THUMBNAIL_HEIGHT)
         try {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.rgb(245, 247, 250))
@@ -348,7 +340,7 @@ object HermesAttachmentPreparer {
         if (compress(Bitmap.CompressFormat.PNG, 100, output)) output.toByteArray() else null
     }
 
-    /** Platform ExifInterface is available throughout the app's API 26+ range. */
+    /** AndroidX ExifInterface avoids the security bugs in older platform parsers. */
     private fun exifMatrix(data: ByteArray): Matrix? {
         val orientation = try {
             ExifInterface(ByteArrayInputStream(data)).getAttributeInt(

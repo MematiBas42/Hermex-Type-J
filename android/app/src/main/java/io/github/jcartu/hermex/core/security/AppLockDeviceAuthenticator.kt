@@ -8,6 +8,7 @@ import android.hardware.biometrics.BiometricPrompt
 import android.content.pm.PackageManager as AndroidPackageManager
 import android.os.Build
 import android.os.CancellationSignal
+import androidx.annotation.RequiresApi
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -101,6 +102,7 @@ class DeviceAppLockAuthenticator(private val activity: ComponentActivity) : AppL
      * sheet; API 29 the same through the deprecated flag; API 28 biometrics only,
      * with a "Use screen lock" button that hands over to the credential screen.
      */
+    @RequiresApi(Build.VERSION_CODES.P)
     private suspend fun biometricPrompt(reason: String): PromptOutcome = suspendCancellableCoroutine { continuation ->
         val builder = BiometricPrompt.Builder(activity).setTitle(reason)
         when {

@@ -3,7 +3,7 @@ package io.github.jcartu.hermex.ui.feature.bots
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import io.github.jcartu.hermex.model.ModelCatalogGroup
 import io.github.jcartu.hermex.model.ModelCatalogOption
 import io.github.jcartu.hermex.model.hermes.BotAvatarExpression
