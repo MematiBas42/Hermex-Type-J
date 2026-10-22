@@ -209,6 +209,21 @@ class AppContainer(context: Context) {
         )
     }
 
+    /** Durable Move to Hermes journal, ask-once flags, reports, and legacy routing records. */
+    val moveToHermesStore: io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesStore by lazy {
+        io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesStore(
+            file = java.io.File(appContext.filesDir, "move-to-hermes/state.json"),
+            json = json,
+        )
+    }
+
+    /** Old webui links/entry points resolve here after their exact chats move to Hermes. */
+    val movedSessionMap: io.github.jcartu.hermex.ui.feature.movetohermes.MovedSessionMap by lazy {
+        io.github.jcartu.hermex.ui.feature.movetohermes.MovedSessionMap(moveToHermesStore) {
+            authManager.servers.value.associate { it.id to it.createdAt }
+        }
+    }
+
     val sharedImports: io.github.jcartu.hermex.core.share.SharedImportRepository by lazy {
         io.github.jcartu.hermex.core.share.SharedImportRepository(appContext, json).also { repository ->
             appScope.launch { repository.refresh() }

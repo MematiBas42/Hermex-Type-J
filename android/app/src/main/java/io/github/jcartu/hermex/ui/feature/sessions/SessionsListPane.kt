@@ -90,6 +90,7 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesBannerSlot
 import io.github.jcartu.hermex.ui.feature.settings.AddServerDialog
 import io.github.jcartu.hermex.ui.feature.settings.HeaderLogoColor
 import io.github.jcartu.hermex.ui.feature.settings.ServerSwitcherMenu
@@ -523,6 +524,10 @@ private fun SessionListScreen(
                         openArchived = openArchived,
                         onNewChat = openNewChatRequest,
                     )
+                }
+
+                item(key = "move-to-hermes-banner") {
+                    MoveToHermesBannerSlot(serverId = serverUrl)
                 }
 
                 if (state.isViewingCachedData) {
