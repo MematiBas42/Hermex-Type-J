@@ -95,21 +95,30 @@ data class ChatDraft(
     /** Epoch millis of the last change or use; drives attachment-budget recency. */
     val lastUsedAt: Long? = null,
     val sharedImportIds: Set<String> = emptySet(),
+    /** Swift #508: an unacknowledged Hermes send must remain uncertain across relaunch. */
+    val botSubmissionUncertain: Boolean = false,
 ) {
     val isEmpty: Boolean
-        get() = text.isEmpty() && quotes.isEmpty() && attachments.isEmpty() && (settings?.isEmpty ?: true)
+        get() = text.isEmpty() && quotes.isEmpty() && attachments.isEmpty() && (settings?.isEmpty ?: true) && !botSubmissionUncertain
 }
 
-/**
- * Port of `ChatDraftKey` for the webui contexts: one draft per session, plus
- * one new-chat draft per server ([sessionId] null).
- */
-data class ChatDraftKey(val serverId: String, val sessionId: String?) {
-    val isNewChat: Boolean get() = sessionId == null
+/** Port of `ChatDraftKey.Context`: webui, Hermes stored/new sessions, and bot roots never share a draft. */
+data class ChatDraftKey(
+    val serverId: String,
+    val sessionId: String?,
+    val hermesConnectionID: String? = null,
+    val hermesProfile: String? = null,
+    val isBot: Boolean = false,
+) {
+    val isNewChat: Boolean get() = sessionId == null && !isBot
 
     companion object {
         fun session(serverId: String, sessionId: String): ChatDraftKey = ChatDraftKey(serverId, sessionId)
         fun newChat(serverId: String): ChatDraftKey = ChatDraftKey(serverId, null)
+        fun hermesSession(serverId: String, connectionID: String, profile: String, key: String?): ChatDraftKey =
+            ChatDraftKey(serverId, key, connectionID, profile)
+        fun bot(serverId: String, connectionID: String, profile: String): ChatDraftKey =
+            ChatDraftKey(serverId, null, connectionID, profile, isBot = true)
     }
 }
 
@@ -240,7 +249,16 @@ class ChatDraftFilePersistence(
 
     private fun encodeRecord(key: ChatDraftKey, draft: ChatDraft): JsonObject = buildJsonObject {
         put("serverID", JsonPrimitive(key.serverId))
-        put("context", JsonPrimitive(if (key.isNewChat) "newChat" else "session"))
+        put("context", JsonPrimitive(when {
+            key.isBot -> "bot"
+            key.hermesConnectionID != null -> "hermesSession"
+            key.isNewChat -> "newChat"
+            else -> "session"
+        }))
+        key.hermesConnectionID?.let { put("hermesConnectionID", JsonPrimitive(it)) }
+        key.hermesProfile?.let { put("hermesProfile", JsonPrimitive(it)) }
+        if (key.isBot) put("isBot", JsonPrimitive(true))
+        if (draft.botSubmissionUncertain) put("botSubmissionUncertain", JsonPrimitive(true))
         key.sessionId?.let { put("sessionID", JsonPrimitive(it)) }
         put("text", JsonPrimitive(draft.text))
         put(
@@ -294,6 +312,12 @@ class ChatDraftFilePersistence(
                 ChatDraftKey.session(serverId, sessionId)
             }
             "newChat" -> ChatDraftKey.newChat(serverId)
+            "hermesSession", "bot" -> {
+                val connection = stringValue(record["hermesConnectionID"])?.takeIf { it.isNotBlank() } ?: return null
+                val profile = stringValue(record["hermesProfile"]) ?: return null
+                if (stringValue(record["context"]) == "bot") ChatDraftKey.bot(serverId, connection, profile)
+                else ChatDraftKey.hermesSession(serverId, connection, profile, stringValue(record["sessionID"]))
+            }
             else -> return null
         }
 
@@ -322,6 +346,9 @@ class ChatDraftFilePersistence(
             settings = settings,
             lastUsedAt = record["lastUsedAt"]?.let(::longValue),
             sharedImportIds = (record["sharedImportIDs"] as? JsonArray).orEmpty().mapNotNull(::stringValue).toSet(),
+            // Missing means false; malformed means uncertain, as Swift's decoder fails closed for Hermes drafts.
+            botSubmissionUncertain = key.hermesConnectionID != null && record.containsKey("botSubmissionUncertain") &&
+                ((record["botSubmissionUncertain"] as? JsonPrimitive)?.booleanOrNull ?: true),
         )
         if (draft.isEmpty) return null
         return key to draft
@@ -604,6 +631,20 @@ class ChatDraftStore(
         discardDrafts { it.serverId == serverId }
     }
 
+    /** Port of Swift's scoped Bot/Hermes purge: a replaced connection never deletes webui or another connection's drafts. */
+    suspend fun discardHermesDrafts(serverId: String, connectionID: String? = null) {
+        loadIfNeeded()
+        discardDrafts { it.serverId == serverId && it.hermesConnectionID != null &&
+            (connectionID == null || it.hermesConnectionID == connectionID) }
+    }
+
+    /** Port of `setBotSubmissionUncertain`: callers flush before sending to the host. */
+    fun setBotSubmissionUncertain(uncertain: Boolean, key: ChatDraftKey) {
+        if (key.hermesConnectionID == null) return
+        markChangedBeforeLoad(key)
+        updateDraft(key) { it.copy(botSubmissionUncertain = uncertain) }
+    }
+
     /** Clears the draft's user-authored content; attachments and settings are managed separately. */
     fun clearDraft(key: ChatDraftKey) = setContent("", emptyList(), key)
 
@@ -822,6 +863,10 @@ class ChatDraftStore(
         val attachmentStore = attachmentStore ?: throw ChatDraftStorageException.Unavailable
         return withContext(ioDispatcher) { attachmentStore.data(file) }
     }
+
+    /** `ChatDraftAttachmentStore.fileURL`: PDF thumbnails need a seekable descriptor, not another copied file. */
+    fun attachmentFile(file: String): File =
+        (attachmentStore ?: throw ChatDraftStorageException.Unavailable).file(file)
 
     suspend fun flush() {
         persistJob?.cancel()

@@ -46,6 +46,10 @@ data class ChatMessage(
      * assistant message (`_turnDuration`). Absent on older transcripts.
      */
     val turnDuration: Double? = null,
+    /** Hermes REST's durable row id, used by prompt rewind and Fork From Here. */
+    val rowID: Int? = null,
+    /** Hermes archived this row during compaction; it remains readable, never rewindable. */
+    val isCompacted: Boolean = false,
 ) {
     val id: String
         get() = messageId ?: "${role ?: "unknown"}-${timestamp ?: 0.0}-${content ?: ""}"
@@ -113,6 +117,8 @@ data class ChatMessage(
                 displayMetadata = decodeJsonValueMap(obj.presentElement("display_metadata", "displayMetadata")),
                 turnTps = obj.lossyDouble("_turn_tps", "_turnTps"),
                 turnDuration = obj.lossyDouble("_turn_duration", "_turnDuration"),
+                rowID = obj.lossyInt("row_id", "rowID"),
+                isCompacted = obj.lossyBool("is_compacted", "isCompacted") ?: false,
             )
         }
 
@@ -266,6 +272,8 @@ internal object ChatMessageSerializer : TolerantObjectSerializer<ChatMessage>("C
         }
         value.turnTps?.let { put("_turn_tps", JsonPrimitive(it)) }
         value.turnDuration?.let { put("_turn_duration", JsonPrimitive(it)) }
+        value.rowID?.let { put("row_id", JsonPrimitive(it)) }
+        if (value.isCompacted) put("is_compacted", JsonPrimitive(true))
     }
 }
 

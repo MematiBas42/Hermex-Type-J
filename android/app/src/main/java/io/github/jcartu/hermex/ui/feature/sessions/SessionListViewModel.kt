@@ -353,6 +353,7 @@ class SessionListViewModel(
     private val serverUrlProvider: suspend () -> String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val unreadStore: SessionUnreadStore? = null,
+    private val dataSource: SessionListDataSource = WebuiSessionListDataSource(api),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SessionListUiState())
@@ -391,8 +392,8 @@ class SessionListViewModel(
         ensureSeenMarksLoaded()
 
         try {
-            val response = api.sessions()
-            val allSessions = response.sessions ?: emptyList()
+            val response = dataSource.page()
+            val allSessions = response.sessions
             val visibleSessions = allSessions
                 .filter { it.archived != true && it.shouldAppearInSessionList }
             reconcileUnread(visibleSessions, allSessions = allSessions)
@@ -936,7 +937,7 @@ class SessionListViewModel(
         val sessionId = requireSessionId(session) ?: return false
         if (!beginSessionMutation(sessionId)) return false
         try {
-            return mutate { sessionMutator.setPinned(pinned, sessionId) }
+            return mutate { dataSource.setPinned(pinned, session) }
         } finally {
             endSessionMutation(sessionId)
         }
@@ -947,7 +948,7 @@ class SessionListViewModel(
         val sessionId = requireSessionId(session) ?: return false
         if (!beginSessionMutation(sessionId)) return false
         try {
-            return mutate { sessionMutator.archive(sessionId) }
+            return mutate { dataSource.setArchived(true, session) }
         } finally {
             endSessionMutation(sessionId)
         }
@@ -964,7 +965,7 @@ class SessionListViewModel(
         val sessionId = requireSessionId(session) ?: return false
         if (!beginSessionMutation(sessionId)) return false
         try {
-            return mutate { sessionMutator.unarchive(sessionId) }
+            return mutate { dataSource.setArchived(false, session) }
         } finally {
             endSessionMutation(sessionId)
         }
@@ -975,7 +976,7 @@ class SessionListViewModel(
         val sessionId = requireSessionId(session) ?: return false
         if (!beginSessionMutation(sessionId)) return false
         try {
-            return mutate { sessionMutator.delete(sessionId) }
+            return mutate { dataSource.delete(session)?.let { throw IllegalStateException(it) } }
         } finally {
             endSessionMutation(sessionId)
         }
@@ -999,7 +1000,7 @@ class SessionListViewModel(
 
         _uiState.update { it.copy(isRenamingSession = true, actionErrorMessage = null) }
         try {
-            val response = sessionMutator.rename(sessionId, title)
+            val response = dataSource.rename(session, title)
             val serverError = SessionListUiState.nonEmpty(response.error)
             if (serverError != null) {
                 _uiState.update {
@@ -1038,8 +1039,8 @@ class SessionListViewModel(
         if (!beginSessionMutation(sessionId)) return null
         _uiState.update { it.copy(actionErrorMessage = null) }
         try {
-            val result = sessionMutator.duplicate(
-                sessionId = sessionId,
+            val result = dataSource.duplicate(
+                session = session,
                 title = SessionListUiState.nonEmpty(title) ?: duplicateTitle(session),
             )
 
@@ -1100,7 +1101,7 @@ class SessionListViewModel(
         if (!beginSessionMutation(sessionId)) return null
         _uiState.update { it.copy(actionErrorMessage = null) }
         try {
-            return api.exportSession(id = sessionId, format = format, fallbackTitle = session.title)
+            return dataSource.export(session, format)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {

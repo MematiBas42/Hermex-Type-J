@@ -21,6 +21,7 @@ import androidx.compose.ui.text.withStyle
 data class SessionSearchExcerpt(
     val text: String,
     val query: String,
+    private val marked: AnnotatedString? = null,
 ) {
     /**
      * The excerpt with every occurrence of the query bolded.
@@ -33,6 +34,7 @@ data class SessionSearchExcerpt(
      * nothing is bolded and the plain excerpt still shows.
      */
     fun highlighted(): AnnotatedString {
+        marked?.let { return it }
         if (query.isEmpty()) return AnnotatedString(text)
 
         return buildAnnotatedString {
@@ -51,6 +53,28 @@ data class SessionSearchExcerpt(
     }
 
     companion object {
+        /** Port of SessionSearchExcerpt(hermesSnippet:query:): strip every FTS marker, bold only marked spans. */
+        fun hermesSnippet(snippet: String, query: String): SessionSearchExcerpt {
+            val input = displayText(snippet)
+            var cursor = 0
+            var inMatch = false
+            var hasMarks = false
+            val marked = buildAnnotatedString {
+                while (cursor < input.length) {
+                    val open = input.indexOf(">>>", cursor)
+                    val close = input.indexOf("<<<", cursor)
+                    val next = listOf(open, close).filter { it >= 0 }.minOrNull() ?: input.length
+                    val piece = input.substring(cursor, next)
+                    if (inMatch) withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(piece) } else append(piece)
+                    if (next == input.length) break
+                    inMatch = next == open
+                    hasMarks = true
+                    cursor = next + 3
+                }
+            }
+            return SessionSearchExcerpt(marked.text, query, marked.takeIf { hasMarks })
+        }
+
         /**
          * Port of `SessionSearchExcerpt.displayText(_:)`.
          *
