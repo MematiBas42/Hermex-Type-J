@@ -11,18 +11,21 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
 
+/** Port of `Models/Workspace.swift`; all response fields decode tolerantly. */
 @Serializable
 data class WorkspacesResponse(
     val workspaces: List<WorkspaceRoot>? = null,
     val last: String? = null,
 )
 
+/** Port of `WorkspaceSuggestionsResponse` in `Models/Workspace.swift`. */
 @Serializable
 data class WorkspaceSuggestionsResponse(
     val suggestions: List<String>? = null,
     val prefix: String? = null,
 )
 
+/** String-or-object workspace root from `Models/Workspace.swift`. */
 @Serializable(with = WorkspaceRootSerializer::class)
 data class WorkspaceRoot(
     val path: String? = null,
@@ -108,6 +111,7 @@ data class ReorderWorkspacesRequest(
     val paths: List<String>,
 )
 
+/** Port of `DirectoryListResponse` in `Models/Workspace.swift`. */
 @Serializable
 data class DirectoryListResponse(
     val entries: List<WorkspaceEntry>? = null,
@@ -124,6 +128,7 @@ data class WorkspaceEntry(
     val size: Int? = null,
     val modified: Double? = null,
     val isDirectory: Boolean? = null,
+    val targetOutsideWorkspace: Boolean? = null,
 ) {
     val id: String
         get() = path ?: name ?: UUID.randomUUID().toString()
@@ -150,6 +155,12 @@ internal object WorkspaceEntrySerializer :
                 "is_dir",
                 "isDir",
             ),
+            targetOutsideWorkspace = decodeOptionalBoolean(
+                json,
+                obj,
+                "target_outside_workspace",
+                "targetOutsideWorkspace",
+            ),
         )
 
     override fun toJson(json: Json, value: WorkspaceEntry): JsonObject = buildJsonObject {
@@ -159,9 +170,11 @@ internal object WorkspaceEntrySerializer :
         value.size?.let { put("size", JsonPrimitive(it)) }
         value.modified?.let { put("modified", JsonPrimitive(it)) }
         value.isDirectory?.let { put("is_directory", JsonPrimitive(it)) }
+        value.targetOutsideWorkspace?.let { put("target_outside_workspace", JsonPrimitive(it)) }
     }
 }
 
+/** Port of `FileResponse` in `Models/Workspace.swift`. */
 @Serializable
 data class FileResponse(
     val content: String? = null,
@@ -171,6 +184,9 @@ data class FileResponse(
     val size: Int? = null,
     val lines: Int? = null,
     val error: String? = null,
+    @kotlinx.serialization.Transient val isBinary: Boolean = false,
+    @kotlinx.serialization.Transient val isTruncated: Boolean = false,
+    @kotlinx.serialization.Transient val isPreviewOnly: Boolean = false,
 )
 
 private fun workspaceMutationRejectionDescription(serverMessage: String?): String =
