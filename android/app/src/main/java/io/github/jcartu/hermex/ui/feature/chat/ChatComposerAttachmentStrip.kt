@@ -188,9 +188,13 @@ private fun AttachmentPreview(
         when {
             thumbnail != null -> Image(
                 bitmap = thumbnail,
-                contentDescription = "Image attachment ${attachment.name}",
+                contentDescription = if (attachment.isImage) {
+                    "Image attachment ${attachment.name}"
+                } else {
+                    "Document preview ${attachment.name}"
+                },
                 modifier = Modifier.size(58.dp),
-                contentScale = ContentScale.Crop,
+                contentScale = if (attachment.isImage) ContentScale.Crop else ContentScale.Fit,
             )
 
             attachment.isImage -> AttachmentTypeIcon(

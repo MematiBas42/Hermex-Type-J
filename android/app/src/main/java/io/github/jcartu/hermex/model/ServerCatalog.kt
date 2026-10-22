@@ -25,8 +25,12 @@ data class ChatStartResponse(
     val streamId: String? = null,
     @SerialName("session_id")
     val sessionId: String? = null,
+    @SerialName("pending_started_at")
+    val pendingStartedAt: Double? = null,
     val error: String? = null,
-)
+) {
+    fun runStartedAt(sentAt: Double): Double = pendingStartedAt?.takeIf { it > 0 } ?: sentAt
+}
 
 @Serializable
 data class ChatCancelResponse(
