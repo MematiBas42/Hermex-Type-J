@@ -118,21 +118,18 @@ fun ChatPane(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel, context) {
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-            latestState.value.activeStreamId?.let { AgentRunService.stop(context, it) }
+            latestState.value.activeStreamId?.let { AgentRunService.stop(context, latestState.value.serverCacheNamespace, it) }
             viewModel.resumeForForeground()
         }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
-                    latestState.value.activeStreamId?.let { AgentRunService.stop(context, it) }
+                    latestState.value.activeStreamId?.let { AgentRunService.stop(context, latestState.value.serverCacheNamespace, it) }
                     viewModel.resumeForForeground()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     val current = latestState.value
-                    val permissionGranted =
-                        Build.VERSION.SDK_INT < 33 ||
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                            PackageManager.PERMISSION_GRANTED
+                    val permissionGranted = AgentRunService.canPost(context)
                     if (
                         latestNotificationsEnabled.value &&
                         permissionGranted &&
@@ -144,6 +141,7 @@ fun ChatPane(
                         )
                         AgentRunService.start(
                             context = context,
+                            serverId = current.serverCacheNamespace,
                             streamId = current.activeStreamId,
                             sessionId = current.sessionId,
                             title = current.displayTitle.ifBlank { "Hermes run" },
