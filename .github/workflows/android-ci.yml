@@ -27,8 +27,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+      - name: Unit tests and Android Lint
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug --stacktrace
 
       - name: Build release APK (unsigned)
         run: ./gradlew assembleRelease --stacktrace

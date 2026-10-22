@@ -13,8 +13,7 @@ import java.time.Instant
 /**
  * What the Usage screen calls: a webui server's `/api/insights` and
  * `/api/provider/quota` ([WebuiInsightsDataClient]), or a Hermes host's
- * analytics mapped into the same shapes (#1074 — Wave 2's transport slice
- * provides it against this same interface).
+ * analytics mapped by [HermesInsightsDataClient] into the same shapes (#1074).
  * Port of `Features/Insights/InsightsViewModel.swift` `InsightsDataClient`.
  */
 interface InsightsDataClient {

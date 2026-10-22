@@ -21,9 +21,8 @@ import java.time.Instant
 /**
  * What the Tasks screens call, so one set of screens runs on either kind of
  * server: a webui server's `/api/crons` routes ([WebuiCronDataClient]) or a Hermes
- * host's `/api/cron` routes (`HermesCronClient`, #1040 — Wave 2's transport slice
- * provides it against this same interface). Mutations and run reads name the
- * job's Profile, which a Hermes host routes by and webui ignores;
+ * host's `/api/cron` routes ([HermesCronDataClient], #1040). Mutations and run
+ * reads name the job's Profile, which a Hermes host routes by and webui ignores;
  * [CronFeatures] says which parts of the screens the server backs.
  * Port of `Networking/APIClient+Cron.swift` `CronDataClient`.
  */
