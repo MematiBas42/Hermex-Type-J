@@ -1,5 +1,6 @@
 package io.github.jcartu.hermex.ui.feature.workspace
 
+import io.github.jcartu.hermex.core.media.DocumentPreviewRoute
 import io.github.jcartu.hermex.model.DirectoryListResponse
 import io.github.jcartu.hermex.model.FileResponse
 import io.github.jcartu.hermex.model.SessionSummary
@@ -17,7 +18,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -195,7 +195,7 @@ class WorkspaceViewModelTest {
 
         viewModel.load("broken")
         assertEquals(ApiError.Http(500, null).message, viewModel.uiState.value.entriesError)
-        assertEquals(".", viewModel.uiState.value.currentPath)
+        assertEquals("broken", viewModel.uiState.value.currentPath)
 
         coEvery { api.directoryList("new", "broken") } returns
             DirectoryListResponse(entries = emptyList(), path = "broken")
@@ -233,33 +233,35 @@ class WorkspaceViewModelTest {
     }
 
     @Test
-    fun `raster images preview via the raw file url`() {
+    fun `raster images download within the document cap`() {
         val viewModel = WorkspaceViewModel(api)
         browseInto(viewModel)
-        coEvery { api.rawFileUrl("new", "logo.png") } returns
-            "https://server.test/api/raw?session_id=new&path=logo.png".toHttpUrl()
+        val bytes = byteArrayOf(1, 2, 3)
+        coEvery { api.getBytes(any(), any()) } returns bytes
 
         viewModel.openEntry(WorkspaceEntry(name = "logo.png", path = "logo.png", type = "file"))
 
-        val preview = viewModel.uiState.value.preview as WorkspaceFilePreview.Image
-        assertEquals("https://server.test/api/raw?session_id=new&path=logo.png", preview.url)
+        val preview = viewModel.uiState.value.preview as WorkspaceFilePreview.Document
+        assertEquals(DocumentPreviewRoute.IMAGE, preview.route)
+        assertTrue(bytes.contentEquals(preview.bytes))
         coVerify(exactly = 0) { api.file(any(), any()) }
     }
 
     @Test
-    fun `known binaries short-circuit to an unavailable notice`() {
+    fun `other document types route to ACTION_VIEW payloads`() {
         val viewModel = WorkspaceViewModel(api)
         browseInto(viewModel)
+        coEvery { api.getBytes(any(), any()) } returns byteArrayOf(4, 5)
 
-        viewModel.openEntry(WorkspaceEntry(name = "dump.zip", path = "dump.zip", type = "file"))
+        viewModel.openEntry(WorkspaceEntry(name = "proposal.docx", path = "proposal.docx", type = "file"))
 
-        assertTrue(viewModel.uiState.value.preview is WorkspaceFilePreview.Unavailable)
+        val preview = viewModel.uiState.value.preview as WorkspaceFilePreview.Document
+        assertEquals(DocumentPreviewRoute.EXTERNAL, preview.route)
         coVerify(exactly = 0) { api.file(any(), any()) }
-        coVerify(exactly = 0) { api.rawFileUrl(any(), any()) }
     }
 
     @Test
-    fun `goBack walks preview then directories then roots`() {
+    fun `goBack closes preview then returns to roots while tree expansion is retained`() {
         val viewModel = WorkspaceViewModel(api)
         browseInto(viewModel)
         coEvery { api.directoryList("new", "src") } returns
@@ -268,14 +270,11 @@ class WorkspaceViewModelTest {
         viewModel.openEntry(WorkspaceEntry(name = "src", path = "src", type = "dir"))
         viewModel.openEntry(WorkspaceEntry(name = "Main.kt", path = "src/Main.kt", type = "file"))
 
-        viewModel.goBack() // closes preview
+        viewModel.goBack()
         assertNull(viewModel.uiState.value.selectedEntry)
-        assertEquals("src", viewModel.uiState.value.currentPath)
+        assertTrue(viewModel.uiState.value.tree.isLoaded("src"))
 
-        viewModel.goBack() // up to root listing
-        assertEquals(".", viewModel.uiState.value.currentPath)
-
-        viewModel.goBack() // back to workspace roots
+        viewModel.goBack()
         assertNull(viewModel.uiState.value.selectedRootPath)
         assertFalse(viewModel.uiState.value.canGoBack)
     }
@@ -315,7 +314,8 @@ class WorkspaceViewModelTest {
     @Test
     fun `preview kinds classify like the ios preview`() {
         assertEquals(FilePreviewKind.IMAGE, previewKindFor("a/logo.WEBP"))
-        assertEquals(FilePreviewKind.BINARY, previewKindFor("report.pdf"))
+        assertEquals(FilePreviewKind.PDF, previewKindFor("report.pdf"))
+        assertEquals(FilePreviewKind.EXTERNAL, previewKindFor("proposal.docx"))
         assertEquals(FilePreviewKind.MARKDOWN, previewKindFor("README.md"))
         assertEquals(FilePreviewKind.TEXT, previewKindFor("main.rs"))
         assertEquals(FilePreviewKind.TEXT, previewKindFor(".gitignore"))

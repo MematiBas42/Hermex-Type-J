@@ -7,48 +7,40 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.FolderOff
-import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -70,72 +62,94 @@ import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
 import io.github.jcartu.hermex.ui.theme.CodeTextStyle
 
-/**
- * Files tab: workspace roots → directory browser → file preview.
- *
- * Adaptive contract:
- * - 1 pane (cover screen): one surface at a time with back navigation
- *   (roots → browser → preview), system back walks the same stack.
- * - 2 panes: browser (roots list until a root is opened) | preview, split on
- *   the physical hinge by [HingeAwarePaneRow].
- * - 3 panes (unfolded trifold): roots | files | preview, boundaries snapped
- *   to both hinges.
- *
- * All selection/navigation state lives in [WorkspaceViewModel], so posture
- * changes never lose the browsed path or the previewed file.
- */
+/** Files destination and transcript-link landing surface. */
 @Composable
-fun WorkspaceRoute() {
+fun WorkspaceRoute(initialSessionId: String? = null) {
     val app = LocalContext.current.applicationContext as HermexApplication
     val viewModel: WorkspaceViewModel = viewModel(
         factory = viewModelFactory { initializer { WorkspaceViewModel(app.container.api) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val request by WorkspaceFileNavigation.request.collectAsStateWithLifecycle()
     val paneCount = LocalPaneCount.current
 
     LaunchedEffect(Unit) { viewModel.loadRootsIfNeeded() }
-
+    LaunchedEffect(request?.id, initialSessionId) {
+        request?.let {
+            viewModel.openWorkspaceFile(it.reference, initialSessionId, it.id)
+            WorkspaceFileNavigation.consume(it.id)
+        }
+    }
     BackHandler(enabled = state.canGoBack) {
         if (paneCount == 1) viewModel.goBack() else viewModel.goBackInBrowser()
     }
 
+    WorkspaceScreen(
+        state = state,
+        paneCount = paneCount,
+        actions = WorkspaceActions(
+            refreshRoots = viewModel::loadRoots,
+            selectRoot = viewModel::selectRoot,
+            backToRoots = viewModel::backToRoots,
+            refreshTree = viewModel::reloadCurrentPath,
+            search = viewModel::setSearchQuery,
+            toggleDirectory = viewModel::toggleDirectory,
+            retryDirectory = viewModel::retryDirectory,
+            openEntry = viewModel::openEntry,
+            closePreview = viewModel::closePreview,
+        ),
+    )
+}
+
+/** Callbacks separated from rendering so pane-count render tests need no ViewModel. */
+internal data class WorkspaceActions(
+    val refreshRoots: () -> Unit = {},
+    val selectRoot: (WorkspaceRootItem) -> Unit = {},
+    val backToRoots: () -> Unit = {},
+    val refreshTree: () -> Unit = {},
+    val search: (String) -> Unit = {},
+    val toggleDirectory: (String) -> Unit = {},
+    val retryDirectory: (String) -> Unit = {},
+    val openEntry: (WorkspaceEntry) -> Unit = {},
+    val closePreview: () -> Unit = {},
+)
+
+/** Adaptive tree/viewer composition for one, two, and three physical panes. */
+@Composable
+internal fun WorkspaceScreen(
+    state: WorkspaceUiState,
+    paneCount: Int = LocalPaneCount.current,
+    actions: WorkspaceActions = WorkspaceActions(),
+) {
     when {
         paneCount >= 3 -> HingeAwarePaneRow(paneCount = 3) { index, modifier ->
             when (index) {
-                0 -> RootsPane(state, viewModel, modifier)
+                0 -> RootsPane(state, actions, modifier)
                 1 -> if (state.selectedRootPath == null) {
-                    EmptyState(
-                        title = "Select a workspace",
-                        message = "Choose a workspace to browse its files.",
-                        modifier = modifier,
-                    )
+                    EmptyState("Select a workspace", modifier, "Choose a workspace to browse its files.")
                 } else {
-                    BrowserPane(state, viewModel, modifier, showRootsButton = false)
+                    FileTreePane(state, actions, modifier, showRootsButton = false)
                 }
-                else -> FilePreviewPane(state, viewModel, modifier, showBack = false)
+                else -> FilePreviewPane(state, actions.closePreview, modifier, showBack = false)
             }
         }
         paneCount == 2 -> HingeAwarePaneRow(paneCount = 2) { index, modifier ->
-            when (index) {
-                0 -> if (state.selectedRootPath == null) {
-                    RootsPane(state, viewModel, modifier)
-                } else {
-                    BrowserPane(state, viewModel, modifier, showRootsButton = true)
-                }
-                else -> FilePreviewPane(state, viewModel, modifier, showBack = false)
+            if (index == 0) {
+                if (state.selectedRootPath == null) RootsPane(state, actions, modifier)
+                else FileTreePane(state, actions, modifier, showRootsButton = true)
+            } else {
+                FilePreviewPane(state, actions.closePreview, modifier, showBack = false)
             }
         }
-        else -> when {
-            state.selectedEntry != null ->
-                FilePreviewPane(state, viewModel, Modifier.fillMaxSize(), showBack = true)
-            state.selectedRootPath != null ->
-                BrowserPane(state, viewModel, Modifier.fillMaxSize(), showRootsButton = true)
-            else -> RootsPane(state, viewModel, Modifier.fillMaxSize())
-        }
+        state.selectedEntry != null ->
+            FilePreviewPane(state, actions.closePreview, Modifier.fillMaxSize(), showBack = true)
+        state.selectedRootPath != null ->
+            FileTreePane(state, actions, Modifier.fillMaxSize(), showRootsButton = true)
+        else -> RootsPane(state, actions, Modifier.fillMaxSize())
     }
 }
 
-/** Centers pane content and keeps text from stretching full-bleed on wide panes. */
+/** Centers pane content and prevents unreadably wide text on tablets. */
 @Composable
 internal fun ConstrainedPane(
     maxWidth: Dp,
@@ -144,67 +158,35 @@ internal fun ConstrainedPane(
 ) {
     Box(modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxHeight()
-                .widthIn(max = maxWidth),
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxHeight().widthIn(max = maxWidth),
             content = content,
         )
     }
 }
 
-// MARK: - Workspace roots pane
-
 @Composable
 private fun RootsPane(
     state: WorkspaceUiState,
-    viewModel: WorkspaceViewModel,
+    actions: WorkspaceActions,
     modifier: Modifier = Modifier,
 ) {
-    ConstrainedPane(maxWidth = 480.dp, modifier = modifier) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Workspaces",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = { viewModel.loadRoots() }, enabled = !state.isLoadingRoots) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh workspaces")
-            }
-        }
+    ConstrainedPane(480.dp, modifier) {
+        PaneHeader("Workspaces", onRefresh = actions.refreshRoots)
         HorizontalDivider()
         when {
-            state.isLoadingRoots && !state.hasLoadedRoots ->
-                LoadingState(label = "Loading workspaces...")
+            state.isLoadingRoots && !state.hasLoadedRoots -> LoadingState(label = "Loading workspaces…")
             state.rootsError != null && !state.hasLoadedRoots ->
-                ErrorState(
-                    message = state.rootsError,
-                    retryLabel = "Try Again",
-                    onRetry = { viewModel.loadRoots() },
-                )
+                ErrorState(state.rootsError, onRetry = actions.refreshRoots)
             state.hasLoadedRoots && state.roots.isEmpty() ->
-                EmptyState(
-                    title = "No Workspaces",
-                    message = "Register a workspace on the server to browse its files.",
-                )
-            else -> {
-                val listState = rememberSaveable(saver = LazyListState.Saver, key = "workspaceRootsList") {
-                    LazyListState()
-                }
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    items(state.roots, key = { it.path }) { root ->
-                        WorkspaceRootRow(
-                            root = root,
-                            isSelected = root.path == state.selectedRootPath,
-                            isLastUsed = root.path == state.lastUsedPath,
-                            onClick = { viewModel.selectRoot(root) },
-                        )
-                    }
+                EmptyState("No Workspaces", message = "Register a workspace on the server to browse its files.")
+            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
+                items(state.roots, key = WorkspaceRootItem::path) { root ->
+                    WorkspaceRootRow(
+                        root = root,
+                        selected = root.path == state.selectedRootPath,
+                        lastUsed = root.path == state.lastUsedPath,
+                        onClick = { actions.selectRoot(root) },
+                    )
                 }
             }
         }
@@ -214,339 +196,182 @@ private fun RootsPane(
 @Composable
 private fun WorkspaceRootRow(
     root: WorkspaceRootItem,
-    isSelected: Boolean,
-    isLastUsed: Boolean,
+    selected: Boolean,
+    lastUsed: Boolean,
     onClick: () -> Unit,
 ) {
-    val background = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(background)
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
             .clickable(enabled = root.isBrowsable, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
+        Surface(shape = RoundedCornerShape(9.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Icon(
-                if (root.isBrowsable) Icons.Filled.Folder else Icons.Outlined.FolderOff,
-                contentDescription = null,
-                tint = if (root.isBrowsable) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(18.dp),
+                if (root.isBrowsable) Icons.Filled.Folder else Icons.Filled.FolderOff,
+                null,
+                modifier = Modifier.padding(8.dp).size(20.dp),
+                tint = if (root.isBrowsable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    root.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (isLastUsed) {
-                    Text(
-                        "Last used",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
+                Text(root.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (lastUsed) Text("Last used", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
+            Text(root.path, style = CodeTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                root.path,
-                style = CodeTextStyle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                if (root.isBrowsable) {
-                    if (root.sessionCount == 1) "1 session" else "${root.sessionCount} sessions"
-                } else {
-                    "No sessions yet — start a chat in this workspace to browse files"
-                },
+                if (root.isBrowsable) "${root.sessionCount} ${if (root.sessionCount == 1) "session" else "sessions"}"
+                else "Start a chat here before browsing files",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (root.isBrowsable) {
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        if (root.isBrowsable) Icon(Icons.Filled.ChevronRight, null)
     }
 }
 
-// MARK: - Directory browser pane (port of FileBrowserView.swift)
-
 @Composable
-private fun BrowserPane(
+private fun FileTreePane(
     state: WorkspaceUiState,
-    viewModel: WorkspaceViewModel,
+    actions: WorkspaceActions,
     modifier: Modifier = Modifier,
     showRootsButton: Boolean,
 ) {
-    ConstrainedPane(maxWidth = 480.dp, modifier = modifier) {
-        PathHeader(state, viewModel, showRootsButton)
-        SearchBar(state.searchQuery, onQueryChange = viewModel::setSearchQuery)
-        HorizontalDivider()
-        BrowserContent(state, viewModel)
-    }
-}
-
-@Composable
-private fun PathHeader(
-    state: WorkspaceUiState,
-    viewModel: WorkspaceViewModel,
-    showRootsButton: Boolean,
-) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (showRootsButton) {
-                IconButton(onClick = { viewModel.backToRoots() }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to workspaces",
-                    )
-                }
-            }
-            Text(
-                "Location",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                state.displayPath,
-                style = CodeTextStyle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { viewModel.loadBrowseRoot() },
-                enabled = !state.isAtRoot,
-            ) {
-                Icon(Icons.Filled.Home, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Root")
-            }
-            IconButton(
-                onClick = { viewModel.goUp() },
-                enabled = state.parentPath != null,
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    Icons.Filled.ArrowUpward,
-                    contentDescription = "Up one directory",
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            LazyRow(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                itemsIndexed(state.breadcrumbs) { index, crumb ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (index > 0) {
-                            Icon(
-                                Icons.Filled.ChevronRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                        AssistChip(
-                            onClick = { viewModel.openBreadcrumb(crumb.path) },
-                            enabled = crumb.path != state.currentPath,
-                            label = { Text(crumb.title, maxLines = 1) },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
-    OutlinedTextField(
-        value = query,
-        onValueChange = onQueryChange,
-        singleLine = true,
-        placeholder = { Text("Search files") },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Clear file search")
-                }
-            }
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 10.dp),
-    )
-}
-
-@Composable
-private fun BrowserContent(state: WorkspaceUiState, viewModel: WorkspaceViewModel) {
-    when {
-        state.isLoadingEntries && state.entries.isEmpty() ->
-            LoadingState(label = "Loading files...")
-        state.entriesError != null && state.entries.isEmpty() ->
-            ErrorState(
-                message = state.entriesError,
-                retryLabel = "Try Again",
-                onRetry = { viewModel.retryLastLoad() },
-            )
-        state.visibleEntries.isEmpty() ->
-            EmptyState(
-                title = if (state.searchQuery.isBlank()) "No Files" else "No Matches",
-                message = if (state.searchQuery.isBlank()) {
-                    state.currentPath
-                } else {
-                    "Try a different file name or path."
-                },
-            )
-        else -> Column(Modifier.fillMaxSize()) {
-            if (state.isLoadingEntries) {
-                StatusBanner {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Loading files...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else if (state.entriesError != null) {
-                StatusBanner {
-                    Text(
-                        state.entriesError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { viewModel.retryLastLoad() }) { Text("Try Again") }
-                }
-            }
-            val listState = rememberSaveable(saver = LazyListState.Saver, key = "workspaceBrowserList") {
-                LazyListState()
-            }
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(state.visibleEntries, key = { it.id }) { entry ->
-                    FileBrowserRow(
-                        entry = entry,
-                        isSelected = entry.path != null && entry.path == state.selectedEntry?.path,
-                        onClick = { viewModel.openEntry(entry) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusBanner(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+    ConstrainedPane(620.dp, modifier) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            content = content,
+        ) {
+            if (showRootsButton) {
+                IconButton(onClick = actions.backToRoots) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to workspaces")
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(state.selectedRoot?.displayName ?: "Files", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                state.selectedRoot?.path?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            IconButton(onClick = actions.refreshTree) { Icon(Icons.Filled.Refresh, "Refresh files") }
+        }
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = actions.search,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            placeholder = { Text("Find a file") },
+            singleLine = true,
         )
+        HorizontalDivider()
+        when {
+            state.tree.loadingPaths[LazyFileTree.ROOT_PATH] != null && !state.tree.isRootLoaded ->
+                LoadingState(label = "Loading files…")
+            state.tree.failedPaths[LazyFileTree.ROOT_PATH] != null && !state.tree.isRootLoaded ->
+                ErrorState(
+                    state.tree.failedPaths[LazyFileTree.ROOT_PATH].orEmpty(),
+                    onRetry = actions.refreshTree,
+                )
+            state.tree.isRootLoaded && state.visibleTreeNodes.isEmpty() ->
+                EmptyState(
+                    if (state.searchQuery.isBlank()) "No Files" else "No Matches",
+                    message = if (state.searchQuery.isBlank()) "This workspace is empty." else "Try another search.",
+                )
+            else -> WorkspaceTreeRenderSurface(state, actions)
+        }
     }
 }
 
-/** Port of FileBrowserRow in FileBrowserView.swift. */
+/** Lazy tree rows extracted for deterministic pane-count render tests. */
 @Composable
-private fun FileBrowserRow(
-    entry: WorkspaceEntry,
-    isSelected: Boolean,
-    onClick: () -> Unit,
+internal fun WorkspaceTreeRenderSurface(
+    state: WorkspaceUiState,
+    actions: WorkspaceActions = WorkspaceActions(),
+    modifier: Modifier = Modifier,
 ) {
-    val isDirectory = entry.isBrowsableDirectory
-    val clickable = isDirectory || entry.path != null
-    val background = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+    LazyColumn(modifier.fillMaxSize()) {
+        items(state.visibleTreeNodes, key = { it.node.path }) { visible ->
+            FileTreeRow(
+                visible = visible,
+                tree = state.tree,
+                selected = visible.node.path == state.selectedEntry?.path,
+                onToggle = actions.toggleDirectory,
+                onRetry = actions.retryDirectory,
+                onOpen = actions.openEntry,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FileTreeRow(
+    visible: VisibleFileTreeNode,
+    tree: LazyFileTree,
+    selected: Boolean,
+    onToggle: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onOpen: (WorkspaceEntry) -> Unit,
+) {
+    val node = visible.node
+    val loading = node.path in tree.loadingPaths
+    val failure = tree.failedPaths[node.path]
+    val expanded = node.path in tree.expandedPaths
+    val disabled = node.entry.targetOutsideWorkspace == true
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(background)
-            .clickable(enabled = clickable, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+            .clickable(enabled = !disabled) {
+                when {
+                    failure != null -> onRetry(node.path)
+                    node.isDirectory -> onToggle(node.path)
+                    else -> onOpen(node.entry)
+                }
+            }
+            .padding(start = (8 + visible.depth * 16).dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
+        if (node.isDirectory) {
             Icon(
-                if (isDirectory) Icons.Filled.Folder else Icons.Outlined.Description,
-                contentDescription = if (isDirectory) "Folder" else "File",
-                tint = if (isDirectory) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(16.dp),
+                if (expanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
+                contentDescription = if (expanded) "Collapse ${node.name}" else "Expand ${node.name}",
+                modifier = Modifier.size(20.dp),
             )
+            Icon(Icons.Filled.Folder, null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+        } else {
+            Spacer(Modifier.width(20.dp))
+            FileTypeIcon(node.path, Modifier.size(22.dp))
         }
-        Column(Modifier.weight(1f)) {
-            Text(
-                entry.name?.trim().takeUnless { it.isNullOrEmpty() } ?: "Untitled",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            entryDetailText(entry)?.let { detail ->
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+            Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (failure != null) {
+                Text(failure, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
+            } else if (disabled) {
+                Text("Link target is outside this workspace", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
-        if (isDirectory) {
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+        when {
+            loading -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            failure != null -> Icon(Icons.Filled.Warning, "Retry folder", tint = MaterialTheme.colorScheme.error)
+            node.isDirectory && tree.isLoaded(node.path) -> {
+                Text(tree.childrenOf(node.path).orEmpty().size.toString(), style = MaterialTheme.typography.labelSmall)
+            }
+            node.entry.size != null -> Text(formatByteCount(node.entry.size.toLong()), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
-/** Directories show their path; files show size (and age when reported). */
-internal fun entryDetailText(entry: WorkspaceEntry): String? {
-    if (entry.isBrowsableDirectory) return entry.path
-    val size = entry.size ?: return entry.path
-    val sizeText = formatByteCount(size.toLong())
-    val modified = entry.modified ?: return sizeText
-    return "$sizeText • ${relativeAgo(modified)}"
+@Composable
+private fun PaneHeader(title: String, onRefresh: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "Refresh $title") }
+    }
 }

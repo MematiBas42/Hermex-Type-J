@@ -752,7 +752,6 @@ class HermesApi(
     suspend fun rawFileUrl(sessionId: String, path: String): HttpUrl =
         Endpoint.RawFile(sessionId, path).url(resolveBaseUrl())
 
-
     // MARK: Voice (APIClient+TTS.swift + APIClient+Transcribe.swift)
 
     suspend fun synthesizeSpeech(text: String, voice: String): ByteArray {
@@ -858,6 +857,60 @@ class HermesApi(
     /** Same as [post] with a non-JSON or pre-encoded body (multipart uploads, raw text). */
     internal suspend inline fun <reified R> send(endpoint: Endpoint, method: String, body: RequestBody?): R =
         decode(sendForBody(endpoint, method = method, body = body))
+
+    /**
+     * Authenticated binary GET used by workspace/document previews.
+     *
+     * When [limitBytes] is set, a successful response with a larger declared
+     * body is refused before reading and an unbounded/chunked response is
+     * stopped as soon as it crosses the same limit.
+     */
+    internal suspend fun getBytes(endpoint: Endpoint, limitBytes: Long? = null): ByteArray {
+        val builder = Request.Builder()
+            .url(endpoint.url(resolveBaseUrl()))
+            .get()
+        customHeaderProvider().applyTo(builder)
+        builder.header("Accept", "*/*")
+
+        return execute(builder.build()).use { response ->
+            val contentLength = response.body?.contentLength() ?: -1L
+            if (response.code in 200..299 && limitBytes != null && contentLength > limitBytes) {
+                throw WorkspacePreviewTooLargeException(limitBytes)
+            }
+
+            val initialCapacity = when {
+                contentLength in 1..Int.MAX_VALUE.toLong() ->
+                    minOf(contentLength, limitBytes ?: contentLength).toInt()
+                else -> 64 * 1024
+            }
+            val output = java.io.ByteArrayOutputStream(initialCapacity)
+            try {
+                response.body?.byteStream()?.use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (limitBytes != null && total > limitBytes) {
+                            throw WorkspacePreviewTooLargeException(limitBytes)
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+            } catch (error: WorkspacePreviewTooLargeException) {
+                throw error
+            } catch (error: IOException) {
+                throw ApiError.Network(error)
+            }
+            val bytes = output.toByteArray()
+            if (response.code == 401) throw ApiError.Unauthorized
+            if (response.code !in 200..299) {
+                throw ApiError.Http(response.code, bytes.toString(Charsets.UTF_8))
+            }
+            bytes
+        }
+    }
 
     @PublishedApi
     internal inline fun <reified R> decode(body: String): R = try {
