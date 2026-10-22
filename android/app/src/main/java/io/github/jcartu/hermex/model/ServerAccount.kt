@@ -528,8 +528,12 @@ private fun initialsFrom(rawName: String): String =
         .map { it.uppercase() }
         .joinToString("")
 
-/** Splits on whitespace, "-", "_" like `split(whereSeparator:)` (Unicode-aware). */
-private val INITIALS_SEPARATOR_REGEX = Regex("(?U)[\\s\\-_]+")
+/**
+ * Splits on whitespace, "-", "_" like `split(whereSeparator:)` (Unicode-aware).
+ * `\p{Z}` covers Unicode separators without the JVM-only `(?U)` flag, which
+ * Android's ICU regex engine rejects at class-init time.
+ */
+private val INITIALS_SEPARATOR_REGEX = Regex("[\\s\\p{Z}\\-_]+")
 
 /** `HeaderLogoColor.normalizedHex` — `"#RRGGBB"` or null when malformed. */
 private fun normalizedHex(rawValue: String): String? {

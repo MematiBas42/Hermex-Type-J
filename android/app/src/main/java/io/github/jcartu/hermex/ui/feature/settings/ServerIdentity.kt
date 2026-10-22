@@ -49,7 +49,8 @@ object ServerIdentity {
             .take(2)
             .joinToString("") { it.toString().uppercase() }
 
-    private val SEPARATORS = Regex("(?U)[\\s\\-_]+")
+    /** `\p{Z}` instead of the JVM-only `(?U)` flag, which Android's regex engine rejects. */
+    private val SEPARATORS = Regex("[\\s\\p{Z}\\-_]+")
 
     /** `URL(string:)?.host ?? urlString` — the server page's and rows' fallback name. */
     fun hostFallback(account: ServerAccount): String =
