@@ -1006,6 +1006,10 @@ class ChatStreamCoordinator(
     }
 
     private fun stopConnection() {
+        // A suspended connection is recovered by the foreground/network trigger,
+        // not a live-transport watchdog. Keeping it ticking erased the offline
+        // wait state and kept a backgrounded chat doing work indefinitely.
+        stopWatchdog()
         connectionJob?.cancel()
         connectionJob = null
     }

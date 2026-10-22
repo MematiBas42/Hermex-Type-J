@@ -65,6 +65,13 @@ class NetworkMonitor(context: Context) : NetworkAvailability {
             if (isStarted) return
             isStarted = true
         }
+        publish {
+            val network = connectivityManager.activeNetwork
+            val capabilities = network?.let { connectivityManager.getNetworkCapabilities(it) }
+            if (network != null && capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+                availableNetworks[network.networkHandle] = capabilities.transports()
+            }
+        }
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
@@ -73,16 +80,14 @@ class NetworkMonitor(context: Context) : NetworkAvailability {
 
     /** Deduplicates like `NetworkPathDeduplicator`: only a changed snapshot publishes. */
     private fun publish(mutate: () -> Unit) {
-        val previousSnapshot: Pair<Boolean, Set<Int>>
-        val nextSnapshot: Pair<Boolean, Set<Int>>
         synchronized(lock) {
-            previousSnapshot = snapshot()
+            val previousSnapshot = snapshot()
             mutate()
-            nextSnapshot = snapshot()
+            val nextSnapshot = snapshot()
+            if (previousSnapshot == nextSnapshot && _isSatisfied.value == nextSnapshot.first) return
+            _isSatisfied.value = nextSnapshot.first
+            _changes.update { it + 1 }
         }
-        if (previousSnapshot == nextSnapshot) return
-        _isSatisfied.value = nextSnapshot.first
-        _changes.update { it + 1 }
     }
 
     private fun snapshot(): Pair<Boolean, Set<Int>> =
