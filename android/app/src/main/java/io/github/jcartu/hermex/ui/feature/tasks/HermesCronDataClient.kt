@@ -22,7 +22,7 @@ import kotlin.math.roundToLong
 
 /**
  * The Tasks data source for a Hermes server. This is the Android route-level
- * adapter over [HermesCronClient]: the transport owns the exact `/api/cron/*`
+ * adapter over [HermesCronClient]: the transport owns the exact `/api/cron/…`
  * wire shapes, while this class maps its Hermes-specific list and run models
  * onto the shared Tasks composables' [CronDataClient] contract.
  *

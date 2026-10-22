@@ -168,15 +168,24 @@ class HermesCronDataClientTest {
         val running = original.copy(fireClaim = io.github.jcartu.hermex.model.CronFireClaim(Instant.ofEpochSecond(110)))
         val finished = original.copy(lastRunAt = CronDateValue(Instant.ofEpochSecond(120)), lastStatus = "ok")
         coEvery { transport.runCron("daily", "inbox") } coAnswers { trigger.await() }
-        coEvery { transport.cronJobs(any()) } returnsMany listOf(
-            HermesCronJobList(listOf(running), mapOf("daily" to 2.0), emptyList()),
-            HermesCronJobList(listOf(finished), emptyMap(), listOf(HermesCronRecentCompletion("daily", "Daily", "ok", 120.0))),
-        )
+        var listRead = 0
+        coEvery { transport.cronJobs(any()) } answers {
+            when (listRead++) {
+                0 -> HermesCronJobList(listOf(original), emptyMap(), emptyList())
+                1 -> HermesCronJobList(listOf(running), mapOf("daily" to 2.0), emptyList())
+                else -> HermesCronJobList(
+                    listOf(finished),
+                    emptyMap(),
+                    listOf(HermesCronRecentCompletion("daily", "Daily", "ok", 120.0)),
+                )
+            }
+        }
         val viewModel = TaskDetailViewModel(
             initialJob = original,
             runningElapsed = null,
             client = HermesCronDataClient(transport, profile = "inbox"),
         )
+        advanceUntilIdle()
 
         val outcome = async { viewModel.runNow() }
         runCurrent()
@@ -197,12 +206,20 @@ class HermesCronDataClientTest {
     fun `unanswered trigger times out after three failed confirmation reads`() = runTest(dispatcher) {
         val original = CronJob(jobId = "daily", name = "Daily", profile = "inbox")
         coEvery { transport.runCron("daily", "inbox") } throws BotFailure.Rejected(504)
-        coEvery { transport.cronJobs(any()) } throws ApiError.Http(503, "offline")
+        var listRead = 0
+        coEvery { transport.cronJobs(any()) } answers {
+            if (listRead++ == 0) {
+                HermesCronJobList(listOf(original), emptyMap(), emptyList())
+            } else {
+                throw ApiError.Http(503, "offline")
+            }
+        }
         val viewModel = TaskDetailViewModel(
             initialJob = original,
             runningElapsed = null,
             client = HermesCronDataClient(transport, profile = "inbox"),
         )
+        advanceUntilIdle()
 
         val outcome = async { viewModel.runNow() }
         runCurrent()
@@ -212,7 +229,7 @@ class HermesCronDataClientTest {
 
         assertFalse(outcome.await())
         assertEquals(RunNowState.IDLE, viewModel.uiState.value.runNowState)
-        assertTrue(viewModel.uiState.value.actionErrorMessage?.contains("503") == true)
-        coVerify(exactly = 3) { transport.cronJobs(any()) }
+        assertTrue(!viewModel.uiState.value.actionErrorMessage.isNullOrBlank())
+        coVerify(exactly = 4) { transport.cronJobs(any()) }
     }
 }

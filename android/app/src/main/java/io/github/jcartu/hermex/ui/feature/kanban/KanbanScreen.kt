@@ -54,8 +54,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -96,6 +94,7 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 import io.github.jcartu.hermex.ui.components.EmptyState
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -117,7 +116,7 @@ fun KanbanRoute(
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var showBulk by rememberSaveable { mutableStateOf(false) }
     var showDispatch by rememberSaveable { mutableStateOf(false) }
-    val snackbar = remember { SnackbarHostState() }
+    var transientMessage by remember { mutableStateOf<String?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
@@ -151,9 +150,13 @@ fun KanbanRoute(
     }
     LaunchedEffect(state.errorMessage, state.actionMessage, state.columns) {
         val transient = state.actionMessage ?: state.errorMessage?.takeIf { state.columns.isNotEmpty() }
-        transient?.let {
-            snackbar.showSnackbar(it)
+        transient?.let { message ->
+            transientMessage = message
             viewModel.dismissMessage()
+            scope.launch {
+                delay(4_000)
+                if (transientMessage == message) transientMessage = null
+            }
         }
     }
 
@@ -220,7 +223,16 @@ fun KanbanRoute(
                 }
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        transientMessage?.let { message ->
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            ) {
+                Text(message, Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            }
+        }
     }
 
     if (showBoardEditor) KanbanBoardEditorDialog(

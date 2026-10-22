@@ -38,6 +38,9 @@ Security sections per release.
   cross-origin redirect stripping, and Keystore encryption at rest.
 - Voice notes (native AAC recorder) with server transcription, and assistant
   Listen via server TTS with Android TextToSpeech fallback.
+- Direct Hermes-host Skills, Memory/soul editing, Usage and provider limits,
+  workspace Files, Git review/writes, Profile voice playback, and host STT,
+  while legacy webui routes remain available.
 - Deterministic fuzz/property tests (hinge geometry, dynamic path encoding,
   deep-link parsing, tolerant decoding, speech normalization, stream reducers).
 
