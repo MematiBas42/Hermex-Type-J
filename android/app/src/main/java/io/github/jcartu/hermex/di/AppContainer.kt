@@ -115,6 +115,16 @@ class AppContainer(context: Context) {
             .build()
     }
 
+    /**
+     * The per-server registry of direct-Hermes connections (`HermesConnections.shared` in
+     * Swift): every Hermes screen on the active server shares one sign-in and one gateway
+     * socket through it. Built on [okHttpClient] so the connection pool is shared; each
+     * connection keeps its own ephemeral cookie jar.
+     */
+    val hermesConnections: io.github.jcartu.hermex.net.hermes.HermesConnections by lazy {
+        io.github.jcartu.hermex.net.hermes.HermesConnections(httpClient = { okHttpClient })
+    }
+
     val modelFavorites: io.github.jcartu.hermex.model.ModelFavoritesStore by lazy {
         io.github.jcartu.hermex.model.ModelFavoritesStore(dataStore = appContext.dataStore)
     }
