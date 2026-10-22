@@ -119,7 +119,7 @@ data class UsageHeroFigure(
 ) {
     /** The hero while the user drags across the chart: the selected bucket's own figures. */
     companion object {
-        fun selection(bucket: UsageBucket, metric: UsageMetric): UsageHeroFigure {
+        fun selection(bucket: UsageBucket, metric: UsageMetric): UsageHeroFigure =
             when (val detail = bucket.detail) {
                 is UsageBucketDetail.Day -> {
                     // A token bar stacks cache reads on top of processed tokens, so the
@@ -128,7 +128,7 @@ data class UsageHeroFigure(
                     val sessionsText = "${detail.sessions} sessions"
                     val cachedText = if (detail.cacheRead > 0) "${usageFormattedTokens(detail.cacheRead)} cached" else null
 
-                    return when (metric) {
+                    when (metric) {
                         UsageMetric.TOKENS -> UsageHeroFigure(
                             label = bucket.label,
                             value = usageFormattedTokens(bucket.processedTokens),
@@ -155,7 +155,6 @@ data class UsageHeroFigure(
                     caption = "sessions started or updated in this hour",
                 )
             }
-        }
     }
 
     /** What a screen reader reads for the bar, since the visual hero only appears while dragging. */

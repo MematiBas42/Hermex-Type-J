@@ -108,6 +108,16 @@ private fun MainShell(container: AppContainer) {
     val selected = navigation.selectedDestination
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
+    val settings by container.settings.settings.collectAsStateWithLifecycle(
+        initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings(),
+    )
+    // Section-visibility toggles (iOS `sectionVisibility.tasks|insights`): a
+    // hidden destination can't stay selected, so the shell falls back to Chats.
+    LaunchedEffect(settings.showsTasksEntry, selected) {
+        if (!settings.showsTasksEntry && selected == HermexDestination.TASKS) {
+            navigation.selectDestination(HermexDestination.CHATS)
+        }
+    }
     LaunchedEffect(pendingDeepLink?.first) {
         val pending = pendingDeepLink ?: return@LaunchedEffect
         when (val link = pending.second) {
@@ -142,9 +152,11 @@ private fun MainShell(container: AppContainer) {
                     initialCardId = navigation.kanbanCardId,
                     onDeepLinkConsumed = navigation::consumeKanbanTarget,
                 )
-                HermexDestination.TASKS -> TasksRoute()
+                HermexDestination.TASKS -> TasksRoute(
+                    client = io.github.jcartu.hermex.ui.feature.tasks.WebuiCronDataClient(container.api),
+                )
                 HermexDestination.FILES -> WorkspaceRoute()
-                HermexDestination.MORE -> MoreRoute(navigation)
+                HermexDestination.MORE -> MoreRoute(navigation, container)
             }
         }
 
@@ -153,6 +165,9 @@ private fun MainShell(container: AppContainer) {
                 bottomBar = {
                     NavigationBar {
                         HermexDestination.entries.forEach { destination ->
+                            if (destination == HermexDestination.TASKS && !settings.showsTasksEntry) {
+                                return@forEach
+                            }
                             NavigationBarItem(
                                 selected = selected == destination,
                                 onClick = { navigation.selectDestination(destination) },
@@ -171,6 +186,9 @@ private fun MainShell(container: AppContainer) {
             Row(Modifier.fillMaxSize()) {
                 NavigationRail {
                     HermexDestination.entries.forEach { destination ->
+                        if (destination == HermexDestination.TASKS && !settings.showsTasksEntry) {
+                            return@forEach
+                        }
                         NavigationRailItem(
                             selected = selected == destination,
                             onClick = { navigation.selectDestination(destination) },
@@ -257,13 +275,22 @@ private enum class MoreEntry(val label: String, val icon: ImageVector) {
  * Two+ panes: menu rail column | content side by side.
  */
 @Composable
-private fun MoreRoute(navigation: AppNavigationViewModel) {
+private fun MoreRoute(navigation: AppNavigationViewModel, container: AppContainer) {
     val paneCount = LocalPaneCount.current
     var entry by rememberSaveable { mutableStateOf<MoreEntry?>(null) }
+    val settings by container.settings.settings.collectAsStateWithLifecycle(
+        initialValue = io.github.jcartu.hermex.core.prefs.SettingsRepository.Settings(),
+    )
     LaunchedEffect(navigation.pendingMoreRoute) {
         if (navigation.pendingMoreRoute == "git") {
             entry = MoreEntry.GIT
             if (navigation.gitSessionId == null) navigation.consumeGitTarget()
+        }
+    }
+    // A hidden Usage entry can't stay selected: fall back to the menu.
+    LaunchedEffect(settings.showsInsightsEntry, entry) {
+        if (!settings.showsInsightsEntry && entry == MoreEntry.INSIGHTS) {
+            entry = null
         }
     }
     val content: @Composable (MoreEntry?) -> Unit = { current ->
@@ -274,7 +301,9 @@ private fun MoreRoute(navigation: AppNavigationViewModel) {
                 onDeepLinkConsumed = navigation::consumeGitTarget,
             )
             MoreEntry.MEMORY -> MemoryRoute()
-            MoreEntry.INSIGHTS -> InsightsRoute()
+            MoreEntry.INSIGHTS -> InsightsRoute(
+                client = io.github.jcartu.hermex.ui.feature.insights.WebuiInsightsDataClient(container.api),
+            )
             MoreEntry.SETTINGS -> SettingsRoute(
                 onOpenArchived = { navigation.selectDestination(HermexDestination.CHATS) },
             )
@@ -289,10 +318,15 @@ private fun MoreRoute(navigation: AppNavigationViewModel) {
             content(current)
         }
     } else if (paneCount == 1) {
-        MoreMenu(onSelect = { entry = it })
+        MoreMenu(onSelect = { entry = it }, showsInsights = settings.showsInsightsEntry)
     } else {
         Row(Modifier.fillMaxSize()) {
-            MoreMenu(onSelect = { entry = it }, modifier = Modifier.fillMaxWidth(0.28f), highlight = entry)
+            MoreMenu(
+                onSelect = { entry = it },
+                modifier = Modifier.fillMaxWidth(0.28f),
+                highlight = entry,
+                showsInsights = settings.showsInsightsEntry,
+            )
             Box(Modifier.fillMaxSize()) { content(entry) }
         }
     }
@@ -303,9 +337,13 @@ private fun MoreMenu(
     onSelect: (MoreEntry) -> Unit,
     modifier: Modifier = Modifier,
     highlight: MoreEntry? = null,
+    showsInsights: Boolean = true,
 ) {
     Column(modifier = modifier.padding(vertical = 8.dp)) {
         MoreEntry.entries.forEach { item ->
+            if (item == MoreEntry.INSIGHTS && !showsInsights) {
+                return@forEach
+            }
             val selected = highlight == item
             androidx.compose.material3.ListItem(
                 headlineContent = { Text(item.label) },

@@ -15,6 +15,7 @@ import java.net.SocketTimeoutException
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -351,8 +352,15 @@ class TaskDetailViewModel(
 
                 // The requested window is consumed whether or not every file in it could be read.
                 historyOffset = offset + historyPageSize
-                result.total?.let { runTotal = it }
-                appendRuns(result.runs)
+                result.fold(
+                    onSuccess = { response ->
+                        response.total?.let { runTotal = it }
+                        appendRuns(response.runs)
+                    },
+                    onFailure = { error ->
+                        historyErrorMessage = error.message ?: "Could not load run history."
+                    },
+                )
             } finally {
                 isLoadingMoreRuns = false
                 publish()
@@ -540,7 +548,7 @@ class TaskDetailViewModel(
             var failedReads = 0
             try {
                 for (event in events) {
-                    var refusal: Exception? = null
+                    var refusal: Throwable? = null
                     when (event) {
                         is RunNowEvent.Replied -> {
                             event.result.fold(
@@ -592,7 +600,7 @@ class TaskDetailViewModel(
     }
 
     /** Ends a pending Run Now with [error], which the screen shows. */
-    private fun failRunNow(error: Exception): Boolean {
+    private fun failRunNow(error: Throwable): Boolean {
         actionErrorMessage = error.message ?: "Could not run task."
         publish()
         return false
@@ -619,7 +627,7 @@ class TaskDetailViewModel(
         } catch (_: Exception) {
             return@launch
         }
-        if (!kotlinx.coroutines.isActive) return@launch
+        if (!isActive) return@launch
         events.send(RunNowEvent.Tick)
     }
 

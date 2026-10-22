@@ -579,18 +579,18 @@ data class CronJobEditorDraft(
      * Port of `CronJobEditorDraft.keepChoices(madeBefore:offeredTargets:offeredSkills:)`.
      */
     fun keepChoices(
-        madeBefore earlier: CronJobEditorDraft,
+        madeBefore: CronJobEditorDraft,
         offeredTargets: List<String>?,
         offeredSkills: List<String>?,
     ) {
-        if (offeredTargets != null && deliver == earlier.deliver) {
+        if (offeredTargets != null && deliver == madeBefore.deliver) {
             val kept = deliver.split(',')
                 .map { it.trim() }
                 .filter { target -> offeredTargets.contains(target.substringBefore(':')) }
             deliver = if (kept.isEmpty()) "local" else kept.joinToString(",")
         }
         if (offeredSkills != null) {
-            applySkillSelection(skills.filter { offeredSkills.contains(it) || !earlier.skills.contains(it) })
+            applySkillSelection(skills.filter { offeredSkills.contains(it) || !madeBefore.skills.contains(it) })
         }
     }
 
@@ -605,7 +605,7 @@ data class CronJobEditorDraft(
          * server stores back whatever spelling it was sent.
          * Port of `CronJobEditorDraft.togglingSkill(_:in:)`.
          */
-        fun togglingSkill(name: String, in selection: List<String>): List<String> {
+        fun togglingSkill(name: String, selection: List<String>): List<String> {
             val index = selection.indexOf(name)
             if (index < 0) return selection + name
             return selection.toMutableList().also { it.removeAt(index) }

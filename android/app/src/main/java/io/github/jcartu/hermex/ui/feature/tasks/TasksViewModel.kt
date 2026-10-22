@@ -9,6 +9,7 @@ import io.github.jcartu.hermex.model.CronRecentCompletion
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -158,7 +159,7 @@ class TasksViewModel(
     }
 
     /** The loaded job a recent run belongs to, or null when the feed names a job the list does not have. */
-    fun job(forCompletion completion: CronRecentCompletion): CronJob? {
+    fun job(completion: CronRecentCompletion): CronJob? {
         val jobId = completion.jobId
         if (jobId != null) {
             jobs.firstOrNull { it.jobId == jobId }?.let { return it }
@@ -168,7 +169,7 @@ class TasksViewModel(
         return jobs.firstOrNull { it.name == name }
     }
 
-    fun runningElapsed(forJob job: CronJob): Double? {
+    fun runningElapsed(job: CronJob): Double? {
         val jobId = job.jobId ?: return null
         return runningJobs[jobId]
     }
@@ -195,7 +196,7 @@ class TasksViewModel(
         zone = zone,
     )
 
-    fun count(forFilter filter: TaskFilter): Int =
+    fun count(filter: TaskFilter): Int =
         TaskAgenda.count(filter, jobs, runningJobs.keys)
 
     fun isPendingAction(job: CronJob): Boolean {
@@ -298,7 +299,16 @@ class TasksViewModel(
         } ?: return
         // webui accepted the run, so the job belongs in "Now" until the next
         // status poll replaces this with a real elapsed time.
-        _uiState.update { it.copy(runningJobs = it.runningJobs + (jobId to elapsed)) }
+        val elapsedSeconds = elapsed
+        _uiState.update { state ->
+            state.copy(
+                runningJobs = if (elapsedSeconds != null) {
+                    state.runningJobs + (jobId to elapsedSeconds)
+                } else {
+                    state.runningJobs - jobId
+                },
+            )
+        }
     }
 
     suspend fun pause(job: CronJob) {
@@ -334,7 +344,7 @@ class TasksViewModel(
         }
         try {
             val detail = TaskDetailViewModel(
-                job = job,
+                initialJob = job,
                 runningElapsed = runningElapsed(job),
                 client = client,
                 sleepMillis = sleepMillis,

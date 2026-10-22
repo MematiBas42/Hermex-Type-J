@@ -20,8 +20,8 @@ import java.time.Instant
 
 /**
  * What the Tasks screens call, so one set of screens runs on either kind of
- * server: a webui server's `/api/crons/*` ([WebuiCronDataClient]) or a Hermes
- * host's `/api/cron/*` (`HermesCronClient`, #1040 — Wave 2's transport slice
+ * server: a webui server's `/api/crons` routes ([WebuiCronDataClient]) or a Hermes
+ * host's `/api/cron` routes (`HermesCronClient`, #1040 — Wave 2's transport slice
  * provides it against this same interface). Mutations and run reads name the
  * job's Profile, which a Hermes host routes by and webui ignores;
  * [CronFeatures] says which parts of the screens the server backs.
@@ -200,7 +200,7 @@ data class CronJobList(
 class HermesCronRefusal(val detail: String) : Exception("The server rejected the request: $detail")
 
 /**
- * A webui server's Tasks: `/api/crons/*` on [HermesApi]. Port of
+ * A webui server's Tasks: `/api/crons` routes on [HermesApi]. Port of
  * `extension APIClient: CronDataClient` in `Networking/APIClient+Cron.swift`.
  */
 class WebuiCronDataClient(private val api: HermesApi) : CronDataClient {

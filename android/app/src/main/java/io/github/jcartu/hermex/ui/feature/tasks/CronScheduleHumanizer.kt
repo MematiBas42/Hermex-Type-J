@@ -54,8 +54,8 @@ object CronScheduleHumanizer {
             return CronScheduleDescription(recurrence = recurrence, sentence = recurrence)
         }
 
-        val minute = fixedValue(minuteField, in = 0..59) ?: return null
-        val hour = fixedValue(hourField, in = 0..23) ?: return null
+        val minute = fixedValue(minuteField, 0..59) ?: return null
+        val hour = fixedValue(hourField, 0..23) ?: return null
         val recurrence = calendarRecurrence(dayOfMonthField, dayOfWeekField, locale) ?: return null
 
         val time = timeText(hour, minute, locale)
@@ -68,9 +68,10 @@ object CronScheduleHumanizer {
     // MARK: - Shapes
 
     /**
-     * `*/15 * * * *` and `0 */2 * * *`: a step over an otherwise unrestricted
-     * field. The hourly form requires minute zero so the phrase cannot imply
-     * an offset it is not describing.
+     * A step over an otherwise unrestricted field: "every N minutes" from a
+     * minute field of `*` / `N`, and "every N hours" from a minute field of `0`
+     * with an hour field of `*` / `N`. The hourly form requires minute zero so
+     * the phrase cannot imply an offset it is not describing.
      */
     private fun intervalRecurrence(
         minuteField: String,
@@ -82,13 +83,13 @@ object CronScheduleHumanizer {
 
         if (hourField == "*") {
             if (minuteField == "*") return "Every minute"
-            val step = stepValue(minuteField, in = 1..59) ?: return null
+            val step = stepValue(minuteField, 1..59) ?: return null
             if (step <= 1) return "Every minute"
             return "Every ${durationTextMinutes(step)}"
         }
 
         if (minuteField != "0") return null
-        val step = stepValue(hourField, in = 1..23) ?: return null
+        val step = stepValue(hourField, 1..23) ?: return null
         if (step <= 1) return null // `0 */1 * * *` is just hourly; let it fall through.
         return "Every ${durationTextHours(step)}"
     }
@@ -112,7 +113,7 @@ object CronScheduleHumanizer {
         // A day-of-month and a day-of-week together mean different things on
         // different cron implementations, so only the unambiguous form counts.
         if (dayOfWeekField != "*") return null
-        val day = fixedValue(dayOfMonthField, in = 1..31) ?: return null
+        val day = fixedValue(dayOfMonthField, 1..31) ?: return null
         val ordinal = ordinalText(day, locale) ?: return null
         return "Monthly on the $ordinal"
     }
@@ -120,13 +121,13 @@ object CronScheduleHumanizer {
     // MARK: - Field parsing
 
     /** A single literal number, e.g. `25`. Lists, ranges and steps are not fixed values. */
-    private fun fixedValue(field: String, in range: ClosedRange<Int>): Int? {
+    private fun fixedValue(field: String, range: ClosedRange<Int>): Int? {
         val value = field.toIntOrNull() ?: return null
         return value.takeIf { it in range }
     }
 
-    /** The `N` of `*/N`, valid only when the rest of the field is unrestricted. */
-    private fun stepValue(field: String, in range: ClosedRange<Int>): Int? {
+    /** The `N` of a `*` / `N` step, valid only when the rest of the field is unrestricted. */
+    private fun stepValue(field: String, range: ClosedRange<Int>): Int? {
         if (!field.startsWith("*/")) return null
         val step = field.removePrefix("*/").toIntOrNull() ?: return null
         return step.takeIf { it in range }
@@ -181,8 +182,8 @@ object CronScheduleHumanizer {
      * self-updating label repaints its whole card every second for a figure
      * nobody watches count down, and Refresh already brings it current.
      */
-    fun countdown(to date: Instant, from now: Instant = Instant.now()): String {
-        val interval = Duration.between(now, date).seconds
+    fun countdown(to: Instant, from: Instant = Instant.now()): String {
+        val interval = Duration.between(from, to).seconds
         if (interval < 60) {
             return if (interval > 0) "Due now" else "Overdue"
         }

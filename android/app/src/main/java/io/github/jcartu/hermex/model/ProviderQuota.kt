@@ -7,6 +7,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -134,7 +136,7 @@ internal object ProviderAccountLimitsSerializer :
             unavailableReason = obj.lossyString("unavailable_reason", "unavailableReason"),
             fetchedAt = obj.lossyString("fetched_at", "fetchedAt"),
             windows = obj.decodeLossyList(json, "windows", ProviderQuotaWindow.serializer()),
-            details = obj.decodeLossyList(json, "details", kotlinx.serialization.builtins.serializer()),
+            details = obj.decodeLossyList(json, "details", String.serializer()),
         )
 
     override fun toJson(json: Json, value: ProviderAccountLimits): JsonObject = buildJsonObject {
@@ -143,8 +145,8 @@ internal object ProviderAccountLimitsSerializer :
         value.available?.let { put("available", JsonPrimitive(it)) }
         value.unavailableReason?.let { put("unavailable_reason", JsonPrimitive(it)) }
         value.fetchedAt?.let { put("fetched_at", JsonPrimitive(it)) }
-        value.windows?.let { put("windows", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ProviderQuotaWindow.serializer()), it)) }
-        value.details?.let { put("details", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(kotlinx.serialization.builtins.serializer()), it)) }
+        value.windows?.let { put("windows", json.encodeToJsonElement(ListSerializer(ProviderQuotaWindow.serializer()), it)) }
+        value.details?.let { put("details", json.encodeToJsonElement(ListSerializer(String.serializer()), it)) }
     }
 }
 
