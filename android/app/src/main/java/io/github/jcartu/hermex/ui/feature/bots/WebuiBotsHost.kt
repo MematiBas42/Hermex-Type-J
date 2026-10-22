@@ -47,7 +47,12 @@ fun WebuiBotsHost(
     val incoming by container.deepLinks.pending.collectAsStateWithLifecycle()
     val share by container.sharedImports.pending.collectAsStateWithLifecycle()
     var showingBots by rememberSaveable(account?.id) { mutableStateOf(false) }
-    LaunchedEffect(enabled) { if (!enabled) showingBots = false }
+    LaunchedEffect(enabled, destination, account?.id) {
+        if (!enabled) {
+            showingBots = false
+            if (destination?.server == account?.id) BotLinkMailbox.consume()
+        }
+    }
     LaunchedEffect(navigation.selectedSessionId, navigation.isNewChat, incoming?.first, share?.id) {
         if (incoming != null || share != null || navigation.selectedSessionId != null || navigation.isNewChat) showingBots = false
     }
