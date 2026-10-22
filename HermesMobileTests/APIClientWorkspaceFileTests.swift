@@ -7,34 +7,6 @@ import UniformTypeIdentifiers
 @testable import HermesMobile
 
 final class APIClientWorkspaceFileTests: APIClientTestCase {
-    func testProjectsBuildsExpectedPathAndDecodesProjectList() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/projects")
-            XCTAssertNil(request.httpBody)
-
-            return apiTestJSONResponse("""
-            {
-              "projects": [
-                {
-                  "project_id": "proj123",
-                  "name": "Client Work",
-                  "color": "#336699",
-                  "created_at": 1770000000
-                }
-              ]
-            }
-            """, for: request)
-        }
-
-        let response = try await client.projects()
-        let project = try XCTUnwrap(response.projects?.first)
-
-        XCTAssertEqual(project.projectId, "proj123")
-        XCTAssertEqual(project.name, "Client Work")
-        XCTAssertEqual(project.color, "#336699")
-        XCTAssertEqual(project.createdAt, 1_770_000_000)
-    }
-
     func testProjectsToleratesLossyProjectFields() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/projects")
@@ -130,34 +102,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertEqual(project.createdAt, 1_770_000_000)
     }
 
-    func testRenameProjectOmitsColorWhenNil() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/projects/rename")
-
-            let body = try XCTUnwrap(apiTestBodyData(from: request))
-            let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-            XCTAssertEqual(json?["project_id"] as? String, "proj123")
-            XCTAssertEqual(json?["name"] as? String, "Client Archive")
-            XCTAssertNil(json?["color"])
-
-            return apiTestJSONResponse("""
-            {
-              "ok": true,
-              "project": {
-                "project_id": "proj123",
-                "name": "Client Archive"
-              }
-            }
-            """, for: request)
-        }
-
-        let response = try await client.renameProject(id: "proj123", name: "Client Archive", color: nil)
-
-        XCTAssertEqual(response.ok, true)
-        XCTAssertEqual(response.project?.projectId, "proj123")
-        XCTAssertNil(response.project?.color)
-    }
-
     func testDeleteProjectBuildsExpectedBodyAndDecodesResponse() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/projects/delete")
@@ -176,27 +120,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertNil(response.project)
     }
 
-    func testWorkspacesDecodesWorkspaceObjects() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/workspaces")
-
-            return apiTestJSONResponse("""
-            {
-              "workspaces": [
-                {"path": "/Users/test/project", "name": "Project"}
-              ],
-              "last": "/Users/test/project"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.workspaces()
-
-        XCTAssertEqual(response.last, "/Users/test/project")
-        XCTAssertEqual(response.workspaces?.first?.path, "/Users/test/project")
-        XCTAssertEqual(response.workspaces?.first?.name, "Project")
-    }
-
     func testWorkspacesToleratesLegacyStringEntries() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/workspaces")
@@ -213,32 +136,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
 
         XCTAssertEqual(response.workspaces?.first?.path, "/Users/test/project")
         XCTAssertNil(response.workspaces?.first?.name)
-    }
-
-    func testWorkspaceSuggestionsBuildsExpectedQueryAndDecodesResponse() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/workspaces/suggest")
-            XCTAssertEqual(request.httpMethod, "GET")
-
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["prefix"], "/Users/test/pro")
-
-            return apiTestJSONResponse("""
-            {
-              "suggestions": [
-                "/Users/test/project",
-                "/Users/test/prototypes"
-              ],
-              "prefix": "/Users/test/pro"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.workspaceSuggestions(prefix: "/Users/test/pro")
-
-        XCTAssertEqual(response.prefix, "/Users/test/pro")
-        XCTAssertEqual(response.suggestions, ["/Users/test/project", "/Users/test/prototypes"])
     }
 
     func testAddWorkspaceBuildsExpectedBodyAndDecodesUpdatedList() async throws {
@@ -268,48 +165,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertEqual(response.workspaces?.count, 2)
         XCTAssertEqual(response.workspaces?.last?.path, "/Users/test/newproject")
         XCTAssertEqual(response.workspaces?.last?.name, "New Project")
-    }
-
-    func testAddWorkspaceOmitsOptionalFieldsWhenNil() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/workspaces/add")
-
-            let json = try apiTestJSONBody(from: request)
-            XCTAssertEqual(json["path"] as? String, "/Users/test/newproject")
-            XCTAssertNil(json["name"])
-            XCTAssertNil(json["create"])
-
-            return apiTestJSONResponse("""
-            {"ok": true, "workspaces": [{"path": "/Users/test/newproject", "name": "newproject"}]}
-            """, for: request)
-        }
-
-        let response = try await client.addWorkspace(path: "/Users/test/newproject")
-
-        XCTAssertEqual(response.ok, true)
-    }
-
-    func testAddWorkspaceSurfacesServerErrorString() async throws {
-        let client = makeClient { request in
-            let (_, data) = apiTestJSONResponse("""
-            {"error": "Workspace already in list"}
-            """, for: request)
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 400,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            return (response, data)
-        }
-
-        do {
-            _ = try await client.addWorkspace(path: "/Users/test/project")
-            XCTFail("Expected APIError.http")
-        } catch let error as APIError {
-            XCTAssertEqual(error.serverMessage, "Workspace already in list")
-            XCTAssertTrue(error.localizedDescription.contains("Workspace already in list"))
-        }
     }
 
     func testRemoveWorkspaceBuildsExpectedBodyAndDecodesUpdatedList() async throws {
@@ -376,19 +231,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertEqual(response.workspaces?.compactMap(\.path), ["/Users/test/b", "/Users/test/a"])
     }
 
-    func testWorkspaceMutationToleratesMissingWorkspacesEcho() async throws {
-        let client = makeClient { request in
-            apiTestJSONResponse("""
-            {"ok": true, "unexpected_new_field": {"nested": 1}}
-            """, for: request)
-        }
-
-        let response = try await client.removeWorkspace(path: "/Users/test/project")
-
-        XCTAssertEqual(response.ok, true)
-        XCTAssertNil(response.workspaces)
-    }
-
     func testDirectoryListDecodesUpstreamEntries() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/list")
@@ -421,226 +263,6 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertEqual(response.entries?[2].size, 1200)
     }
 
-    func testDirectoryListBuildsNestedPathQuery() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/list")
-
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["session_id"], "abc123")
-            XCTAssertEqual(query["path"], "Sources/App")
-
-            return apiTestJSONResponse("""
-            {
-              "entries": [],
-              "path": "Sources/App"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.directoryList(sessionID: "abc123", path: "Sources/App")
-
-        XCTAssertEqual(response.path, "Sources/App")
-    }
-
-    @MainActor
-    func testFileBrowserLatestDirectoryRequestWins() async throws {
-        let firstRequestStarted = expectation(description: "First directory request started")
-        let client = makeClient { request in
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
-
-            if path == "cat" {
-                firstRequestStarted.fulfill()
-                Thread.sleep(forTimeInterval: 0.3)
-            }
-
-            return apiTestJSONResponse("""
-            {
-              "entries": [],
-              "path": "\(path ?? ".")"
-            }
-            """, for: request)
-        }
-        let viewModel = try FileBrowserViewModel(
-            session: makeFilePreviewSession(),
-            server: XCTUnwrap(URL(string: "https://example.test")),
-            apiClient: client
-        )
-
-        let firstLoad = Task { await viewModel.load(path: "cat") }
-        await fulfillment(of: [firstRequestStarted], timeout: 1)
-        let latestLoad = Task { await viewModel.load(path: "leetcode-editor") }
-
-        await latestLoad.value
-        await firstLoad.value
-
-        XCTAssertEqual(viewModel.currentPath, "leetcode-editor")
-    }
-
-    @MainActor
-    func testFileBrowserRetriesFailedDirectoryWithoutDiscardingCurrentEntries() async throws {
-        var catAttempts = 0
-        let client = makeClient { request in
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
-
-            if path == "cat" {
-                catAttempts += 1
-                if catAttempts == 1 {
-                    let response = HTTPURLResponse(
-                        url: try XCTUnwrap(request.url),
-                        statusCode: 503,
-                        httpVersion: nil,
-                        headerFields: ["Content-Type": "application/json"]
-                    )
-                    return (try XCTUnwrap(response), Data(#"{"error":"temporarily unavailable"}"#.utf8))
-                }
-            }
-
-            return apiTestJSONResponse("""
-            {
-              "entries": [{"name": "cat", "path": "cat", "type": "dir"}],
-              "path": "\(path ?? ".")"
-            }
-            """, for: request)
-        }
-        let viewModel = try FileBrowserViewModel(
-            session: makeFilePreviewSession(),
-            server: XCTUnwrap(URL(string: "https://example.test")),
-            apiClient: client
-        )
-
-        await viewModel.loadRoot()
-        await viewModel.load(path: "cat")
-
-        XCTAssertEqual(viewModel.currentPath, ".")
-        XCTAssertEqual(viewModel.entries.first?.name, "cat")
-        XCTAssertNotNil(viewModel.errorMessage)
-
-        await viewModel.retryLastLoad()
-
-        XCTAssertEqual(viewModel.currentPath, "cat")
-        XCTAssertNil(viewModel.errorMessage)
-        XCTAssertEqual(catAttempts, 2)
-    }
-
-    @MainActor
-    func testFileBrowserCancellationDoesNotSurfaceError() async throws {
-        let client = makeClient { _ in
-            throw URLError(.cancelled)
-        }
-        let viewModel = try FileBrowserViewModel(
-            session: makeFilePreviewSession(),
-            server: XCTUnwrap(URL(string: "https://example.test")),
-            apiClient: client
-        )
-
-        await viewModel.loadRoot()
-
-        XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
-        XCTAssertNil(viewModel.lastError)
-    }
-
-    func testFileReadBuildsExpectedQueryAndDecodesTextResponse() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/file")
-
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["session_id"], "abc123")
-            XCTAssertEqual(query["path"], "Sources/App/FilePreviewView.swift")
-
-            return apiTestJSONResponse("""
-            {
-              "path": "Sources/App/FilePreviewView.swift",
-              "content": "import SwiftUI\\n",
-              "size": 15,
-              "lines": 2,
-              "unexpected": "ignored"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.file(sessionID: "abc123", path: "Sources/App/FilePreviewView.swift")
-
-        XCTAssertEqual(response.path, "Sources/App/FilePreviewView.swift")
-        XCTAssertEqual(response.content, "import SwiftUI\n")
-        XCTAssertEqual(response.size, 15)
-        XCTAssertEqual(response.lines, 2)
-    }
-
-    func testFileReadToleratesMissingOptionalMetadata() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/file")
-
-            return apiTestJSONResponse("""
-            {
-              "content": "hello"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.file(sessionID: "abc123", path: "README.md")
-
-        XCTAssertEqual(response.content, "hello")
-        XCTAssertNil(response.path)
-        XCTAssertNil(response.size)
-        XCTAssertNil(response.lines)
-    }
-
-    func testRawFileBuildsExpectedQueryAndReturnsBytes() async throws {
-        let expectedData = Data([0x89, 0x50, 0x4E, 0x47])
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/file/raw")
-
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["session_id"], "abc123")
-            XCTAssertEqual(query["path"], "Screenshots/result.png")
-
-            let response = HTTPURLResponse(
-                url: try XCTUnwrap(request.url),
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "image/png"]
-            )
-            return (try XCTUnwrap(response), expectedData)
-        }
-
-        let response = try await client.rawFileData(sessionID: "abc123", path: "Screenshots/result.png")
-
-        XCTAssertEqual(response, expectedData)
-    }
-
-    func testMediaDataBuildsExpectedQueryAndReturnsBytes() async throws {
-        let expectedData = Data([0x89, 0x50, 0x4E, 0x47])
-        let mediaPath = "/Users/hermes/.hermes/browser_screenshots/result image.png"
-        let sessionID = "abc123"
-        let client = makeClient { request in
-            XCTAssertEqual(request.httpMethod, "GET")
-            XCTAssertEqual(request.url?.path, "/api/media")
-
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["session_id"], sessionID)
-            XCTAssertEqual(query["path"], mediaPath)
-
-            let response = HTTPURLResponse(
-                url: try XCTUnwrap(request.url),
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "image/png"]
-            )
-            return (try XCTUnwrap(response), expectedData)
-        }
-
-        let response = try await client.mediaData(sessionID: sessionID, path: mediaPath)
-
-        XCTAssertEqual(response, expectedData)
-    }
-
     @MainActor
     func testFilePreviewExportPayloadUsesLoadedTextContent() async throws {
         let client = makeClient { request in
@@ -656,10 +278,8 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
             """, for: request)
         }
         let viewModel = try FilePreviewViewModel(
-            session: makeFilePreviewSession(),
-            server: XCTUnwrap(URL(string: "https://example.test")),
-            path: "Sources/Notes.txt",
-            apiClient: client
+            files: makeFilePreviewFiles(client),
+            path: "Sources/Notes.txt"
         )
 
         await viewModel.load()
@@ -693,10 +313,8 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
             return (try XCTUnwrap(response), rawData)
         }
         let viewModel = try FilePreviewViewModel(
-            session: makeFilePreviewSession(),
-            server: XCTUnwrap(URL(string: "https://example.test")),
-            path: "Build/archive.zip",
-            apiClient: client
+            files: makeFilePreviewFiles(client),
+            path: "Build/archive.zip"
         )
 
         await viewModel.load()
@@ -712,5 +330,247 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertEqual(payload.contentType, UTType.zip)
         XCTAssertFalse(payload.isImage)
         XCTAssertEqual(requestedPaths, ["/api/file/raw"])
+    }
+
+    // MARK: - Quick Look
+
+    @MainActor
+    func testFilePreviewOpensPDFInQuickLook() async throws {
+        let pdf = Data("%PDF-fixture".utf8)
+        var requestedPaths: [String] = []
+        let client = makeClient { request in
+            requestedPaths.append(request.url?.path ?? "nil")
+            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            XCTAssertEqual(components?.queryItems?.first { $0.name == "path" }?.value, "Docs/report.pdf")
+            return (try Self.rawResponse(for: request, headers: ["Content-Type": "application/pdf"]), pdf)
+        }
+        let viewModel = try makeQuickLookViewModel(path: "Docs/report.pdf", client: client)
+
+        await viewModel.load()
+
+        guard case let .quickLook(file) = viewModel.preview else {
+            return XCTFail("A PDF opens in Quick Look, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(file.url.lastPathComponent, "report.pdf")
+        XCTAssertEqual(try Data(contentsOf: file.url), pdf)
+
+        let payload = try await viewModel.exportPayload()
+        XCTAssertEqual(payload.data, pdf)
+        XCTAssertEqual(payload.contentType, UTType.pdf)
+        XCTAssertEqual(requestedPaths, ["/api/file/raw"], "Export reuses the bytes Quick Look downloaded")
+    }
+
+    @MainActor
+    func testFilePreviewRefusesAFileOverTheCap() async throws {
+        var requestedPaths: [String] = []
+        let client = makeClient { request in
+            requestedPaths.append(request.url?.path ?? "nil")
+            let headers = ["Content-Length": "\(BotArtifactBuffer.maximumBytes + 1)"]
+            return (try Self.rawResponse(for: request, headers: headers), Data("mp4".utf8))
+        }
+        let viewModel = try makeQuickLookViewModel(path: "Media/talk.mp4", client: client)
+        let directoriesBefore = try Self.quickLookDirectories()
+
+        await viewModel.load()
+
+        guard case let .unavailable(message) = viewModel.preview else {
+            return XCTFail("Expected the too-large state, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(message, "This file is too large to preview on this device (25 MB maximum).")
+        XCTAssertEqual(try Self.quickLookDirectories(), directoriesBefore, "A refused download writes no file")
+
+        let payload = try await viewModel.exportPayload()
+        XCTAssertEqual(payload.data, Data("mp4".utf8))
+        XCTAssertEqual(requestedPaths, ["/api/file/raw", "/api/file/raw"], "Export still downloads the file")
+    }
+
+    @MainActor
+    func testFilePreviewSkipsTheRequestWhenTheKnownSizeIsOverTheCap() async throws {
+        let client = makeClient { request in
+            XCTFail("A known size over the cap must not download: \(request.url?.path ?? "")")
+            return apiTestJSONResponse("{}", for: request, status: 500)
+        }
+        let viewModel = try makeQuickLookViewModel(
+            path: "Media/talk.mp4",
+            knownSize: BotArtifactBuffer.maximumBytes + 1,
+            client: client
+        )
+
+        await viewModel.load()
+
+        guard case let .unavailable(message) = viewModel.preview else {
+            return XCTFail("Expected the too-large state, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(message, "This file is too large to preview on this device (25 MB maximum).")
+    }
+
+    @MainActor
+    func testQuickLookFileIsDeletedWhenThePreviewIsReleased() async throws {
+        let client = makeClient { request in
+            (try Self.rawResponse(for: request, headers: [:]), Data("%PDF-fixture".utf8))
+        }
+        var viewModel: FilePreviewViewModel? = try makeQuickLookViewModel(path: "Docs/report.pdf", client: client)
+
+        // Only URLs leave the preview: holding the file here would keep it alive.
+        func quickLookURL() -> URL? {
+            guard case let .quickLook(file) = viewModel?.preview else { return nil }
+            return file.url
+        }
+
+        await viewModel?.load()
+        let first = try XCTUnwrap(quickLookURL())
+        await viewModel?.load()
+        let second = try XCTUnwrap(quickLookURL())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.deletingLastPathComponent().path), "A refresh deletes the previous file")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+        viewModel = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second.deletingLastPathComponent().path), "Releasing the preview deletes its file")
+    }
+
+    func testBoundedDownloadStopsABodyWithoutLengthAndMapsErrorsLikeSendData() async throws {
+        let endpoint = Endpoint.rawFile(sessionID: "session-abc", path: "big.bin")
+        var status = 200
+        let client = makeClient { request in
+            (try Self.rawResponse(for: request, status: status, headers: [:]), Data("12345".utf8))
+        }
+
+        do {
+            _ = try await client.sendBoundedData(endpoint: endpoint, limit: 4)
+            XCTFail("A body past the limit must be refused")
+        } catch BotArtifactFailure.tooLarge {}
+        let fits = try await client.sendBoundedData(endpoint: endpoint, limit: 5)
+        XCTAssertEqual(fits, Data("12345".utf8))
+
+        status = 401
+        do {
+            _ = try await client.sendBoundedData(endpoint: endpoint, limit: 5)
+            XCTFail("401 must throw")
+        } catch APIError.unauthorized {}
+
+        status = 403
+        do {
+            _ = try await client.sendBoundedData(endpoint: endpoint, limit: 5)
+            XCTFail("403 must throw")
+        } catch let APIError.http(statusCode, body) {
+            XCTAssertEqual(statusCode, 403)
+            XCTAssertEqual(body, "12345")
+        }
+    }
+
+    @MainActor
+    private func makeQuickLookViewModel(
+        path: String,
+        knownSize: Int? = nil,
+        client: APIClient
+    ) throws -> FilePreviewViewModel {
+        try FilePreviewViewModel(
+            files: makeFilePreviewFiles(client),
+            path: path,
+            knownSize: knownSize
+        )
+    }
+
+    private static func rawResponse(
+        for request: URLRequest,
+        status: Int = 200,
+        headers: [String: String]
+    ) throws -> HTTPURLResponse {
+        try XCTUnwrap(HTTPURLResponse(url: XCTUnwrap(request.url), statusCode: status, httpVersion: nil, headerFields: headers))
+    }
+
+    private static func quickLookDirectories() throws -> Set<String> {
+        Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+            .filter { $0.hasPrefix("quick-look-") })
+    }
+
+    // MARK: - Prefetch
+
+    @MainActor
+    func testFilePreviewUsesPrefetchedContentWithoutRefetching() async throws {
+        let client = makeClient { request in
+            XCTFail("Prefetched content must not be fetched again: \(request.url?.path ?? "")")
+            return apiTestJSONResponse("{}", for: request, status: 500)
+        }
+        let prefetched = Task<FileResponse, Error> {
+            try JSONDecoder().decode(FileResponse.self, from: Data(#"{"path": "Sources/Notes.txt", "content": "warm"}"#.utf8))
+        }
+        let viewModel = try FilePreviewViewModel(
+            files: makeFilePreviewFiles(client),
+            path: "Sources/Notes.txt",
+            prefetchedFile: prefetched
+        )
+
+        await viewModel.load()
+
+        guard case let .text(file) = viewModel.preview else {
+            return XCTFail("Expected a text preview, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(file.content, "warm")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testFilePreviewFallsBackToNetworkWhenPrefetchWasCancelled() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/file")
+            return apiTestJSONResponse(#"{"path": "Sources/Notes.txt", "content": "fresh"}"#, for: request)
+        }
+        let prefetched = Task<FileResponse, Error> {
+            try Task.checkCancellation()
+            return try JSONDecoder().decode(FileResponse.self, from: Data(#"{"content": "stale"}"#.utf8))
+        }
+        prefetched.cancel()
+        let viewModel = try FilePreviewViewModel(
+            files: makeFilePreviewFiles(client),
+            path: "Sources/Notes.txt",
+            prefetchedFile: prefetched
+        )
+
+        await viewModel.load()
+
+        guard case let .text(file) = viewModel.preview else {
+            return XCTFail("Expected a text preview, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(file.content, "fresh")
+    }
+
+    // MARK: - Chunked Markdown
+
+    @MainActor
+    func testFilePreviewSplitsOnlyLargeMarkdownIntoChunks() async throws {
+        let large = MarkdownPreviewChunkerTests.largeDocument()
+
+        let largeMarkdown = try await loadedMarkdownChunks(path: "docs/CHANGELOG.md", content: large)
+        XCTAssertGreaterThan(largeMarkdown?.count ?? 0, 1)
+        XCTAssertEqual(largeMarkdown?.map(\.text).joined(), large)
+
+        let smallMarkdown = try await loadedMarkdownChunks(path: "README.md", content: "# Title\n\nShort.\n")
+        XCTAssertNil(smallMarkdown, "Small Markdown must keep rendering as one document.")
+
+        let largeSource = try await loadedMarkdownChunks(path: "Sources/Notes.txt", content: large)
+        XCTAssertNil(largeSource, "Only Markdown previews are chunked.")
+    }
+
+    @MainActor
+    private func loadedMarkdownChunks(path: String, content: String) async throws -> [MarkdownPreviewChunk]? {
+        let body = try JSONSerialization.data(withJSONObject: ["path": path, "content": content])
+        let client = makeClient { request in
+            apiTestJSONResponse(String(decoding: body, as: UTF8.self), for: request)
+        }
+        let viewModel = try FilePreviewViewModel(
+            files: makeFilePreviewFiles(client),
+            path: path
+        )
+        await viewModel.load()
+        return viewModel.markdownChunks
+    }
+}
+
+private extension APIClientTestCase {
+    /// The webui session `makeFilePreviewSession` names, read through `client`.
+    func makeFilePreviewFiles(_ client: APIClient) throws -> WebUIWorkspaceFileClient? {
+        WebUIWorkspaceFileClient(session: try makeFilePreviewSession(), server: try XCTUnwrap(URL(string: "https://example.test")),
+                                 apiClient: client)
     }
 }

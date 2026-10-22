@@ -56,6 +56,7 @@ struct OnboardingCommandPill: View {
     var prefix: String? = "$"
     var copyValue: String?
     @State private var didCopy = false
+    @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
 
     var body: some View {
         HStack(spacing: 10) {
@@ -76,6 +77,7 @@ struct OnboardingCommandPill: View {
                 Button {
                     UIPasteboard.general.string = copyValue
                     didCopy = true
+                    ChatHaptics.copied(isEnabled: isHapticsEnabled)
                 } label: {
                     Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 13, weight: .semibold))
@@ -231,8 +233,8 @@ struct OnboardingStepHeader: View {
 
 struct OnboardingAgentPromptCard: View {
     let prompt: String
-    @Binding var hasCopied: Bool
-    @State private var didCopyRecently = false
+    let isCopied: Bool
+    let onCopy: () -> Void
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
 
     var body: some View {
@@ -248,18 +250,17 @@ struct OnboardingAgentPromptCard: View {
 
             Button {
                 UIPasteboard.general.string = prompt
-                hasCopied = true
-                HapticButtonHaptics.tap(style: .light, isEnabled: isHapticsEnabled)
+                ChatHaptics.copied(isEnabled: isHapticsEnabled)
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    didCopyRecently = true
+                    onCopy()
                 }
             } label: {
-                Label(didCopyRecently ? String(localized: "Copied") : String(localized: "Copy prompt"), systemImage: didCopyRecently ? "checkmark" : "doc.on.doc")
+                Label(isCopied ? String(localized: "Copied") : String(localized: "Copy prompt"), systemImage: isCopied ? "checkmark" : "doc.on.doc")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(OnboardingPrimaryButtonStyle())
-            .accessibilityLabel(didCopyRecently ? String(localized: "Agent setup prompt copied") : String(localized: "Copy agent setup prompt"))
+            .accessibilityLabel(isCopied ? String(localized: "Agent setup prompt copied") : String(localized: "Copy agent setup prompt"))
         }
         .padding(16)
         .background(
@@ -277,6 +278,8 @@ struct OnboardingPageIndicator: View {
     let pageCount: Int
     let currentPage: Int
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         HStack(spacing: 8) {
             ForEach(0..<pageCount, id: \.self) { index in
@@ -285,7 +288,7 @@ struct OnboardingPageIndicator: View {
                     .frame(width: index == currentPage ? 24 : 8, height: 8)
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: currentPage)
+        .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: currentPage)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(localized: "Page \(currentPage + 1) of \(pageCount)"))
     }
@@ -307,5 +310,53 @@ struct OnboardingSecondaryButtonStyle: ButtonStyle {
                     .stroke(Color.white.opacity(0.1), lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+/// The connect form's connection modes as three choice rows, shared by onboarding and
+/// Add Server (#900). Each row says what its mode means and wraps at any text size; the
+/// selected one has a checkmark. Choosing changes only the form's help, placeholder and
+/// header rows.
+struct ConnectionModePicker: View {
+    @Binding var selection: OnboardingViewModel.ConnectionMode
+    var style: CustomHeadersEditor.Style = .standard
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(OnboardingViewModel.ConnectionMode.allCases) { mode in
+                if mode != OnboardingViewModel.ConnectionMode.allCases.first {
+                    Rectangle().fill(style.fieldStroke).frame(height: 0.5)
+                }
+                Button { selection = mode } label: { row(mode) }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == mode ? .isSelected : [])
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Network"))
+    }
+
+    private func row(_ mode: OnboardingViewModel.ConnectionMode) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mode.title)
+                    .font(AppFont.subheadline(weight: .semibold))
+                    .foregroundStyle(style.primaryText)
+                Text(mode.subtitle)
+                    .font(AppFont.caption())
+                    .foregroundStyle(style.secondaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Image(systemName: "checkmark")
+                .font(AppFont.subheadline(weight: .semibold))
+                .foregroundStyle(style.accent)
+                .opacity(selection == mode ? 1 : 0)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }

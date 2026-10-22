@@ -1,9 +1,24 @@
+import CryptoKit
 import Foundation
 import SwiftUI
 import UserNotifications
 #if canImport(UIKit)
 import UIKit
 #endif
+
+// Device-wide engagement and tip preferences, shared across every configured server.
+enum TipJar {
+    /// The release (major.minor) on which "Not now" was last tapped.
+    static let dismissedReleaseKey = "tipJar.dismissedRelease"
+    static let linkOpenedKey = "tipJar.linkOpened"
+    static let completedResponseCountKey = "engagement.completedResponseCount"
+}
+
+enum RatingPromptSettings {
+    static let firstLaunchDateKey = "ratingPrompt.firstLaunchDate"
+    static let lastRequestDateKey = "ratingPrompt.lastRequestDate"
+    static let responseCountAtLastRequestKey = "ratingPrompt.responseCountAtLastRequest"
+}
 
 enum AppTheme: String, CaseIterable, Identifiable {
     case system
@@ -174,6 +189,9 @@ enum PrimaryActionTintSettings {
 
 enum AppHaptics {
     static let isEnabledKey = "appHaptics.isEnabled"
+    /// Opt-in selection tick while assistant text streams. Off by default and
+    /// only honored when `isEnabledKey` is also on.
+    static let streamingPulseIsEnabledKey = "appHaptics.streamingPulse.isEnabled"
 }
 
 enum ResponseCompletionNotifications {
@@ -185,31 +203,67 @@ enum AgentRunLiveActivityPrivacy {
     static let showsResponseExcerptsKey = "agentRunLiveActivity.showsResponseExcerpts"
 }
 
-/// User-facing switch for the streamed-text fade-in (issues #213/#234).
-/// Defaults to on; Reduce Motion disables the animation regardless.
-enum StreamedTextAnimationSettings {
-    static let isEnabledKey = "chatTranscript.streamedTextAnimationEnabled"
+/// Settings → Chat "Thinking & Tools" (#1254): whether a chat shows thinking and tool
+/// cards, and whether they start open.
+enum ThinkingAndToolCards: String, CaseIterable, Identifiable {
+    case hidden
+    case collapsed
+    case expanded
 
-    /// The fade-window start ordinal the renderer should use. `Int.max`
-    /// routes every block into the solid head, so no fade renderer (and no
-    /// frame clock) is ever attached — disabling the animation entirely.
-    static func effectiveFirstFadeOrdinal(
-        _ firstFadeOrdinal: Int,
-        reduceMotion: Bool,
-        isEnabled: Bool
-    ) -> Int {
-        (reduceMotion || !isEnabled) ? Int.max : firstFadeOrdinal
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .hidden: String(localized: "Hidden")
+        case .collapsed: String(localized: "Collapsed")
+        case .expanded: String(localized: "Expanded")
+        }
     }
+
+    var showsCards: Bool { self != .hidden }
+    var startsExpanded: Bool { self == .expanded }
 }
 
 enum ChatTranscriptDisplaySettings {
-    static let showsThinkingAndToolCardsKey = "chatTranscript.showsThinkingAndToolCards"
-    static let thinkingCardsStartExpandedKey = "chatTranscript.thinkingCardsStartExpanded"
-    static let toolCardsStartExpandedKey = "chatTranscript.toolCardsStartExpanded"
+    static let thinkingAndToolCardsKey = "chatTranscript.thinkingAndToolCards"
+
+    /// The three toggles the Thinking & Tools picker replaced (#1254). Read only by
+    /// `migrateThinkingAndToolCards`.
+    private static let legacyShowsCardsKey = "chatTranscript.showsThinkingAndToolCards"
+    private static let legacyThinkingExpandedKey = "chatTranscript.thinkingCardsStartExpanded"
+    private static let legacyToolsExpandedKey = "chatTranscript.toolCardsStartExpanded"
+
+    /// Carries the three old toggles into the picker once, at launch: cards off is Hidden,
+    /// either expand toggle on is Expanded, otherwise Collapsed. Afterwards it finds no old
+    /// keys and does nothing.
+    static func migrateThinkingAndToolCards(in defaults: UserDefaults = .standard) {
+        let legacyKeys = [legacyShowsCardsKey, legacyThinkingExpandedKey, legacyToolsExpandedKey]
+        guard legacyKeys.contains(where: { defaults.object(forKey: $0) != nil }) else { return }
+        if defaults.object(forKey: thinkingAndToolCardsKey) == nil {
+            let mode: ThinkingAndToolCards
+            if defaults.object(forKey: legacyShowsCardsKey) as? Bool == false {
+                mode = .hidden
+            } else if defaults.bool(forKey: legacyThinkingExpandedKey) || defaults.bool(forKey: legacyToolsExpandedKey) {
+                mode = .expanded
+            } else {
+                mode = .collapsed
+            }
+            defaults.set(mode.rawValue, forKey: thinkingAndToolCardsKey)
+        }
+        legacyKeys.forEach(defaults.removeObject(forKey:))
+    }
+
     static let hidesAttachmentPathsKey = "chatTranscript.hidesAttachmentPaths"
+    /// Settings → Chat "Message Timestamps": the time under each user message
+    /// and each finished reply. The key name predates the move under the
+    /// message and stays so a stored choice keeps working.
     static let showsAssistantTurnTimestampsKey = "chatTranscript.showsAssistantTurnTimestamps"
+    static let defaultShowsTimestamps = true
     static let showsResponseSpeedKey = "chatTranscript.showsResponseSpeed"
     static let wrapsCodeBlockLinesKey = "chatTranscript.wrapsCodeBlockLines"
+    /// Settings → Chat "Fold Finished Turns": settled turns collapse their
+    /// thinking, tool rows, and interim replies behind one elapsed-time row.
+    static let foldsSettledTurnsKey = "chatTranscript.foldsSettledTurns"
 
     /// Backs the Settings → Chat "Right-to-Left Chat Layout" toggle (issue #259).
     /// Local-only: there is no server settings object to mirror an `rtl` flag
@@ -251,27 +305,6 @@ enum ChatTranscriptDisplaySettings {
         userToggled ?? startsExpanded
     }
 
-    static func shouldShowAssistantTypingIndicator(
-        hasActiveStream: Bool,
-        isCancellingStream: Bool,
-        hasStreamingAssistantMessage: Bool,
-        hasPendingClarificationPrompt: Bool = false,
-        liveReasoningText: String,
-        hasLiveToolCalls: Bool,
-        showsThinkingAndToolCards: Bool
-    ) -> Bool {
-        guard hasActiveStream, !isCancellingStream else { return false }
-        guard !hasStreamingAssistantMessage else { return false }
-        guard !hasPendingClarificationPrompt else { return false }
-
-        guard showsThinkingAndToolCards else {
-            return true
-        }
-
-        guard liveReasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return !hasLiveToolCalls
-    }
-
     static func shouldUseStreamingBubbleRendering(
         hasActiveStream: Bool,
         messageRole: String?,
@@ -284,18 +317,19 @@ enum ChatTranscriptDisplaySettings {
             messageID == streamingAssistantMessageID
     }
 
-    /// Whether to draw the per-turn `glyph + timestamp` header above an assistant
-    /// turn. The header is a turn *separator*, not an identity, so it is limited
-    /// to real assistant turns that carry visible text — never user bubbles,
+    /// Whether to draw the `glyph + speed` header above an assistant reply. It
+    /// only exists to carry Response Speed, so it is limited to real assistant
+    /// turns with visible text and a measured speed — never user bubbles,
     /// system/marker cards, tool-call cards, or empty/tool-only assistant rows.
+    /// The reply's time lives under the message (`ChatMessageMetaRow`).
     static func showsAssistantTurnHeader(
         role: String?,
         hasTextContent: Bool,
-        isEnabled: Bool,
-        showsResponseSpeed: Bool = false,
-        hasResponseSpeed: Bool = false
+        showsResponseSpeed: Bool,
+        hasResponseSpeed: Bool
     ) -> Bool {
-        (isEnabled || (showsResponseSpeed && hasResponseSpeed)) &&
+        showsResponseSpeed &&
+            hasResponseSpeed &&
             role == "assistant" &&
             hasTextContent
     }
@@ -321,6 +355,20 @@ enum SectionVisibilitySettings {
     /// looks exactly as it did before.
     static func isVisible(_ key: String, in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: key) as? Bool ?? true
+    }
+}
+
+/// App-wide preview gate for Bot Mode (#496): the Bots row on a webui server's main
+/// screen. Default off. Not per-server: it hides screens, it is not user data, and Bot
+/// connections and drafts stay in the Keychain while it is off. Hermes servers never
+/// need it: adding one, moving a webui server to one (#712), its Bots side and its bot
+/// links all work with it off. Nor is the Hermes connection screen behind it (#557):
+/// that login is what push pairing needs, and push serves a server's webui sessions too.
+enum BotModeGate {
+    static let isEnabledKey = "botMode.isEnabled"
+
+    static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: isEnabledKey)
     }
 }
 
@@ -351,7 +399,10 @@ enum ChatActiveRunStatusKind: Equatable {
     case active
     case checking
     case reconnecting
+    case waitingForNetwork
     case stopping
+    /// A Hermes session is parked on one of its host's requests (#1011).
+    case waitingForUser
 
     var label: String {
         switch self {
@@ -363,8 +414,12 @@ enum ChatActiveRunStatusKind: Equatable {
             return String(localized: "Checking stream")
         case .reconnecting:
             return String(localized: "Reconnecting stream")
+        case .waitingForNetwork:
+            return String(localized: "Waiting for network")
         case .stopping:
             return String(localized: "Stopping response")
+        case .waitingForUser:
+            return String(localized: "Waiting for you")
         }
     }
 
@@ -378,31 +433,60 @@ enum ChatActiveRunStatusKind: Equatable {
             return String(localized: "Hermes is checking the response stream")
         case .reconnecting:
             return String(localized: "Hermes is reconnecting the response stream")
+        case .waitingForNetwork:
+            return String(localized: "Hermes is waiting for the network to return")
         case .stopping:
             return String(localized: "Hermes is stopping the response")
+        case .waitingForUser:
+            return String(localized: "Waiting for your answer")
         }
     }
 }
 
+/// What the run-status pill above the composer shows. An active run with a
+/// start date counts its elapsed time, like the transcript's "Working for" row.
 struct ChatActiveRunStatusPresentation: Equatable {
     let kind: ChatActiveRunStatusKind
+    /// Start of the active run, or nil when the pill shows no time. Only
+    /// `.active` keeps it; every other kind drops it, so only an active run ticks.
+    let startedAt: Date?
 
-    var label: String {
-        kind.label
+    init(kind: ChatActiveRunStatusKind, startedAt: Date? = nil) {
+        self.kind = kind
+        self.startedAt = kind == .active ? startedAt : nil
     }
 
-    var accessibilityLabel: String {
-        kind.accessibilityLabel
+    /// "Hermes is working · 2m 13s" while `startedAt` is set, else the kind's label.
+    func label(now: Date) -> String {
+        guard let startedAt else { return kind.label }
+        return String(
+            localized: "Hermes is working · \(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: now))"
+        )
+    }
+
+    /// The spoken form of `label(now:)`, matching the tail row's VoiceOver label.
+    func accessibilityLabel(now: Date) -> String {
+        guard let startedAt else { return kind.accessibilityLabel }
+        return String(
+            localized: "Hermes has been working for \(ChatWorkingElapsedFormatter.spokenLabel(startedAt: startedAt, now: now))"
+        )
     }
 }
 
 enum ChatActiveRunStatusPolicy {
+    /// The pill's state while the transcript is scrolled away from its bottom,
+    /// or nil when it hides. `activeRunStartedAt` is the tail row's start date
+    /// (`ChatWorkingRowPolicy.startedAt`), so both count from the same start
+    /// and drop the time in the same cases. `isWaitingForUser` is a Hermes
+    /// session parked on a host request.
     static func presentation(
         isStartingChat: Bool,
         hasActiveStream: Bool,
         activeStreamRecoveryState: ActiveStreamRecoveryState,
         isCancellingStream: Bool,
-        isScrolledNearBottom: Bool
+        isScrolledNearBottom: Bool,
+        activeRunStartedAt: Date?,
+        isWaitingForUser: Bool = false
     ) -> ChatActiveRunStatusPresentation? {
         guard !isScrolledNearBottom else { return nil }
 
@@ -419,32 +503,115 @@ enum ChatActiveRunStatusPolicy {
             return ChatActiveRunStatusPresentation(kind: .checking)
         case .reconnecting:
             return ChatActiveRunStatusPresentation(kind: .reconnecting)
+        case .waitingForNetwork:
+            return ChatActiveRunStatusPresentation(kind: .waitingForNetwork)
         case .idle:
             break
         }
 
+        if isWaitingForUser {
+            return ChatActiveRunStatusPresentation(kind: .waitingForUser)
+        }
+
         guard hasActiveStream else { return nil }
-        return ChatActiveRunStatusPresentation(kind: .active)
+        return ChatActiveRunStatusPresentation(kind: .active, startedAt: activeRunStartedAt)
+    }
+}
+
+enum ChatWorkingRowPolicy {
+    /// Start date for the transcript's "Working for" tail row, or nil when the
+    /// row stays hidden: no active run, the run is being stopped, or the agent
+    /// is waiting on a clarification answer rather than working.
+    static func startedAt(
+        activeRunStartedAt: Date?,
+        isCancellingStream: Bool,
+        hasPendingClarificationPrompt: Bool
+    ) -> Date? {
+        guard let activeRunStartedAt, !isCancellingStream, !hasPendingClarificationPrompt else {
+            return nil
+        }
+        return activeRunStartedAt
+    }
+}
+
+enum ChatWorkingElapsedFormatter {
+    /// Compact elapsed time for the tail row: `12s`, `1m 4s`, `1h 2m 3s`.
+    static func label(startedAt: Date, now: Date) -> String {
+        label(seconds: now.timeIntervalSince(startedAt))
+    }
+
+    /// Spelled-out elapsed time for VoiceOver: `1 minute, 4 seconds`.
+    static func spokenLabel(startedAt: Date, now: Date) -> String {
+        spokenLabel(seconds: now.timeIntervalSince(startedAt))
+    }
+
+    /// Compact form of a finished span, shared with the settled-turn fold row.
+    static func label(seconds: TimeInterval) -> String {
+        Duration.seconds(wholeSeconds(seconds))
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow))
+    }
+
+    /// Spelled-out form of a finished span, for VoiceOver.
+    static func spokenLabel(seconds: TimeInterval) -> String {
+        Duration.seconds(wholeSeconds(seconds))
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))
+    }
+
+    private static func wholeSeconds(_ seconds: TimeInterval) -> Int {
+        guard seconds.isFinite else { return 0 }
+        return max(0, Int(seconds.rounded(.down)))
+    }
+}
+
+/// How a run ended, as far as a local alert cares (#862). A run someone stopped
+/// never alerts, because they already know, so it has no case.
+enum ResponseCompletionOutcome: Equatable {
+    case completed
+    case failed
+
+    /// A finalized Live Activity's outcome; nil for a cancelled or still-running one.
+    init?(_ status: AgentRunActivityStatus) {
+        switch status {
+        case .complete: self = .completed
+        case .failed: self = .failed
+        default: return nil
+        }
+    }
+
+    /// A chat run's recorded ending; nil for a stopped one.
+    init?(ending: TranscriptTurnRunOutcome.Ending) {
+        switch ending {
+        case .completed: self = .completed
+        case .failed: self = .failed
+        case .cancelled: return nil
+        }
+    }
+
+    /// The Live Activity's own end line, so the alert matches the Lock Screen.
+    var body: String {
+        switch self {
+        case .completed: String(localized: "Response complete")
+        case .failed: String(localized: "Response failed")
+        }
     }
 }
 
 enum ResponseCompletionNotificationPolicy {
-    /// Fire a "response complete" notification when the user almost certainly isn't
-    /// watching: notifications are enabled + permitted, the run finished normally,
-    /// and the scene is not active at completion time. Deliberately does NOT depend
-    /// on any "was streaming" / "was backgrounded during the stream" memory — those
-    /// in-memory flags were wiped on suspend→cold-relaunch, which is exactly when the
-    /// stuck-mid-response reports happened (#248). Every in-session completion path
-    /// funnels through one chokepoint, so scene-not-active is the only gate needed.
+    /// Fire a run-ended notification when the user almost certainly isn't watching:
+    /// notifications are enabled + permitted and the scene is not active when the run
+    /// ends. Deliberately does NOT depend on any "was streaming" / "was backgrounded
+    /// during the stream" memory — those in-memory flags were wiped on
+    /// suspend→cold-relaunch, which is exactly when the stuck-mid-response reports
+    /// happened (#248). Every in-session run end funnels through one chokepoint, so
+    /// scene-not-active is the only gate needed. A stopped run never gets here:
+    /// `ResponseCompletionOutcome` cannot represent it.
     static func shouldSchedule(
         preferenceEnabled: Bool,
         authorizationStatus: UNAuthorizationStatus,
-        completedNormally: Bool,
         sceneIsActive: Bool
     ) -> Bool {
         guard preferenceEnabled,
               authorizationStatus.allowsResponseCompletionNotifications,
-              completedNormally,
               !sceneIsActive else {
             return false
         }
@@ -453,15 +620,70 @@ enum ResponseCompletionNotificationPolicy {
     }
 }
 
+/// One local alert for a run that ended while the app was not in the foreground.
+/// Titled with the chat, bodied with the outcome, and keyed by server and session:
+/// the same session ID on two servers never collides, and a newer alert for the
+/// same chat replaces the one before it (#862). Its `userInfo` is read back by
+/// `destination(userInfo:servers:)` when the alert is tapped.
 struct ResponseCompletionNotificationRequest: Equatable {
-    static let title = String(localized: "Hermes response complete")
-    static let body = String(localized: "The assistant finished responding.")
+    static let source = "local"
 
     let sessionID: String?
+    let server: URL
+    /// The chat title when the alert is scheduled, trimmed the way the Live Activity
+    /// trims it, falling back to "Hermes session".
+    let title: String
+    let outcome: ResponseCompletionOutcome
+    /// A Hermes chat's Profile, with `sessionID` its stored key (#1177): the tap opens the
+    /// session link, which looks the session up there. Nil for a webui chat.
+    let hermesProfile: String?
 
+    init(sessionID: String?, server: URL, title: String, outcome: ResponseCompletionOutcome, hermesProfile: String? = nil) {
+        self.sessionID = sessionID?.isEmpty == false ? sessionID : nil
+        self.server = server
+        self.title = AgentRunActivitySanitizer.sessionTitle(title)
+        self.outcome = outcome
+        self.hermesProfile = hermesProfile
+    }
+
+    var body: String { outcome.body }
+
+    /// Stable per chat, so a new alert replaces the delivered one.
+    var identifier: String {
+        "run-alert-\(Self.serverHash(server).prefix(16))-\(sessionID ?? "")"
+    }
+
+    /// Groups the chat's alerts apart from every other chat's.
+    var threadIdentifier: String { identifier }
+
+    /// A hash rather than the URL: iOS keeps delivered alerts, and server URLs are
+    /// credential-like. No `install_hash`, so it is never read as a relay push (#653).
     var userInfo: [String: String] {
-        guard let sessionID, !sessionID.isEmpty else { return [:] }
-        return ["session_id": sessionID]
+        var info = ["server_hash": Self.serverHash(server), "source": Self.source]
+        info["session_id"] = sessionID
+        info["hermes_profile"] = hermesProfile
+        return info
+    }
+
+    /// Lowercase hex SHA-256 of the server's normalized URL.
+    static func serverHash(_ server: URL) -> String {
+        SHA256.hash(data: Data(server.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The link to the chat a tapped local alert names, on a server that is still configured:
+    /// a Hermes session link when it names a Profile, else the webui session. Nil for a relay
+    /// push, a removed server, or a missing session, so the tap only opens the app.
+    static func destination(userInfo: [AnyHashable: Any], servers: [URL]) -> URL? {
+        guard userInfo["source"] as? String == source,
+              let hash = userInfo["server_hash"] as? String,
+              let sessionID = (userInfo["session_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionID.isEmpty,
+              let server = servers.first(where: { serverHash($0) == hash })
+        else { return nil }
+        if let profile = userInfo["hermes_profile"] as? String {
+            return HermesDeepLink.sessionURL(for: HermesSessionDestination(server: server, profile: profile, key: sessionID))
+        }
+        return HermesDeepLink.webuiSessionURL(server: server, sessionID: sessionID)
     }
 }
 
@@ -469,25 +691,28 @@ struct ResponseCompletionNotificationCompletionContext: Equatable {
     let sceneIsActive: Bool
 }
 
+/// Consumes `ChatViewModel.runEndTrigger`, which bumps once for every run that ends
+/// completed or failed, and holds the background task open until that run's alert
+/// has been handled.
 struct ResponseCompletionNotificationTracker {
-    private var lastHandledCompletionTrigger = 0
+    private var lastHandledRunEndTrigger = 0
 
-    func shouldEndBackgroundTaskOnStreamInactive(completionTrigger: Int) -> Bool {
-        completionTrigger <= lastHandledCompletionTrigger
+    func shouldEndBackgroundTaskOnStreamInactive(runEndTrigger: Int) -> Bool {
+        runEndTrigger <= lastHandledRunEndTrigger
     }
 
-    /// Returns the completion context exactly once per completion trigger, so a run
-    /// that completes is handled a single time even if the trigger is observed
-    /// repeatedly. The scene state at completion is the only gate the policy needs.
+    /// Returns the context exactly once per run-end trigger, so a run is handled a
+    /// single time even if the trigger is observed repeatedly. The scene state when
+    /// the run ends is the only gate the policy needs.
     mutating func completionContext(
-        completionTrigger: Int,
+        runEndTrigger: Int,
         sceneIsActive: Bool
     ) -> ResponseCompletionNotificationCompletionContext? {
-        guard completionTrigger > lastHandledCompletionTrigger else {
+        guard runEndTrigger > lastHandledRunEndTrigger else {
             return nil
         }
 
-        lastHandledCompletionTrigger = completionTrigger
+        lastHandledRunEndTrigger = runEndTrigger
         return ResponseCompletionNotificationCompletionContext(sceneIsActive: sceneIsActive)
     }
 }
@@ -517,19 +742,14 @@ struct UserNotificationResponseCompletionScheduler: ResponseCompletionNotificati
 
     func schedule(_ request: ResponseCompletionNotificationRequest) async {
         let content = UNMutableNotificationContent()
-        content.title = ResponseCompletionNotificationRequest.title
-        content.body = ResponseCompletionNotificationRequest.body
+        content.title = request.title
+        content.body = request.body
         content.sound = .default
+        content.threadIdentifier = request.threadIdentifier
         content.userInfo = request.userInfo
 
-        let identifierSessionPart: String
-        if let sessionID = request.sessionID, !sessionID.isEmpty {
-            identifierSessionPart = sessionID
-        } else {
-            identifierSessionPart = UUID().uuidString
-        }
         let notificationRequest = UNNotificationRequest(
-            identifier: "response-complete-\(identifierSessionPart)-\(UUID().uuidString)",
+            identifier: request.identifier,
             content: content,
             trigger: nil
         )
@@ -549,31 +769,94 @@ enum ResponseCompletionNotificationService {
         await scheduler.authorizationStatus()
     }
 
-    static func requestAuthorization(
-        scheduler: any ResponseCompletionNotificationScheduling = UserNotificationResponseCompletionScheduler()
-    ) async -> Bool {
-        await scheduler.requestAuthorization()
+    struct EnableResult: Equatable {
+        let isEnabled: Bool
+        /// The permission once any prompt was answered.
+        let authorizationStatus: UNAuthorizationStatus
+        /// Why the alerts stayed off, for Settings to show; nil when they are on.
+        let message: String?
     }
 
-    @discardableResult
-    static func scheduleResponseCompletedIfAllowed(
+    /// Turns Response Complete Alerts on, asking iOS for permission only if Hermex never
+    /// has. Settings' toggle and the chat's one-time offer (#863) both call it, so the
+    /// prompt, the asked-once flag and the stored preference always agree.
+    @MainActor
+    static func enable(
+        defaults: UserDefaults = .standard,
+        scheduler: any ResponseCompletionNotificationScheduling = UserNotificationResponseCompletionScheduler()
+    ) async -> EnableResult {
+        var status = await scheduler.authorizationStatus()
+        let isEnabled: Bool
+        let message: String?
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            isEnabled = true
+            message = nil
+        case .notDetermined where defaults.bool(forKey: ResponseCompletionNotifications.hasRequestedPermissionKey):
+            isEnabled = false
+            message = String(localized: "Permission not requested.")
+        case .notDetermined:
+            defaults.set(true, forKey: ResponseCompletionNotifications.hasRequestedPermissionKey)
+            let granted = await scheduler.requestAuthorization()
+            status = await scheduler.authorizationStatus()
+            isEnabled = granted && status.allowsResponseCompletionNotifications
+            message = isEnabled ? nil : permissionLabel(status)
+        case .denied:
+            isEnabled = false
+            message = permissionLabel(status)
+        @unknown default:
+            isEnabled = false
+            message = String(localized: "Notifications unavailable.")
+        }
+        defaults.set(isEnabled, forKey: ResponseCompletionNotifications.isEnabledKey)
+        return EnableResult(isEnabled: isEnabled, authorizationStatus: status, message: message)
+    }
+
+    /// The permission line Settings shows under Response Complete Alerts.
+    static func permissionLabel(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            return String(localized: "iOS notifications allowed.")
+        case .notDetermined:
+            return String(localized: "iOS permission not requested.")
+        case .denied:
+            return String(localized: "iOS notifications disabled.")
+        @unknown default:
+            return String(localized: "Notifications unavailable.")
+        }
+    }
+
+    /// Both the chat's run end and cold-launch Live Activity reconciliation use this.
+    /// `isCurrent` says whether this is still the chat's latest run end: a newer one
+    /// schedules under the same identifier, and this older alert must not replace it.
+    @MainActor @discardableResult
+    static func scheduleRunEndedIfAllowed(
+        _ outcome: ResponseCompletionOutcome,
         sessionID: String?,
+        hermesProfile: String? = nil,
+        title: String,
+        server: URL,
         preferenceEnabled: Bool,
-        completedNormally: Bool,
         sceneIsActive: Bool,
+        isCurrent: @MainActor () -> Bool = { true },
+        isPushPaired: @MainActor (URL) -> Bool = { @MainActor in PushRegistrar.shared?.pairing(for: $0) != nil },
         scheduler: any ResponseCompletionNotificationScheduling = UserNotificationResponseCompletionScheduler()
     ) async -> Bool {
         let status = await authorizationStatus(scheduler: scheduler)
+        // Read after the permission await: a newer run end or a pairing can arrive
+        // while it is suspended. A paired server's relay alerts for it instead.
+        guard isCurrent() else { return false }
+        if isPushPaired(server) { return false }
         guard ResponseCompletionNotificationPolicy.shouldSchedule(
             preferenceEnabled: preferenceEnabled,
             authorizationStatus: status,
-            completedNormally: completedNormally,
             sceneIsActive: sceneIsActive
         ) else {
             return false
         }
 
-        await scheduler.schedule(ResponseCompletionNotificationRequest(sessionID: sessionID))
+        await scheduler.schedule(ResponseCompletionNotificationRequest(
+            sessionID: sessionID, server: server, title: title, outcome: outcome, hermesProfile: hermesProfile))
         return true
     }
 }
@@ -591,7 +874,10 @@ private extension UNAuthorizationStatus {
     }
 }
 
-enum StreamingSendBehavior: String, CaseIterable, Identifiable {
+/// What a Sessions send does while a response is running. Settings stores the
+/// default a tap on Send uses; a long-press on Send picks one for a single
+/// message (`ChatComposerSendButton`).
+enum StreamingSendBehavior: String, CaseIterable, Identifiable, SendChoice {
     case steer
     case interrupt
     case queue
@@ -600,14 +886,27 @@ enum StreamingSendBehavior: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// The send-choice card's row title and VoiceOver action name.
     var title: String {
         switch self {
         case .steer:
-            "Steer"
+            String(localized: "Steer")
         case .interrupt:
-            "Interrupt"
+            String(localized: "Stop and send")
         case .queue:
-            "Queue"
+            String(localized: "Queue")
+        }
+    }
+
+    /// The same symbols as the Bot card's rows (`BotPromptMode.systemImage`).
+    var systemImage: String {
+        switch self {
+        case .steer:
+            "arrow.turn.up.right"
+        case .interrupt:
+            "stop.circle"
+        case .queue:
+            "text.append"
         }
     }
 

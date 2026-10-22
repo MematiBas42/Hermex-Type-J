@@ -1,40 +1,71 @@
 import SwiftUI
 import UIKit
 
+/// The readable column for chat screens (Sessions chat, Bot Chat, Bot rooms).
+/// A phone fills it edge to edge less its padding; iPad and iPhone landscape
+/// stop at `maximum` and centre it, so lines stay short enough to read. The
+/// composer caps at the same column so their edges line up.
+enum ChatReadingWidth {
+    static let maximum: CGFloat = 768
+
+    /// Width of the transcript column inside `horizontalPadding` on each side.
+    static func contentWidth(viewportWidth: CGFloat, horizontalPadding: CGFloat) -> CGFloat {
+        min(max(0, viewportWidth - 2 * horizontalPadding), maximum)
+    }
+
+    /// `maxWidth` for a view that carries `horizontalPadding` on each side of
+    /// its own, so what sits inside that padding lines up with the column.
+    static func maximumWidth(horizontalPadding: CGFloat) -> CGFloat {
+        maximum + 2 * horizontalPadding
+    }
+}
+
 struct ChatTranscriptView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var scrollPositionController = ChatScrollPositionController()
 
     let isLoading: Bool
     let errorMessage: String?
     let messages: [ChatMessage]
     let displayedTranscriptMessages: [TranscriptMessage]
     let compressionReferenceCard: CompressionReferenceCard?
-    let reasoningGroups: [ReasoningGroup]
+    /// Reasoning cards by anchor message ID; nil holds the unanchored cards.
+    let reasoningGroupsByAnchorID: [String?: [ReasoningGroup]]
     let completedToolCallGroupsForAnchor: (String?) -> [ToolCallGroup]
     let liveReasoningText: String
     let reasoningAnchorMessageID: String?
     let liveToolCalls: [ToolCall]
+    /// True while a reattached stream replays; live tool rows draw in place.
+    let isReplayingLiveToolCalls: Bool
     let toolCallAnchorMessageID: String?
     let streamingAssistantMessageID: String?
     let liveTokensPerSecond: Double?
     let activeStreamRecoveryState: ActiveStreamRecoveryState
-    let clarificationPrompt: ClarificationPromptState?
-    let isRespondingToClarification: Bool
-    let clarificationErrorMessage: String?
+    /// The pending clarification's id. The card itself is pinned above the
+    /// composer by `ChatView`; the transcript only follows its arrival.
+    let clarificationPromptID: String?
     let hidesRunStatusAccessibility: Bool
     let showsThinkingAndToolCards: Bool
-    let showsAssistantTypingIndicator: Bool
+    /// Start date for the "Working for" tail row; nil hides the row.
+    let workingRowStartedAt: Date?
+    /// The note a Hermes session's withdrawn request leaves at the transcript's end (#1011).
+    let requestWithdrawal: BotRequestWithdrawal?
     let showsScrollToBottomButton: Bool
     let shouldFollowLatestMessage: Bool
+    /// True while a disclosure toggle animates; suspends the bottom size-change
+    /// anchor and follow-driven scrolls so the tapped row stays stationary.
+    let isDisclosureSettling: Bool
     let latestTranscriptMessageRole: String?
     let isScrolledNearBottom: Bool
     let activeStreamID: String?
-    let streamingScrollTrigger: Int
-    let cacheFirstReconcileScrollToken: Int
+    /// Reads the stream's coalesced scroll trigger. Only `StreamingFollowTrigger`
+    /// calls it, so a bump re-runs that leaf rather than this view and its owner.
+    let streamingScrollTrigger: () -> Int
+    let transcriptRelayoutScrollToken: Int
+    let completedResponseRenderID: String?
     let bottomAnchorID: String
-    let transcriptMessageSpacing: CGFloat
-    let transcriptBlockSpacing: CGFloat
+    let transcriptSpacing: CGFloat
     let transcriptBottomInsetHeight: CGFloat
     let scrollToBottomButtonBottomPadding: CGFloat
     let localAttachmentPreviews: [String: [String: Data]]
@@ -46,7 +77,8 @@ struct ChatTranscriptView: View {
     let isEditingMessage: Bool
     let isForkingMessage: Bool
     let loadAttachmentImage: (String) async -> Data?
-    let loadAttachmentData: (String) async -> Data?
+    /// Where attachment rows get their inline audio; nil shows audio as file cells.
+    let attachmentAudio: AttachmentAudioSource?
     let loadTranscriptMediaImage: (TranscriptMediaReference) async -> Data?
     let loadTranscriptMediaData: (TranscriptMediaReference) async -> Data?
     let transcriptMediaCacheNamespace: String
@@ -55,15 +87,22 @@ struct ChatTranscriptView: View {
     let onLoadMessages: () async -> Void
     let onLoadOlderMessages: () async -> Bool
     let onUpdateScrollMetrics: (ChatScrollMetrics) -> Void
+    let onFollowEvent: (ChatScrollPolicy.FollowEvent) -> Void
+    let onDisclosureToggle: () -> Void
+    /// Settled-turn folds derived by the owner; `.none` when folding is off.
+    let turnFolds: TranscriptTurnFolds
+    /// Rows that close a settled turn and so carry the time + copy row.
+    let terminalReplyRenderIDs: Set<String>
+    let expandedTurnKeys: Set<String>
+    let onToggleTurnFold: (String) -> Void
     let onDismissKeyboard: () -> Void
     let onScrollToBottom: (ScrollViewProxy) -> Void
     let onScrollToLatestTranscriptMessage: (ScrollViewProxy) -> Void
     let onScrollToLatestContent: (ScrollViewProxy, Bool) -> Void
     let onPreviewAttachment: (MessageAttachment, Data?) -> Void
     let onPreviewTranscriptMedia: (TranscriptMediaReference) -> Void
+    let onAskHermex: (String) -> Void
     let onToggleListening: (MessageActionContext) -> Void
-    let onSubmitClarification: (String) -> Void
-    let onSelectText: (MessageActionContext) -> Void
     let onRegenerate: (MessageActionContext) -> Void
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
@@ -77,12 +116,44 @@ struct ChatTranscriptView: View {
     var turnChangesSummary: TurnFileChangeSummary? = nil
     var onOpenTurnDiff: () -> Void = {}
     var onOpenTurnFileDiff: (GitFile) -> Void = { _ in }
+    /// Non-nil draws the "Forked from" row above everything else (#873).
+    var forkOrigin: ForkOrigin? = nil
+    var onOpenForkParent: () -> Void = {}
+    /// A Hermes chat's settled plan (#1139), drawn right after the row
+    /// `settledPlanAfterRenderID` names: the prompt that opens the plan's turn.
+    var settledPlan: HermesPlan? = nil
+    var settledPlanAfterRenderID: String? = nil
+    /// How a Hermes chat's last turn ended (#1139), under that turn.
+    var turnOutcome: HermesTurnOutcomeRow? = nil
+
+    /// What stands in for a transcript with no rows. Nil draws the transcript, as for a Hermes
+    /// turn that failed before the host saved any row, whose outcome row still shows (#1139).
+    enum Placeholder: Equatable {
+        case loading
+        case loadFailed(String)
+        case startPrompt
+
+        init?(isLoading: Bool, errorMessage: String?, isEmpty: Bool, showsTurnOutcome: Bool) {
+            guard isEmpty else { return nil }
+            if isLoading {
+                self = .loading
+            } else if let errorMessage {
+                self = .loadFailed(errorMessage)
+            } else if showsTurnOutcome {
+                return nil
+            } else {
+                self = .startPrompt
+            }
+        }
+    }
 
     var body: some View {
-        if isLoading && messages.isEmpty && clarificationPrompt == nil {
+        switch Placeholder(isLoading: isLoading, errorMessage: errorMessage, isEmpty: messages.isEmpty,
+                           showsTurnOutcome: turnOutcome != nil) {
+        case .loading?:
             ChatTranscriptLoadingSkeletonView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let errorMessage, messages.isEmpty, clarificationPrompt == nil {
+        case .loadFailed(let errorMessage)?:
             ContentUnavailableView {
                 Label("Could Not Load Messages", systemImage: "exclamationmark.triangle")
             } description: {
@@ -92,7 +163,7 @@ struct ChatTranscriptView: View {
                     Task { await onLoadMessages() }
                 }
             }
-        } else if messages.isEmpty && clarificationPrompt == nil {
+        case .startPrompt?:
             ContentUnavailableView {
                 Image(systemName: "bubble.left.and.bubble.right")
             } description: {
@@ -102,7 +173,17 @@ struct ChatTranscriptView: View {
             .onTapGesture {
                 onDismissKeyboard()
             }
-        } else {
+            // A fork can be empty (upstream allows `keep_count: 0`, and an edit of
+            // the first message truncates to nothing); it still links to its parent.
+            .overlay(alignment: .top) {
+                if let forkOrigin {
+                    ForkOriginRowView(origin: forkOrigin, onOpen: onOpenForkParent)
+                        .frame(maxWidth: ChatReadingWidth.maximum)
+                        .padding(.horizontal, transcriptHorizontalPadding)
+                        .padding(.top, 16)
+                }
+            }
+        case nil:
             transcriptScrollView
         }
     }
@@ -127,7 +208,8 @@ struct ChatTranscriptView: View {
                     )
                     .defaultScrollAnchor(
                         ChatScrollPolicy.sizeChangeAnchor(
-                            shouldFollowLatestMessage: shouldFollowLatestMessage
+                            shouldFollowLatestMessage: shouldFollowLatestMessage,
+                            isDisclosureSettling: isDisclosureSettling
                         ),
                         for: .sizeChanges
                     )
@@ -148,7 +230,6 @@ struct ChatTranscriptView: View {
                     .adaptiveSoftScrollEdges()
                     .simultaneousGesture(
                         TapGesture().onEnded {
-                            guard clarificationPrompt == nil else { return }
                             onDismissKeyboard()
                         }
                     )
@@ -157,7 +238,7 @@ struct ChatTranscriptView: View {
                         ChatScrollToBottomButton(
                             bottomPadding: scrollToBottomButtonBottomPadding,
                             onTap: {
-                                onScrollToBottom(proxy)
+                                releasingHold { onScrollToBottom(proxy) }
                             }
                         )
                         .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
@@ -165,38 +246,85 @@ struct ChatTranscriptView: View {
                 }
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsScrollToBottomButton)
                 .background(Color(.systemBackground))
+                .background {
+                    StreamingFollowTrigger(trigger: streamingScrollTrigger) {
+                        if isFollowingLatestContent {
+                            releasingHold { onScrollToLatestContent(proxy, true) }
+                        }
+                    }
+                }
+                .task(id: completedResponseRenderID) {
+                    guard let renderID = completedResponseRenderID else { return }
+                    // Let hydration's layout/pin pass settle before moving the
+                    // viewport. A new run or reader action cancels this task.
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    // No animation or accessibility-focus move: only the viewport
+                    // changes, and Reduce Motion is respected automatically.
+                    releasingHold { proxy.scrollTo(renderID, anchor: .top) }
+                }
                 .onChange(of: messages.count) {
-                    guard shouldFollowLatestMessage else { return }
+                    guard isFollowingLatestContent else { return }
 
                     if latestTranscriptMessageRole == "user" {
-                        onScrollToLatestTranscriptMessage(proxy)
+                        releasingHold { onScrollToLatestTranscriptMessage(proxy) }
                     } else {
-                        onScrollToLatestContent(proxy, true)
+                        releasingHold { onScrollToLatestContent(proxy, true) }
                     }
                 }
-                .onChange(of: streamingScrollTrigger) {
-                    if shouldFollowLatestMessage {
-                        onScrollToLatestContent(proxy, true)
+                .onChange(of: transcriptRelayoutScrollToken) {
+                    // The transcript just changed height without gaining a message —
+                    // the server render replacing the cache-first one (#289), or sent
+                    // references becoming chips (#388). A reader at the live edge is
+                    // put back there (no animation); a reader up in history keeps the
+                    // offset they were reading at, the way a disclosure toggle does.
+                    guard isFollowingLatestContent else {
+                        pinReader(proxy: proxy)
+                        return
                     }
+                    releasingHold { onScrollToLatestContent(proxy, false) }
                 }
-                .onChange(of: cacheFirstReconcileScrollToken) {
-                    // Cache-first reconcile (#289): the server transcript just replaced
-                    // the lighter cached render, so snap back to the bottom (no
-                    // animation) unless the reader has scrolled away in the meantime.
-                    guard shouldFollowLatestMessage else { return }
-                    onScrollToLatestContent(proxy, false)
-                }
-                .onChange(of: clarificationPrompt?.id) {
-                    guard clarificationPrompt != nil, shouldFollowLatestMessage else { return }
-                    onScrollToBottom(proxy)
+                .onChange(of: clarificationPromptID) {
+                    // The bar above the composer just grew the bottom inset; keep
+                    // the latest content above it for a reader who was following.
+                    guard clarificationPromptID != nil, isFollowingLatestContent else { return }
+                    releasingHold { onScrollToBottom(proxy) }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                     if isScrolledNearBottom {
-                        onScrollToBottom(proxy)
+                        releasingHold { onScrollToBottom(proxy) }
                     }
                 }
             }
         }
+    }
+
+    /// Follow-driven scrolls run only while the latch is on and no disclosure
+    /// toggle is mid-animation.
+    private var isFollowingLatestContent: Bool {
+        shouldFollowLatestMessage && !isDisclosureSettling
+    }
+
+    /// Identifies the whole transcript content so a scroll to its top can be
+    /// expressed through SwiftUI.
+    private let transcriptContentID = "chat-transcript-content"
+
+    /// A tapped row is about to grow or shrink below the reader. Pin the offset
+    /// so a default anchor SwiftUI re-applies on the size change (seen at the
+    /// exact top after a status-bar scroll) cannot move them. If the pin had to
+    /// undo SwiftUI, finish with a SwiftUI-driven scroll to the same place so
+    /// its own offset model, and hit-testing of the visible rows, catch up.
+    private func pinReader(proxy: ScrollViewProxy) {
+        scrollPositionController.holdPosition {
+            proxy.scrollTo(transcriptContentID, anchor: .top)
+        }
+    }
+
+    /// Deliberate scrolls end a disclosure pin first. The pin exists only to
+    /// stop SwiftUI moving the reader on its own after a toggle.
+    private func releasingHold(_ scroll: () -> Void) {
+        scrollPositionController.releaseHold()
+        scroll()
     }
 
     private func transcriptScrollContent(
@@ -204,7 +332,14 @@ struct ChatTranscriptView: View {
         viewportWidth: CGFloat,
         contentWidth: CGFloat
     ) -> some View {
-        VStack(spacing: transcriptMessageSpacing) {
+        // One clock read per body pass; each row compares its timestamp to it.
+        let now = Date()
+
+        return VStack(spacing: transcriptSpacing) {
+            if let forkOrigin {
+                ForkOriginRowView(origin: forkOrigin, onOpen: onOpenForkParent)
+            }
+
             olderMessagesButton(proxy: proxy)
 
             if let compressionReferenceCard, compressionReferenceCard.afterRenderID == nil {
@@ -221,16 +356,29 @@ struct ChatTranscriptView: View {
                 let isToolCallAnchor = toolCallAnchorMessageID == transcriptMessage.anchorID
                 let isStreamingRow = streamingAssistantMessageID != nil
                     && transcriptMessage.message.messageId == streamingAssistantMessageID
+                let foldState = turnFolds.rowState(
+                    for: transcriptMessage.renderID,
+                    expandedTurnKeys: expandedTurnKeys
+                )
 
                 ChatTranscriptMessageBlock(
                     transcriptMessage: transcriptMessage,
-                    transcriptBlockSpacing: transcriptBlockSpacing,
+                    transcriptSpacing: transcriptSpacing,
                     showsThinkingAndToolCards: showsThinkingAndToolCards,
-                    reasoningGroups: reasoningGroups,
+                    foldState: foldState,
+                    isTerminalReply: terminalReplyRenderIDs.contains(transcriptMessage.renderID),
+                    onToggleTurnFold: { turnKey in
+                        // Turn folds toggle in ChatView, so arm the pin here.
+                        pinReader(proxy: proxy)
+                        onToggleTurnFold(turnKey)
+                    },
+                    reasoningGroups: reasoningGroupsByAnchorID[transcriptMessage.anchorID] ?? [],
                     toolCallGroups: completedToolCallGroupsForAnchor(transcriptMessage.anchorID),
                     liveReasoningText: isReasoningAnchor ? liveReasoningText : "",
                     reasoningAnchorMessageID: isReasoningAnchor ? reasoningAnchorMessageID : nil,
+                    liveReasoningStreamID: isReasoningAnchor ? activeStreamID : nil,
                     liveToolCalls: isToolCallAnchor ? liveToolCalls : [],
+                    isReplayingLiveToolCalls: isToolCallAnchor && isReplayingLiveToolCalls,
                     toolCallAnchorMessageID: isToolCallAnchor ? toolCallAnchorMessageID : nil,
                     streamingAssistantMessageID: isStreamingRow ? streamingAssistantMessageID : nil,
                     liveTokensPerSecond: isStreamingRow ? liveTokensPerSecond : nil,
@@ -242,7 +390,7 @@ struct ChatTranscriptView: View {
                     isEditingMessage: isEditingMessage,
                     isForkingMessage: isForkingMessage,
                     loadAttachmentImage: loadAttachmentImage,
-                    loadAttachmentData: loadAttachmentData,
+                    attachmentAudio: attachmentAudio,
                     loadTranscriptMediaImage: loadTranscriptMediaImage,
                     loadTranscriptMediaData: loadTranscriptMediaData,
                     transcriptMediaCacheNamespace: transcriptMediaCacheNamespace,
@@ -250,26 +398,35 @@ struct ChatTranscriptView: View {
                     shouldRenderMessageRow: shouldRenderMessageRow,
                     onPreviewAttachment: onPreviewAttachment,
                     onPreviewTranscriptMedia: onPreviewTranscriptMedia,
+                    onAskHermex: onAskHermex,
                     onToggleListening: onToggleListening,
-                    onSelectText: onSelectText,
                     onRegenerate: onRegenerate,
                     onEdit: onEdit,
                     onFork: onFork,
                     onCopy: onCopy
                 )
                 .equatable()
+                .transition(rowEntryTransition(for: transcriptMessage.message, now: now))
                 .id(transcriptMessage.renderID)
 
                 if let compressionReferenceCard,
                    compressionReferenceCard.afterRenderID == transcriptMessage.renderID {
                     compressionReferenceCardView(compressionReferenceCard)
                 }
+
+                if let settledPlan, settledPlanAfterRenderID == transcriptMessage.renderID {
+                    HermesPlanRowView(plan: settledPlan)
+                        .id("hermes-plan")
+                }
             }
 
             transcriptLooseBlocks
             liveResponseBlocks
-            inlineClarificationCard
-            typingIndicator
+            workingRow
+            turnOutcome
+            if let requestWithdrawal {
+                BotRequestWithdrawalNote(withdrawal: requestWithdrawal)
+            }
             turnChangesCard
             inlineCommitButton
 
@@ -281,11 +438,22 @@ struct ChatTranscriptView: View {
         .padding(.top, 16)
         .frame(width: contentWidth, alignment: .leading)
         .padding(.horizontal, transcriptHorizontalPadding)
-        .frame(width: viewportWidth, alignment: .leading)
+        // The scroll view stays full width, so its indicator stays at the
+        // screen edge and swipes in the margins still scroll.
+        .frame(width: viewportWidth, alignment: .center)
         .clipped()
+        .chatDisclosureToggled {
+            pinReader(proxy: proxy)
+            onDisclosureToggle()
+        }
+        .id(transcriptContentID)
         .background {
             ZStack {
-                ChatScrollObserver(isStreaming: activeStreamID != nil) { metrics in
+                ChatScrollObserver(
+                    isStreaming: activeStreamID != nil,
+                    scrollPositionController: scrollPositionController,
+                    onFollowEvent: onFollowEvent
+                ) { metrics in
                     onUpdateScrollMetrics(metrics)
                 }
 
@@ -293,6 +461,17 @@ struct ChatTranscriptView: View {
             }
             .accessibilityHidden(true)
         }
+    }
+
+    /// Only rows created moments ago animate in. Cached history, reloads, and
+    /// reattached transcripts carry old timestamps and keep `.identity`, so
+    /// they never replay an entrance.
+    private func rowEntryTransition(for message: ChatMessage, now: Date) -> AnyTransition {
+        guard ChatTranscriptRowFreshness.isFresh(timestamp: message.timestamp, now: now) else {
+            return .identity
+        }
+
+        return ChatMotion.freshRowTransition(isUserRow: message.role == "user", reduceMotion: reduceMotion)
     }
 
     private func compressionReferenceCardView(_ card: CompressionReferenceCard) -> some View {
@@ -304,7 +483,7 @@ struct ChatTranscriptView: View {
     }
 
     private func transcriptContentWidth(for viewportWidth: CGFloat) -> CGFloat {
-        max(0, viewportWidth - (transcriptHorizontalPadding * 2))
+        ChatReadingWidth.contentWidth(viewportWidth: viewportWidth, horizontalPadding: transcriptHorizontalPadding)
     }
 
     @ViewBuilder
@@ -317,18 +496,23 @@ struct ChatTranscriptView: View {
     }
 
     private func loadOlderMessagesPreservingPosition(proxy: ScrollViewProxy) async {
+        let capturedExactPosition = scrollPositionController.capture()
         let renderID = displayedTranscriptMessages.first?.renderID
         let didLoad = await onLoadOlderMessages()
-        guard didLoad, let renderID else { return }
+        guard didLoad else {
+            scrollPositionController.cancelPreservation()
+            return
+        }
+
+        if capturedExactPosition,
+           scrollPositionController.restoreAfterPrepend() {
+            return
+        }
+
+        guard let renderID else { return }
 
         await Task.yield()
-        if reduceMotion {
-            proxy.scrollTo(renderID, anchor: .top)
-        } else {
-            withAnimation(ChatMotion.quickState(reduceMotion: reduceMotion)) {
-                proxy.scrollTo(renderID, anchor: .top)
-            }
-        }
+        proxy.scrollTo(renderID, anchor: .top)
     }
 
     @ViewBuilder
@@ -339,11 +523,14 @@ struct ChatTranscriptView: View {
 
     @ViewBuilder
     private var liveResponseBlocks: some View {
-        if activeStreamID != nil {
+        if let activeStreamID {
             if showsThinkingAndToolCards {
                 if hasLiveReasoningText,
                    !hasDisplayedTranscriptMessage(anchorID: reasoningAnchorMessageID) {
-                    ReasoningBlockView(text: liveReasoningText)
+                    ReasoningBlockView(
+                        text: liveReasoningText,
+                        liveStreamID: activeStreamID
+                    )
                 }
 
                 if !liveToolCalls.isEmpty,
@@ -352,7 +539,9 @@ struct ChatTranscriptView: View {
                         group: ToolCallGroup.live(
                             anchorMessageID: toolCallAnchorMessageID,
                             toolCalls: liveToolCalls
-                        )
+                        ),
+                        isLive: true,
+                        isReplaying: isReplayingLiveToolCalls
                     )
                 }
             }
@@ -367,24 +556,9 @@ struct ChatTranscriptView: View {
     }
 
     @ViewBuilder
-    private var inlineClarificationCard: some View {
-        if let clarificationPrompt {
-            ClarificationRequestCard(
-                prompt: clarificationPrompt,
-                isResponding: isRespondingToClarification,
-                errorMessage: clarificationErrorMessage,
-                onSubmit: onSubmitClarification
-            )
-            .id(clarificationPrompt.id)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
-        }
-    }
-
-    @ViewBuilder
-    private var typingIndicator: some View {
-        if showsAssistantTypingIndicator {
-            AssistantTypingIndicatorView()
+    private var workingRow: some View {
+        if let workingRowStartedAt {
+            ChatWorkingRowView(startedAt: workingRowStartedAt)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityHidden(hidesRunStatusAccessibility)
         }
@@ -411,7 +585,6 @@ struct ChatTranscriptView: View {
                 action: onInlineCommit
             )
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 2)
         }
     }
 
@@ -428,7 +601,7 @@ struct ChatTranscriptView: View {
     @ViewBuilder
     private func reasoningBlocks(anchorMessageID: String?) -> some View {
         if showsThinkingAndToolCards {
-            ForEach(reasoningGroups.filter { $0.anchorMessageID == anchorMessageID }) { group in
+            ForEach(reasoningGroupsByAnchorID[anchorMessageID] ?? []) { group in
                 ReasoningBlockView(text: group.text)
             }
         }
@@ -444,15 +617,42 @@ struct ChatTranscriptView: View {
     }
 }
 
-private struct ChatTranscriptMessageBlock: View, Equatable {
+/// Runs `onFire` each time the stream's scroll trigger bumps.
+///
+/// The trigger bumps once per drain tick while a reply streams and feeds only
+/// this scroll. Reading it in a leaf keeps each bump from re-running the chat
+/// screen's content (transcript derivations, every row's equality check, the
+/// composer) just to scroll.
+struct StreamingFollowTrigger: View {
+    let trigger: () -> Int
+    let onFire: () -> Void
+
+    var body: some View {
+        Color.clear
+            .onChange(of: trigger()) { onFire() }
+    }
+}
+
+struct ChatTranscriptMessageBlock: View, Equatable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let transcriptMessage: TranscriptMessage
-    let transcriptBlockSpacing: CGFloat
+    let transcriptSpacing: CGFloat
     let showsThinkingAndToolCards: Bool
+    /// Nil outside a settled-turn fold. Otherwise says whether this row draws
+    /// the fold row and which of its parts are hidden right now.
+    let foldState: TranscriptTurnFoldRowState?
+    /// Whether this row is the reply that closes a settled turn.
+    let isTerminalReply: Bool
+    let onToggleTurnFold: (String) -> Void
+    /// This row's own reasoning cards.
     let reasoningGroups: [ReasoningGroup]
     let toolCallGroups: [ToolCallGroup]
     let liveReasoningText: String
     let reasoningAnchorMessageID: String?
+    let liveReasoningStreamID: String?
     let liveToolCalls: [ToolCall]
+    let isReplayingLiveToolCalls: Bool
     let toolCallAnchorMessageID: String?
     let streamingAssistantMessageID: String?
     let liveTokensPerSecond: Double?
@@ -464,7 +664,7 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
     let isEditingMessage: Bool
     let isForkingMessage: Bool
     let loadAttachmentImage: (String) async -> Data?
-    let loadAttachmentData: (String) async -> Data?
+    let attachmentAudio: AttachmentAudioSource?
     let loadTranscriptMediaImage: (TranscriptMediaReference) async -> Data?
     let loadTranscriptMediaData: (TranscriptMediaReference) async -> Data?
     let transcriptMediaCacheNamespace: String
@@ -472,27 +672,33 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
     let shouldRenderMessageRow: (ChatMessage) -> Bool
     let onPreviewAttachment: (MessageAttachment, Data?) -> Void
     let onPreviewTranscriptMedia: (TranscriptMediaReference) -> Void
+    let onAskHermex: (String) -> Void
     let onToggleListening: (MessageActionContext) -> Void
-    let onSelectText: (MessageActionContext) -> Void
     let onRegenerate: (MessageActionContext) -> Void
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
     let onCopy: (MessageActionContext) -> Void
 
     // Equality over the value inputs only. The closures are pure functions of
-    // these values (e.g. `actionContext` is fully determined by
-    // `transcriptMessage`), so two blocks that compare equal render identically.
+    // these values (e.g. `actionContext` is determined by `transcriptMessage`,
+    // and in a Hermes session by the observed set of rows that can rewind, whose
+    // change invalidates the row itself), so two blocks that compare equal
+    // render identically.
     // This lets `.equatable()` skip re-evaluating rows whose data is unchanged
     // even though their closure props are recreated on every parent body pass.
     static func == (lhs: ChatTranscriptMessageBlock, rhs: ChatTranscriptMessageBlock) -> Bool {
         lhs.transcriptMessage == rhs.transcriptMessage &&
-            lhs.transcriptBlockSpacing == rhs.transcriptBlockSpacing &&
+            lhs.transcriptSpacing == rhs.transcriptSpacing &&
             lhs.showsThinkingAndToolCards == rhs.showsThinkingAndToolCards &&
+            lhs.foldState == rhs.foldState &&
+            lhs.isTerminalReply == rhs.isTerminalReply &&
             lhs.reasoningGroups == rhs.reasoningGroups &&
             lhs.toolCallGroups == rhs.toolCallGroups &&
             lhs.liveReasoningText == rhs.liveReasoningText &&
             lhs.reasoningAnchorMessageID == rhs.reasoningAnchorMessageID &&
+            lhs.liveReasoningStreamID == rhs.liveReasoningStreamID &&
             lhs.liveToolCalls == rhs.liveToolCalls &&
+            lhs.isReplayingLiveToolCalls == rhs.isReplayingLiveToolCalls &&
             lhs.toolCallAnchorMessageID == rhs.toolCallAnchorMessageID &&
             lhs.streamingAssistantMessageID == rhs.streamingAssistantMessageID &&
             lhs.liveTokensPerSecond == rhs.liveTokensPerSecond &&
@@ -503,21 +709,72 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
             lhs.isRegeneratingMessage == rhs.isRegeneratingMessage &&
             lhs.isEditingMessage == rhs.isEditingMessage &&
             lhs.isForkingMessage == rhs.isForkingMessage &&
+            lhs.attachmentAudio == rhs.attachmentAudio &&
             lhs.transcriptMediaCacheNamespace == rhs.transcriptMediaCacheNamespace
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: transcriptBlockSpacing) {
-            reasoningBlocks
-            liveReasoningBlock
-            toolActivityGroups
-            liveToolActivityGroup
+        // Yield nothing when every part is folded away, so the outer stack adds
+        // no spacing for an empty row.
+        if hasVisibleContent {
+            VStack(alignment: .leading, spacing: transcriptSpacing) {
+                if let fold = foldState?.fold {
+                    TranscriptTurnFoldRowView(
+                        fold: fold,
+                        isExpanded: foldState?.isExpanded == true,
+                        onToggle: { onToggleTurnFold(fold.turnKey) }
+                    )
+                }
 
-            if shouldRenderMessageRow(transcriptMessage.message) {
+                if showsActivity {
+                    Group {
+                        reasoningBlocks
+                        liveReasoningBlock
+                        toolActivityGroups
+                        liveToolActivityGroup
+                    }
+                    .transition(foldTransition)
+                }
+
+                if showsBubble {
+                    messageRow
+                        .transition(foldTransition)
+                }
+            }
+        }
+    }
+
+    /// Only folded rows animate in and out; ordinary rows keep no transition
+    /// so streaming appends stay instant.
+    private var foldTransition: AnyTransition {
+        foldState == nil ? .identity : ChatMotion.disclosureTransition(reduceMotion: reduceMotion)
+    }
+
+    private var showsActivity: Bool {
+        foldState?.hidesActivity != true
+    }
+
+    private var showsBubble: Bool {
+        foldState?.hidesBubble != true && shouldRenderMessageRow(transcriptMessage.message)
+    }
+
+    private var rendersActivity: Bool {
+        let hasArchivedActivity = showsThinkingAndToolCards
+            && (!toolCallGroups.isEmpty
+                || !reasoningGroups.isEmpty)
+        return hasArchivedActivity || shouldRenderLiveReasoningBlock || shouldRenderLiveToolActivityGroup
+    }
+
+    private var hasVisibleContent: Bool {
+        foldState?.fold != nil || (showsActivity && rendersActivity) || showsBubble
+    }
+
+    private var messageRow: some View {
                 ChatTranscriptMessageRow(
                     message: transcriptMessage.message,
                     visibleIndex: transcriptMessage.loadedIndex,
                     actionContext: actionContext(transcriptMessage.message, transcriptMessage.loadedIndex),
+                    isTerminalReply: isTerminalReply,
                     localAttachmentPreviews: localAttachmentPreviews,
                     listeningMessageID: listeningMessageID,
                     isViewingCachedData: isViewingCachedData,
@@ -529,31 +786,30 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
                         streamingAssistantMessageID: streamingAssistantMessageID
                     ),
                     liveTokensPerSecond: liveTokensPerSecond,
+                    transcriptSpacing: transcriptSpacing,
                     isRegeneratingMessage: isRegeneratingMessage,
                     isEditingMessage: isEditingMessage,
                     isForkingMessage: isForkingMessage,
                     loadAttachmentImage: loadAttachmentImage,
-                    loadAttachmentData: loadAttachmentData,
+                    attachmentAudio: attachmentAudio,
                     loadTranscriptMediaImage: loadTranscriptMediaImage,
                     loadTranscriptMediaData: loadTranscriptMediaData,
                     transcriptMediaCacheNamespace: transcriptMediaCacheNamespace,
                     onPreviewAttachment: onPreviewAttachment,
                     onPreviewTranscriptMedia: onPreviewTranscriptMedia,
+                    onAskHermex: onAskHermex,
                     onToggleListening: onToggleListening,
-                    onSelectText: onSelectText,
                     onRegenerate: onRegenerate,
                     onEdit: onEdit,
                     onFork: onFork,
                     onCopy: onCopy
                 )
-            }
-        }
     }
 
     @ViewBuilder
     private var reasoningBlocks: some View {
         if showsThinkingAndToolCards {
-            ForEach(reasoningGroups.filter { $0.anchorMessageID == transcriptMessage.anchorID }) { group in
+            ForEach(reasoningGroups) { group in
                 ReasoningBlockView(text: group.text)
             }
         }
@@ -562,7 +818,10 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
     @ViewBuilder
     private var liveReasoningBlock: some View {
         if shouldRenderLiveReasoningBlock {
-            ReasoningBlockView(text: liveReasoningText)
+            ReasoningBlockView(
+                text: liveReasoningText,
+                liveStreamID: liveReasoningStreamID
+            )
         }
     }
 
@@ -582,7 +841,9 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
                 group: ToolCallGroup.live(
                     anchorMessageID: toolCallAnchorMessageID,
                     toolCalls: liveToolCalls
-                )
+                ),
+                isLive: true,
+                isReplaying: isReplayingLiveToolCalls
             )
         }
     }
@@ -603,27 +864,31 @@ private struct ChatTranscriptMessageBlock: View, Equatable {
 }
 
 private struct ChatTranscriptMessageRow: View {
+    @AppStorage(ChatTranscriptDisplaySettings.showsAssistantTurnTimestampsKey) private var showsTimestamps = ChatTranscriptDisplaySettings.defaultShowsTimestamps
+
     let message: ChatMessage
     let visibleIndex: Int
     let actionContext: MessageActionContext?
+    let isTerminalReply: Bool
     let localAttachmentPreviews: [String: Data]?
     let listeningMessageID: String?
     let isViewingCachedData: Bool
     let hasActiveStream: Bool
     let isStreaming: Bool
     let liveTokensPerSecond: Double?
+    let transcriptSpacing: CGFloat
     let isRegeneratingMessage: Bool
     let isEditingMessage: Bool
     let isForkingMessage: Bool
     let loadAttachmentImage: (String) async -> Data?
-    let loadAttachmentData: (String) async -> Data?
+    let attachmentAudio: AttachmentAudioSource?
     let loadTranscriptMediaImage: (TranscriptMediaReference) async -> Data?
     let loadTranscriptMediaData: (TranscriptMediaReference) async -> Data?
     let transcriptMediaCacheNamespace: String
     let onPreviewAttachment: (MessageAttachment, Data?) -> Void
     let onPreviewTranscriptMedia: (TranscriptMediaReference) -> Void
+    let onAskHermex: (String) -> Void
     let onToggleListening: (MessageActionContext) -> Void
-    let onSelectText: (MessageActionContext) -> Void
     let onRegenerate: (MessageActionContext) -> Void
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
@@ -635,35 +900,58 @@ private struct ChatTranscriptMessageRow: View {
         // don't apply to system-emitted markers.
         if let markerKind = ChatMarkerMessageClassifier.classify(message) {
             MarkerMessageCardView(kind: markerKind, content: message.content)
-        } else if let actionContext {
-            bubble
-                .contextMenu {
-                    ChatMessageActionMenu(
-                        context: actionContext,
-                        listeningMessageID: listeningMessageID,
-                        isViewingCachedData: isViewingCachedData,
-                        hasActiveStream: hasActiveStream,
-                        isRegeneratingMessage: isRegeneratingMessage,
-                        isEditingMessage: isEditingMessage,
-                        isForkingMessage: isForkingMessage,
-                        onToggleListening: onToggleListening,
-                        onSelectText: onSelectText,
-                        onRegenerate: onRegenerate,
-                        onEdit: onEdit,
-                        onFork: onFork,
-                        onCopy: onCopy
+        } else if let completion = HermesDelegationCompletion(message) {
+            // A Hermes chat's async-delegation delivery (#1140): the host's turn, never a
+            // user bubble, with the full report one tap away.
+            HermesDelegationCompletionCard(completion: completion)
+        } else {
+            VStack(alignment: isUserMessage ? .trailing : .leading, spacing: metaRowSpacing) {
+                bubble
+
+                if showsMetaRow {
+                    ChatMessageMetaRow(
+                        isUserMessage: isUserMessage,
+                        timeText: metaTimeText,
+                        onCopy: actionContext.map { context -> () -> Void in
+                            { onCopy(context) }
+                        },
+                        actionMenu: isUserMessage ? nil : actionMenu
                     )
                 }
-        } else {
-            bubble
+            }
         }
+    }
+
+    private var isUserMessage: Bool {
+        message.role == "user"
+    }
+
+    /// A reply's footer leaves the same visible gap below it as the turn's fold row
+    /// leaves above it. The footer's controls draw 13 pt glyphs centred in 28 pt
+    /// frames (`ChatCopyButton`), so their tops already sit 7.5 pt inside the row.
+    private var metaRowSpacing: CGFloat {
+        isUserMessage ? 4 : transcriptSpacing - (28 - 13) / 2
+    }
+
+    /// Keep actions reachable for every actionable reply, including active turns.
+    private var showsMetaRow: Bool {
+        TranscriptMessageMetaPolicy.showsRow(
+            hasActions: actionContext != nil, hasTimestamp: metaTimeText != nil
+        )
+    }
+
+    private var metaTimeText: String? {
+        // Steer rows carry their own caption; no timestamp or copy actions.
+        guard !message.isSteerMessage else { return nil }
+        guard showsTimestamps, isUserMessage || (isTerminalReply && !isStreaming) else { return nil }
+        return ChatMessageTimestampFormatter.shortTime(forUnixTimestamp: message.timestamp)
     }
 
     private var bubble: some View {
         MessageBubbleView(
             message: message,
             loadAttachmentImage: loadAttachmentImage,
-            loadAttachmentData: loadAttachmentData,
+            attachmentAudio: attachmentAudio,
             loadTranscriptMediaImage: loadTranscriptMediaImage,
             loadTranscriptMediaData: loadTranscriptMediaData,
             transcriptMediaCacheNamespace: transcriptMediaCacheNamespace,
@@ -671,12 +959,32 @@ private struct ChatTranscriptMessageRow: View {
             onPreviewAttachment: onPreviewAttachment,
             onPreviewTranscriptMedia: onPreviewTranscriptMedia,
             isStreaming: isStreaming,
-            liveTokensPerSecond: liveTokensPerSecond
+            liveTokensPerSecond: liveTokensPerSecond,
+            onAskHermex: onAskHermex,
+            contextMenuActions: isUserMessage && !message.isSteerMessage ? (actionMenu?.items ?? []) : []
+        )
+    }
+
+    private var actionMenu: ChatMessageActionMenu? {
+        guard let actionContext else { return nil }
+        return ChatMessageActionMenu(
+            context: actionContext,
+            listeningMessageID: listeningMessageID,
+            isViewingCachedData: isViewingCachedData,
+            hasActiveStream: hasActiveStream,
+            isRegeneratingMessage: isRegeneratingMessage,
+            isEditingMessage: isEditingMessage,
+            isForkingMessage: isForkingMessage,
+            onToggleListening: onToggleListening,
+            onRegenerate: onRegenerate,
+            onEdit: onEdit,
+            onFork: onFork,
+            onCopy: onCopy
         )
     }
 }
 
-private struct ChatScrollToBottomButton: View {
+struct ChatScrollToBottomButton: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let bottomPadding: CGFloat
@@ -713,7 +1021,9 @@ private struct ChatScrollToBottomButton: View {
     }
 }
 
-private struct LoadOlderMessagesButton: View {
+/// The capsule that reveals earlier transcript rows, shared by the Sessions
+/// and Bot transcripts so paging back reads the same in both.
+struct LoadOlderMessagesButton: View {
     let isLoading: Bool
     let onTap: () -> Void
 
@@ -748,5 +1058,20 @@ private struct LoadOlderMessagesButton: View {
         .disabled(isLoading)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(isLoading ? String(localized: "Loading older messages") : String(localized: "Load older messages"))
+    }
+}
+
+/// Decides whether a transcript row is new enough to earn an entrance.
+enum ChatTranscriptRowFreshness {
+    /// Rows younger than this animate in; older ones render in place.
+    static let window: TimeInterval = 3
+
+    /// `timestamp` is epoch seconds, as `ChatMessage.timestamp` is. Missing or
+    /// non-finite values are never fresh. The check is symmetric so a server
+    /// clock running ahead cannot make reconciled history look freshly born;
+    /// rows the app creates itself use the phone clock and always pass.
+    static func isFresh(timestamp: Double?, now: Date) -> Bool {
+        guard let timestamp, timestamp.isFinite else { return false }
+        return abs(now.timeIntervalSince1970 - timestamp) < window
     }
 }

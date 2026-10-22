@@ -85,7 +85,7 @@ struct DirectoryListResponse: Decodable, Equatable {
     let error: String?
 }
 
-struct WorkspaceEntry: Decodable, Equatable, Identifiable {
+struct WorkspaceEntry: Decodable, Hashable, Identifiable {
     var id: String { path ?? name ?? UUID().uuidString }
     var isBrowsableDirectory: Bool {
         isDirectory == true || type == "dir"
@@ -97,6 +97,28 @@ struct WorkspaceEntry: Decodable, Equatable, Identifiable {
     let size: Int?
     let modified: Double?
     let isDirectory: Bool?
+    /// `target_outside_workspace` for a symlink: the server resolved it and the
+    /// target is not under the workspace root. Absent for everything else, and
+    /// on servers that predate the flag, so callers treat `nil` as "no claim".
+    let targetOutsideWorkspace: Bool?
+
+    init(
+        name: String?,
+        path: String?,
+        type: String? = nil,
+        size: Int? = nil,
+        modified: Double? = nil,
+        isDirectory: Bool? = nil,
+        targetOutsideWorkspace: Bool? = nil
+    ) {
+        self.name = name
+        self.path = path
+        self.type = type
+        self.size = size
+        self.modified = modified
+        self.isDirectory = isDirectory
+        self.targetOutsideWorkspace = targetOutsideWorkspace
+    }
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -106,6 +128,7 @@ struct WorkspaceEntry: Decodable, Equatable, Identifiable {
         case modified
         case isDirectory
         case isDir
+        case targetOutsideWorkspace
     }
 
     init(from decoder: Decoder) throws {
@@ -117,6 +140,7 @@ struct WorkspaceEntry: Decodable, Equatable, Identifiable {
         modified = try container.decodeIfPresent(Double.self, forKey: .modified)
         isDirectory = try container.decodeIfPresent(Bool.self, forKey: .isDirectory)
             ?? container.decodeIfPresent(Bool.self, forKey: .isDir)
+        targetOutsideWorkspace = try container.decodeIfPresent(Bool.self, forKey: .targetOutsideWorkspace)
     }
 }
 
@@ -128,4 +152,15 @@ struct FileResponse: Decodable, Equatable {
     let size: Int?
     let lines: Int?
     let error: String?
+    /// A Hermes host's file that is not text (#1112), which has no text preview. webui never sets it.
+    var isBinary = false
+    /// A Hermes host's file past its 512 KiB preview, which `content` holds. webui never sets it.
+    var isTruncated = false
+    /// A Hermes host's text, which is a preview, not the file's bytes: decoded with replacement
+    /// characters and cut at 512 KiB, so export downloads the file instead (#1112). webui never sets it.
+    var isPreviewOnly = false
+
+    enum CodingKeys: String, CodingKey {
+        case content, path, name, language, size, lines, error
+    }
 }

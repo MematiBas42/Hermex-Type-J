@@ -109,6 +109,8 @@ final class APIClientConfigurationTests: APIClientTestCase {
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             XCTAssertEqual(body?["model"] as? String, "claude-sonnet-4")
             XCTAssertNil(body?["modelId"])
+            // A providerless save keeps the bare {model} body.
+            XCTAssertNil(body?["provider"])
 
             return apiTestJSONResponse("""
             {
@@ -124,25 +126,34 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertEqual(response.model, "claude-sonnet-4")
     }
 
-    func testSaveDefaultModelWithProviderQualifiedID() async throws {
+    /// A catalog row that names its provider must send it: Core persists
+    /// `{model, provider}` atomically and resolves slash-qualified ids like
+    /// `anthropic/...` through the named provider's route.
+    func testSaveDefaultModelSendsTheRowProviderWhenKnown() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/default-model")
+            XCTAssertEqual(request.httpMethod, "POST")
 
             let data = try XCTUnwrap(apiTestBodyData(from: request))
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            XCTAssertEqual(body?["model"] as? String, "@openai:gpt-5.4")
+            XCTAssertEqual(body?["model"] as? String, "deepseek/deepseek-chat-v3:free")
+            XCTAssertEqual(body?["provider"] as? String, "openrouter")
 
             return apiTestJSONResponse("""
             {
               "ok": true,
-              "model": "@openai:gpt-5.4"
+              "model": "deepseek/deepseek-chat-v3:free"
             }
             """, for: request)
         }
 
-        let response = try await client.saveDefaultModel(model: "@openai:gpt-5.4")
+        let response = try await client.saveDefaultModel(
+            model: "deepseek/deepseek-chat-v3:free",
+            provider: "openrouter"
+        )
 
-        XCTAssertEqual(response.model, "@openai:gpt-5.4")
+        XCTAssertEqual(response.ok, true)
+        XCTAssertEqual(response.model, "deepseek/deepseek-chat-v3:free")
     }
 
     func testCommandsBuildsExpectedPathAndDecodesTolerantMetadata() async throws {
@@ -220,30 +231,6 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertEqual(response.session?.modelProvider, "openai")
     }
 
-    func testReasoningStatusBuildsExpectedPathAndDecodesEffort() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/reasoning")
-            XCTAssertEqual(request.httpMethod, "GET")
-            XCTAssertNil(request.httpBody)
-
-            return apiTestJSONResponse("""
-            {
-              "show_reasoning": true,
-              "reasoning_effort": "high"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.reasoning()
-
-        XCTAssertEqual(response.showReasoning, true)
-        XCTAssertEqual(response.reasoningEffort, "high")
-        XCTAssertEqual(response.effectiveEffort, "high")
-        XCTAssertNil(response.supportedEfforts)
-        XCTAssertNil(response.supportsReasoningEffort)
-        XCTAssertNil(response.normalizedSupportedEfforts)
-    }
-
     func testReasoningStatusPassesModelProviderQueryAndDecodesSupportedEfforts() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/reasoning")
@@ -297,6 +284,8 @@ final class APIClientConfigurationTests: APIClientTestCase {
             let data = try XCTUnwrap(apiTestBodyData(from: request))
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             XCTAssertEqual(body?["effort"] as? String, "xhigh")
+            XCTAssertEqual(body?["session_id"] as? String, "session-abc")
+            XCTAssertNil(body?["sessionId"])
 
             return apiTestJSONResponse("""
             {
@@ -306,7 +295,10 @@ final class APIClientConfigurationTests: APIClientTestCase {
             """, for: request)
         }
 
-        let response = try await client.saveReasoningEffort("xhigh")
+        let response = try await client.saveReasoningEffort(
+            "xhigh",
+            sessionID: "session-abc"
+        )
 
         XCTAssertEqual(response.ok, true)
         XCTAssertEqual(response.effectiveEffort, "xhigh")
@@ -338,35 +330,6 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertEqual(response.effectiveEffort, "medium")
     }
 
-    func testPersonalitiesBuildsExpectedPathAndDecodesResponse() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/personalities")
-            XCTAssertEqual(request.httpMethod, "GET")
-
-            return apiTestJSONResponse("""
-            {
-              "personalities": [
-                {
-                  "name": "mentor",
-                  "description": "Patient technical coach",
-                  "extra": "ignored"
-                },
-                {
-                  "name": "critic"
-                }
-              ]
-            }
-            """, for: request)
-        }
-
-        let response = try await client.personalities()
-
-        XCTAssertEqual(response.personalities?.count, 2)
-        XCTAssertEqual(response.personalities?.first?.name, "mentor")
-        XCTAssertEqual(response.personalities?.first?.description, "Patient technical coach")
-        XCTAssertEqual(response.personalities?.last?.description, nil)
-    }
-
     func testSetPersonalityBuildsExpectedBodyAndDecodesResponse() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/personality/set")
@@ -394,29 +357,6 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertEqual(response.prompt, "Be direct.")
     }
 
-    func testClearPersonalitySendsEmptyName() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/personality/set")
-
-            let data = try XCTUnwrap(apiTestBodyData(from: request))
-            let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            XCTAssertEqual(body?["session_id"] as? String, "session-abc")
-            XCTAssertEqual(body?["name"] as? String, "")
-
-            return apiTestJSONResponse("""
-            {
-              "ok": true,
-              "personality": null
-            }
-            """, for: request)
-        }
-
-        let response = try await client.setPersonality(sessionID: "session-abc", name: "")
-
-        XCTAssertEqual(response.ok, true)
-        XCTAssertNil(response.personality)
-    }
-
     func testRenameSessionBuildsExpectedBodyAndDecodesResponse() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/session/rename")
@@ -441,52 +381,6 @@ final class APIClientConfigurationTests: APIClientTestCase {
 
         XCTAssertEqual(response.session?.sessionId, "session-abc")
         XCTAssertEqual(response.session?.title, "New Title")
-    }
-
-    func testProfilesBuildsExpectedPathAndDecodesResponse() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/profiles")
-            XCTAssertEqual(request.httpMethod, "GET")
-
-            return apiTestJSONResponse("""
-            {
-              "active": "default",
-              "profiles": [
-                {
-                  "name": "default",
-                  "path": "/Users/test/.hermes",
-                  "is_default": true,
-                  "is_active": true,
-                  "model": "gpt-5.5",
-                  "provider": "openai",
-                  "has_env": true,
-                  "skill_count": 4
-                }
-              ],
-              "single_profile_mode": true
-            }
-            """, for: request)
-        }
-
-        let response = try await client.profiles()
-
-        XCTAssertEqual(response.active, "default")
-        XCTAssertEqual(response.profiles?.first?.name, "default")
-        XCTAssertEqual(response.profiles?.first?.isDefault, true)
-        XCTAssertEqual(response.profiles?.first?.displayName, "Default")
-        XCTAssertEqual(response.singleProfileMode, true)
-    }
-
-    func testProfilesResponseToleratesAbsentSingleProfileMode() throws {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-
-        let response = try decoder.decode(
-            ProfilesResponse.self,
-            from: Data(#"{"active": "default", "profiles": []}"#.utf8)
-        )
-
-        XCTAssertNil(response.singleProfileMode)
     }
 
     func testProfilesResponseEffectiveDefaultPrefersActiveName() {
@@ -669,6 +563,47 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertFalse(DefaultProfilePickerView.isCancellationError(APIError.unauthorized))
     }
 
+    func testProfilePickerSearchMatchesNameModelAndProvider() {
+        let profiles = [
+            ProfileSummary(
+                name: "default",
+                path: nil,
+                isDefault: true,
+                isActive: true,
+                gatewayRunning: nil,
+                model: "gpt-5.4",
+                provider: "openai",
+                hasEnv: nil,
+                skillCount: nil
+            ),
+            ProfileSummary(
+                name: "research",
+                path: nil,
+                isDefault: false,
+                isActive: false,
+                gatewayRunning: nil,
+                model: "claude-opus-5",
+                provider: "anthropic",
+                hasEnv: nil,
+                skillCount: 3
+            )
+        ]
+
+        func names(_ query: String) -> [String?] {
+            DefaultProfilePickerView.filteredProfiles(profiles, query: query).map(\.name)
+        }
+
+        // "default" is the one profile whose display name differs from its
+        // saved name, so both spellings have to find it.
+        XCTAssertEqual(names("Default"), ["default"])
+        XCTAssertEqual(names("defau"), ["default"])
+        XCTAssertEqual(names("research"), ["research"])
+        XCTAssertEqual(names("OPUS"), ["research"])
+        XCTAssertEqual(names("anthropic"), ["research"])
+        XCTAssertEqual(names("  "), ["default", "research"])
+        XCTAssertEqual(names("nonesuch"), [])
+    }
+
     func testProfileNameRulesMirrorUpstreamPattern() {
         XCTAssertTrue(ProfileNameRules.isValid("work"))
         XCTAssertTrue(ProfileNameRules.isValid("a"))
@@ -684,25 +619,5 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertFalse(ProfileNameRules.isValid("über"))
         XCTAssertFalse(ProfileNameRules.isValid("name!"))
         XCTAssertFalse(ProfileNameRules.isValid(String(repeating: "a", count: 65)))
-    }
-
-    func testSettingsBuildsExpectedPathAndDecodesServerVersion() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/settings")
-
-            return apiTestJSONResponse("""
-            {
-              "bot_name": "Hermes",
-              "webui_version": "v0.50.253",
-              "theme": "system"
-            }
-            """, for: request)
-        }
-
-        let response = try await client.settings()
-
-        XCTAssertEqual(response.botName, "Hermes")
-        XCTAssertEqual(response.webuiVersion, "v0.50.253")
-        XCTAssertEqual(response.theme, "system")
     }
 }

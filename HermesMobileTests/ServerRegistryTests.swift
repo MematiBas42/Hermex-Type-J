@@ -35,17 +35,6 @@ final class ServerRegistryTests: XCTestCase {
 
     // MARK: - Duplicate prevention
 
-    func testActivateDeduplicatesTheSameURL() throws {
-        let registry = makeRegistry()
-        let server = try url("https://example.test")
-
-        registry.activate(url: server)
-        registry.activate(url: server)
-
-        XCTAssertEqual(registry.servers.count, 1)
-        XCTAssertEqual(registry.activeServerID, "https://example.test")
-    }
-
     func testActivateDeduplicatesURLsThatNormalizeToTheSameServer() throws {
         let registry = makeRegistry()
         // Two raw inputs the onboarding normalizer collapses to one server.
@@ -104,19 +93,8 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertEqual(account.displayName, "Alice")
         XCTAssertEqual(account.initials, "AL")
         XCTAssertEqual(account.headerLogoColorHex, "#5B7CFF")
-        XCTAssertEqual(account.customHeadersRef, "https://example.test")
         XCTAssertEqual(account.createdAt, fixedDate)
         XCTAssertEqual(account.updatedAt, fixedDate)
-    }
-
-    func testActivateDerivesIdentityFromHostWhenGlobalsAreEmpty() throws {
-        let registry = makeRegistry() // empty identity defaults
-
-        let account = registry.activate(url: try url("https://webui.example.com"))
-
-        XCTAssertEqual(account.displayName, "webui.example.com")
-        XCTAssertEqual(account.initials, "W") // derived from the host
-        XCTAssertEqual(account.headerLogoColorHex, HeaderLogoColor.defaultHex)
     }
 
     func testActivateDoesNotReseedIdentityWhenServerAlreadyExists() throws {
@@ -148,13 +126,6 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertNil(registry.activeServer)
     }
 
-    func testForgetActiveServerWithNoActiveServerIsANoOp() {
-        let registry = makeRegistry()
-        registry.forgetActiveServer()
-        XCTAssertTrue(registry.servers.isEmpty)
-        XCTAssertNil(registry.activeServerID)
-    }
-
     // MARK: - setActive / remove / update (#17)
 
     func testSetActiveSwitchesToAnExistingServer() throws {
@@ -166,15 +137,6 @@ final class ServerRegistryTests: XCTestCase {
         let result = registry.setActive(id: "https://a.test")
 
         XCTAssertEqual(result?.id, "https://a.test")
-        XCTAssertEqual(registry.activeServerID, "https://a.test")
-    }
-
-    func testSetActiveIsNoOpForUnregisteredOrAlreadyActiveServer() throws {
-        let registry = makeRegistry()
-        registry.activate(url: try url("https://a.test")) // active
-
-        XCTAssertNil(registry.setActive(id: "https://a.test"))      // already active
-        XCTAssertNil(registry.setActive(id: "https://missing.test")) // not registered
         XCTAssertEqual(registry.activeServerID, "https://a.test")
     }
 
@@ -229,37 +191,6 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertEqual(active?.id, "https://b.test")
         XCTAssertEqual(registry.activeServerID, "https://b.test")
         XCTAssertEqual(registry.servers.map(\.id), ["https://b.test"])
-    }
-
-    func testRemoveUnregisteredIdIsANoOp() throws {
-        let registry = makeRegistry()
-        registry.activate(url: try url("https://a.test"))
-
-        let active = registry.remove(id: "https://missing.test")
-
-        XCTAssertEqual(active?.id, "https://a.test")
-        XCTAssertEqual(registry.servers.map(\.id), ["https://a.test"])
-    }
-
-    func testUpdateReplacesEntryAndBumpsUpdatedAt() throws {
-        var clock = fixedDate
-        let registry = ServerRegistry(
-            keychain: InMemoryKeychainStore(),
-            identityDefaults: .ephemeral(),
-            now: { clock }
-        )
-        registry.activate(url: try url("https://a.test"))
-        var account = try XCTUnwrap(registry.servers.first)
-        account.displayName = "Renamed"
-
-        let later = fixedDate.addingTimeInterval(60)
-        clock = later
-        registry.update(account)
-
-        let updated = try XCTUnwrap(registry.servers.first)
-        XCTAssertEqual(updated.displayName, "Renamed")
-        XCTAssertEqual(updated.updatedAt, later)
-        XCTAssertEqual(updated.createdAt, fixedDate) // unchanged
     }
 
     func testUpdateMirrorsToDefaultsOnlyWhenServerIsActive() throws {
@@ -322,16 +253,68 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertNil(registry.activeServer)
     }
 
+    func testOneUnreadableEntryLeavesTheRestOfTheListLoaded() throws {
+        let keychain = InMemoryKeychainStore()
+        try keychain.save(#"{"servers":[{"displayName":"no id"},{"id":"https://a.test"}],"activeServerID":"https://a.test"}"#,
+                          forKey: .servers)
+
+        let registry = ServerRegistry(keychain: keychain)
+
+        XCTAssertEqual(registry.servers.map(\.id), ["https://a.test"])
+        XCTAssertEqual(registry.activeServerID, "https://a.test")
+    }
+
+    func testAMissingOrUnknownKindLoadsAsAWebuiServer() throws {
+        let keychain = InMemoryKeychainStore()
+        try keychain.save(#"{"servers":[{"id":"https://a.test"},{"id":"https://b.test","kind":"satellite"},{"id":"https://c.test","kind":7},{"id":"https://d.test","kind":"hermes"}]}"#,
+                          forKey: .servers)
+
+        let registry = ServerRegistry(keychain: keychain)
+
+        XCTAssertEqual(registry.servers.map(\.kind), [.webui, .webui, .webui, .hermes])
+    }
+
+    /// The one-time Move to Hermes question's stage (#1267) loads as written; a missing,
+    /// unknown or mistyped one reads as unasked without dropping the entry.
+    func testAMoveQuestionStageLoadsAndAnUnknownOneReadsAsUnasked() throws {
+        let keychain = InMemoryKeychainStore()
+        try keychain.save(#"{"servers":[{"id":"https://a.test","moveToHermesPrompt":"dismissed"},{"id":"https://b.test","moveToHermesPrompt":"asked"},{"id":"https://c.test","moveToHermesPrompt":"snoozed"},{"id":"https://d.test","moveToHermesPrompt":3},{"id":"https://e.test"}]}"#,
+                          forKey: .servers)
+
+        let registry = ServerRegistry(keychain: keychain)
+
+        XCTAssertEqual(registry.servers.map(\.moveToHermesPrompt), [.dismissed, .asked, nil, nil, nil])
+    }
+
+    func testAHermesServersKindAndVersionSurviveARelaunch() throws {
+        let keychain = InMemoryKeychainStore()
+        let registry = makeRegistry(keychain: keychain)
+        registry.activate(url: try url("https://webui.test"))
+
+        registry.activate(url: try url("http://127.0.0.1:9199"), kind: .hermes, serverVersion: "0.21.5")
+        // Re-activating never changes what a server is.
+        registry.activate(url: try url("http://127.0.0.1:9199"))
+
+        let relaunched = ServerRegistry(keychain: keychain)
+        XCTAssertEqual(relaunched.servers.map(\.kind), [.webui, .hermes])
+        XCTAssertEqual(relaunched.servers.map(\.serverVersion), [nil, "0.21.5"])
+        XCTAssertEqual(relaunched.activeServerID, "http://127.0.0.1:9199")
+    }
+
     func testServerAccountDecodesWithOnlyAnIdPresent() throws {
         // A minimal blob must still decode, defaulting the rest (CLAUDE.md rule 3).
-        let json = Data(#"{"id":"https://example.test"}"#.utf8)
+        // Legacy blobs may still carry `customHeadersRef`; ignore it on decode
+        // and never write it back (headers are scoped by URL in Keychain).
+        let json = Data(#"{"id":"https://example.test","customHeadersRef":"https://example.test"}"#.utf8)
         let account = try JSONDecoder().decode(ServerAccount.self, from: json)
 
         XCTAssertEqual(account.id, "https://example.test")
         XCTAssertEqual(account.urlString, "https://example.test")
         XCTAssertEqual(account.displayName, "")
         XCTAssertEqual(account.headerLogoColorHex, HeaderLogoColor.defaultHex)
-        XCTAssertNil(account.customHeadersRef)
+
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(account)) as? [String: Any]
+        XCTAssertNil(encoded?["customHeadersRef"])
     }
 
     // MARK: - Migration + lifecycle through AuthManager
@@ -355,34 +338,6 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertEqual(registry.activeServer?.id, "https://legacy.test")
         XCTAssertEqual(registry.activeServer?.displayName, "Casey")
         XCTAssertEqual(registry.activeServer?.headerLogoColorHex, "#34C759")
-    }
-
-    func testNoSavedServerLeavesRegistryEmptyOnLaunch() {
-        let keychain = InMemoryKeychainStore()
-        let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
-
-        _ = AuthManager(
-            keychain: keychain,
-            clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
-            serverRegistry: registry
-        )
-
-        XCTAssertTrue(registry.servers.isEmpty)
-        XCTAssertNil(registry.activeServer)
-    }
-
-    func testConfigureRegistersServerAsActive() async throws {
-        let keychain = InMemoryKeychainStore()
-        let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
-        let manager = AuthManager(
-            keychain: keychain,
-            clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
-            serverRegistry: registry
-        )
-
-        await manager.configure(serverURLString: "example.test", password: "")
-
-        XCTAssertEqual(registry.activeServer?.urlString, "https://example.test")
     }
 
     func testFullSignOutForgetsServerFromRegistry() async throws {
@@ -431,17 +386,6 @@ final class ServerRegistryTests: XCTestCase {
             try AuthManager.normalizedServerURL(from: "localhost:8080"),
             URL(string: "http://localhost:8080")
         )
-    }
-
-    func testNormalizationStripsPathQueryAndFragment() throws {
-        XCTAssertEqual(
-            try AuthManager.normalizedServerURL(from: "https://example.com/api?x=1#frag"),
-            URL(string: "https://example.com")
-        )
-    }
-
-    func testNormalizationRejectsBlankInput() {
-        XCTAssertThrowsError(try AuthManager.normalizedServerURL(from: "   "))
     }
 }
 

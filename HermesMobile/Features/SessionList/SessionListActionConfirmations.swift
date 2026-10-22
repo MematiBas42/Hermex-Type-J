@@ -51,7 +51,11 @@ struct SessionActionConfirmations: ViewModifier {
                     }
                 }
             } message: {
-                Text("This removes the session from the Hermes server. Use this only on a session you no longer need.")
+                if sessionPendingDeletion?.hermes != nil {
+                    Text("This deletes the session and its messages from the Hermes host. It can't be undone.")
+                } else {
+                    Text("This removes the session from the Hermes server. Use this only on a session you no longer need.")
+                }
             }
             .alert(
                 "Delete Project?",
@@ -77,7 +81,11 @@ struct SessionActionConfirmations: ViewModifier {
                     }
                 }
             } message: {
-                Text("Sessions in this project will be moved to No project. The sessions themselves will not be deleted.")
+                if projectPendingDeletion?.hermes != nil {
+                    Text("Sessions stay; only the project is removed.")
+                } else {
+                    Text("Sessions in this project will be moved to No project. The sessions themselves will not be deleted.")
+                }
             }
     }
 }

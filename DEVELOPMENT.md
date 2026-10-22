@@ -1,6 +1,6 @@
 # Development
 
-This app is developed against a self-hosted `hermes-webui` server exposed over real HTTPS. See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full product and API plan.
+This app is developed against a self-hosted Hermes host, the default server kind, and keeps legacy support for `hermes-webui` servers, both exposed over real HTTPS. See [`README.md`](README.md) for the product overview and [`AGENTS.md`](AGENTS.md) for the working rules.
 
 > Sections covering TestFlight and App Store Connect are **maintainer-only ops** — they require the maintainer's Apple Developer account and App Store Connect access. Contributors never need them to build, test, or run the app.
 
@@ -20,31 +20,39 @@ Before debugging the app, verify the server is reachable:
 curl https://<your-server>/health
 ```
 
+## Compression continuation recovery
+
+When a WebUI chat send is rejected with HTTP 409 and `code: "session_rotated"`,
+the server supplies `continuation_session_id` for the compressed conversation's
+continuation. Hermex loads that session on the same server, verifies the Profile,
+and opens it only after restoring the rejected composer submission. The draft
+and retained attachments move together; the message is **not automatically
+resent**. If the user edits while recovery is pending, the rejected text and
+quotes are retained alongside those edits for review before explicit resend.
+The same retention applies to rejected `/queue` and `/steer` fallbacks, before
+slash-command result handling can consume the composer.
+A late rejection still rolls back its optimistic message and retains its files,
+even if the view has left. After a successful handoff the covered parent composer
+is cleared, and that sealed parent cannot start another POST on Back.
+An invalid target, failed load, stale view, or existing nonempty draft at the
+destination keeps the original draft in place rather than overwriting it.
+Other HTTP 409 responses retain their own recovery behavior.
+
+Focused coverage lives in `APIClientAuthAndErrorTests` and
+`ChatViewModelSendTests`. For a manual simulator check, open a sealed compressed
+parent, send a draft with an attachment, and verify that its continuation opens
+with the draft intact and no new agent run until Send is tapped again. Also
+check leaving the parent during recovery and a destination with an existing draft.
+
 ## Upstream Contract Pin
 
-The app is currently tested against `hermes-webui` tag `v0.51.85`, peeled commit `f1d399b437c1ca7fe4b6d2093aebe334c32f34a3`. The root [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA) file is the machine-readable pin for future drift checks and contract tests.
-
-The pin was last verified against the upstream GitHub tag source during the 2026-05-05 audit slice; authenticated settings/version checks require server credentials.
-
-Contract test readiness is documented in [`CONTRACT_TESTS.md`](CONTRACT_TESTS.md). Current coverage verifies the app's endpoint matrix and native POST header shape with URLProtocol-backed tests; the full Docker-backed upstream contract target remains future hardening.
+The app is tested against the `hermes-webui` commit in the root [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA) file — the only copy of the pin, so it cannot drift. To see its release tag: `git -C .codex-tmp/hermes-webui describe --tags --exact-match $(cat UPSTREAM_TESTED_SHA)`. The advance procedure lives in `AGENTS.md` § Working with the server.
 
 ## SSE and Cloudflare Stream Verification
 
-Phase 4 streaming uses `GET /api/chat/stream?stream_id=...` over Server-Sent Events. Current upstream source confirms the stream response uses `Content-Type: text/event-stream; charset=utf-8`, `X-Accel-Buffering: no`, `Connection: keep-alive`, and sends `: heartbeat` comments every 30 seconds while no app event is ready.
+Chat streaming uses `GET /api/chat/stream?stream_id=...` over Server-Sent Events. The stream response uses `Content-Type: text/event-stream; charset=utf-8`, `X-Accel-Buffering: no`, `Connection: keep-alive`, and sends `: heartbeat` comments about every 30 seconds while no app event is ready. If the connection is cut while the upstream stream is still active, returning to the foreground or reconnecting should use `GET /api/chat/stream/status?stream_id=...` and reattach to the same stream instead of resending the user message.
 
-Cloudflare can still close long-lived responses if the origin does not send data for long enough. The expected healthy behavior for Hermex is:
-
-- streams longer than 2 minutes continue delivering tokens, tool events, reasoning events, title events, `done`, and `stream_end` when the server emits them;
-- quiet periods under normal heartbeat behavior stay connected because the server writes `: heartbeat` about every 30 seconds;
-- if the connection is cut while the upstream stream is still active, returning to the foreground or reconnecting should use `GET /api/chat/stream/status?stream_id=...` and reattach to the same stream instead of resending the user message.
-
-Manual verification before closing Phase 4:
-
-1. Sign in to `https://<your-server>` from the simulator.
-2. Start a prompt that naturally runs for more than 2 minutes.
-3. Keep the app foregrounded and verify streamed content continues past the 2 minute mark.
-4. During another long response, background the app for at least 30 seconds, foreground it, and verify the app either reattaches to the active stream or reloads the completed transcript without duplicating the user message.
-5. If a stream drops after a quiet gap, record whether the server emitted no tokens/tool/reasoning events for more than roughly 100 seconds. That is a known Cloudflare risk even with normal SSE support.
+Cloudflare's free-plan idle timeout is roughly 100 seconds, so a gap with no events longer than that cuts the stream and reconnect logic must handle it even with normal heartbeat behavior. The server's CSRF check compares `Origin`/`Referer` against `Host` on POSTs; the native client sends neither header, so the server treats it as curl-equivalent and allows it.
 
 ## Local-Only Fallback
 
@@ -59,111 +67,295 @@ cd hermes-webui
 
 2. Run it with Docker or directly with Python, following the upstream README.
 
-For simulator-only testing, `http://localhost:8787` can work when the server is running on the same Mac. For physical-device testing, use HTTPS or a Tailscale `100.64.0.0/10` IP; TestFlight builds include a scoped ATS exception for that Tailscale range.
+For simulator-only testing, `http://localhost:8787` can work when the server is running on the same Mac. For physical-device testing, use HTTPS, a local network address (a private IP, `.local` or single-label name), or a Tailscale IP or `ts.net` name; the app's ATS policy allows plain HTTP to exactly those (`HermesMobile/Resources/Info.plist`).
+
+## Hermes Host Setup
+
+A Hermes host (`hermes dashboard`, default port 9119) should have basic auth: off loopback, or with a non-loopback `dashboard.public_url`, it refuses to run without its sign-in gate. One bound to loopback without `dashboard.public_url` runs with no sign-in (`"auth_required": false`); the app connects to it through a proxy to loopback and warns that it is open (`docs/agents/hermes-server.md` § No sign-in). In the host's `config.yaml`, set `dashboard.basic_auth.username` and a `password_hash` (from `plugins.dashboard_auth.basic.hash_password`). Also set `dashboard.basic_auth.secret` to 32 or more random bytes: without it the signing key is per process, so every restart signs the app out. Set `dashboard.public_url` to the exact address the app uses, or the dashboard answers `400 Invalid Host header`. `curl https://<your-host>/api/status` should then report `"auth_required": true`. Onboarding's Hermes prompt (`OnboardingFlowPolicy.hermesSetupPrompt`) walks an agent through the same steps.
 
 ## Example Server Setup (macOS + launchd)
 
-One proven way to run the server natively on macOS is through launchd:
+One proven way to run the server natively on macOS is through launchd, for contributors who want a local reference (this is not the maintainer's setup, which runs on a different Mac):
 
 - LaunchAgent: `~/Library/LaunchAgents/com.hermes.webui.plist`
-- Server script: `server.py` in your `hermes-webui` checkout
 - Local bind: `127.0.0.1:8787`
-- Public hostname: `https://<your-server>`
 - Tunnel target: `http://127.0.0.1:8787`
-
-Useful commands for this setup:
 
 ```zsh
 launchctl load ~/Library/LaunchAgents/com.hermes.webui.plist
 launchctl unload ~/Library/LaunchAgents/com.hermes.webui.plist
 launchctl kickstart -k gui/$(id -u)/com.hermes.webui
-cloudflared tunnel info <tunnel-name>
-launchctl list | grep cloudflared
-curl https://<your-server>/health
 ```
 
-If the server appears down, check in this order:
+## Xcode version
 
-1. launchd job status
-2. local port `8787`
-3. Cloudflare Tunnel status
+Local work, PR CI, and release builds all use **Xcode 27.0 (27A266a)**, so a
+change that compiles on this Mac compiles on CI. CI and release builds run on
+GitHub's `xcode-27` runner image with `DEVELOPER_DIR` pinned in
+`.github/workflows/pr-ci.yml` and `.github/workflows/release-candidate-testflight.yml`.
+Check yours with `xcodebuild -version`. With several Xcodes installed, select
+27.0 for one shell with `export DEVELOPER_DIR=<path to Xcode 27.0>.app/Contents/Developer`,
+or for the whole Mac with `sudo xcode-select -s <path to Xcode 27.0>.app`.
+Move the local Xcode and both workflow pins together.
 
-For local port inspection:
+## Local XCTest
+
+Use the repository runner for local tests, including when XcodeBuildMCP is
+available. It builds a signed Debug app once and runs XCTest serially on the
+assigned simulator (once, or up to N times with `--repeat N`). Separate worktrees can test concurrently on separate devices.
+
+Choose the session's simulator once (`hermex-flow` owns its device pool). The
+main checkout normally uses **iPhone 17**. Resolve its UDID with
+`xcrun simctl list devices available`; names shared by multiple iOS runtimes
+are ambiguous, so pass the UDID. The runner never chooses another device or
+creates one, and refuses to boot a fifth simulator.
+
+The tests run inside the installed app, so a test can change its real Keychain,
+cookies and defaults. `HermesMobileTests/TestHostStateGuard.swift` snapshots
+them when the test bundle starts and restores them when it finishes. A simulator
+signed in with `scripts/sim-login` stays signed in after a run. A run killed
+before it finishes can still sign it out.
 
 ```zsh
-lsof -i :8787
+# Focused tests; repeat --only for multiple classes or individual test methods.
+scripts/test-sim <simulator-udid> --only HermesMobileTests/BotLiveActivityTests
+
+# Stress a flaky test: up to 10 iterations in one build and launch, stopping at
+# the first failure. Use this rather than calling the runner in a loop.
+scripts/test-sim <simulator-udid> --only HermesMobileTests/BotLiveActivityTests --repeat 10
+
+# Full suite (also builds): use the same assigned UDID throughout the session.
+scripts/test-sim <simulator-udid>
 ```
 
-## Local Validation With XcodeBuildMCP
+Choose local coverage using `AGENTS.md` § Verifying: slices run affected tests,
+and PR CI, which runs every retained test with one simulator worker, is the
+full-suite gate. `--only` limits execution, but still builds the app and test
+target.
 
-XcodeBuildMCP is the preferred local validation path for feature and bug-fix slices. The repo config lives in `.xcodebuildmcp/config.yaml` and sets:
+The runner waits for simulator readiness, terminates any running Hermex app on
+that device (an app left attached by a build-and-run makes the test runner hang
+before connecting, `0 tests executed`; set `HERMEX_BUNDLE_ID` if
+`Config/Local.xcconfig` changes the bundle ID), then holds locks on the simulator
+and checkout until testing finishes. A competing runner reports the current
+owner immediately; different checkout/device pairs run independently. These
+locks coordinate this runner only: keep other build/install tools on their
+session's assigned device, and do not run them during its test run.
 
-- Project: `HermesMobile.xcodeproj`
-- Scheme: `HermesMobile`
-- Configuration: `Debug`
-- Simulator: `iPhone 17`
-- Bundle ID: `com.uzairansar.hermesmobile`
+Before each test attempt, a bounded `get_app_container` check skips termination
+if Hermex is not installed (terminating an absent app can hang on iOS 27).
+Both the check and termination have a 25-second limit, or `--boot-timeout` or
+the remaining test budget if shorter. Only a missing-bundle result skips
+termination; other lookup errors stop the run. A not-running exit status is
+ignored; a timeout still stops the run.
 
-After each completed implementation slice:
+Build products live in the checkout's gitignored `.build/DerivedData/`, which
+XcodeBuildMCP also uses (`.xcodebuildmcp/config.yaml`), so launching the app
+after a test run reuses that build instead of compiling a second copy, and
+removing a worktree removes its build. Timestamped logs live under
+`~/Library/Developer/Xcode/DerivedData/hermex-tests-<checkout-path-hash>/runs/`;
+the full absolute checkout path determines the hash, so identically named
+worktrees do not share them. The command prints the log directory at
+startup and test counts/failures at completion; `command.json`, `test.log`,
+`summary.json`, and `Tests.xcresult` retain the evidence.
 
-1. Confirm XcodeBuildMCP sees the repo defaults.
-2. Run focused tests for the changed behavior when available.
-3. Run the full XCTest suite before asking for review or committing.
-4. Build and launch the app in Simulator when UI or runtime behavior changed.
-5. Capture a screenshot or logs if the slice needs visual/runtime evidence.
-6. Let the owner run the manual simulator checklist for the slice.
+Wait on the runner using the longest supported tool wait; avoid separate log
+polls or status commands. It checks readiness with bounded commands (120 seconds
+for boot operations) and allows 30 minutes for build and tests.
+`--boot-timeout` and `--test-timeout` override those limits in seconds when a
+known workload requires it.
 
-Agent/MCP flow:
+It retries in one case only. Xcode sometimes fails with `The test runner hung
+before establishing connection` before any test runs: the app launches, but
+XCTest inside it never hears that the simulator's `testmanagerd` is ready, and
+xcodebuild gives up after 300 seconds. On that failure, and only when no test
+passed, the runner reboots that simulator (its own UDID only), stops the app,
+and reruns once within the same test time limit, printing `RETRY:`. The retry
+writes `test-retry.log`, `summary-retry.json`, and `Tests-retry.xcresult` next
+to the first attempt's files. Every other failure is reported without a retry.
 
-- Call `session_show_defaults` before the first local build/run/test.
-- If defaults are missing, set project `HermesMobile.xcodeproj`, scheme `HermesMobile`, configuration `Debug`, simulator `iPhone 17`, and bundle ID `com.uzairansar.hermesmobile`.
-- Use `test_sim` for XCTest validation.
-- Use `build_run_sim` to build, install, launch, and open Simulator for manual testing.
-- Use `screenshot`, UI inspection, and log capture only when they help validate the slice.
+Exit codes: **0** passed; **1** build/test failure; **2** busy device, setup, or
+result-verification failure; **124** timeout; **130** interrupted. On a busy
+device or infrastructure failure, report the blocker and log path; stop rather
+than rebooting, erasing devices, clearing caches, or rerunning unchanged tests.
+Each run also saves the Mac's swap use at start in `memory.log`.
+For actual test failures, inspect the recorded failure and follow the repo's
+baseline-check procedure where applicable. On timeout or interruption, the runner
+terminates the isolated process group it spawned, including remaining descendants,
+and leaves other jobs and the simulator itself alone.
 
-Human/CLI equivalents:
+Runner checks: `python3 -m unittest discover -s scripts/tests -v`.
+
+### Stuck simulators
+
+`scripts/sim-doctor [udid]` says why a simulator is stuck and prints the one
+command that clears it. Every probe has a 20-second limit, so it is safe to run
+while things hang. Exit 0 means nothing needs clearing; 1 prints a `FIX:` line.
+
+- `SERVICE`: CoreSimulator itself stopped answering. Only the owner restarts it,
+  because that stops every booted simulator.
+- `MEMORY`: the device doesn't respond while the Mac is paging. On a 16 GB Mac,
+  simulator processes then sit in uninterruptible waits, and boots and launches
+  stall. Free memory first; booting another simulator makes it worse. Heavy swap
+  alone only warns.
+- `DEVICE`: one simulator stopped answering while CoreSimulator still does. The
+  session that owns it shuts it down and boots it by UDID.
+- `ZOMBIE_APP`: Hermex is a zombie the simulator still lists as running, so
+  `launch` and `terminate` never return. A debugger that detached, or was
+  killed, while the app was stopped leaves this. Restart that simulator. To get
+  a backtrace without causing it, end lldb with `kill`:
+  `lldb -p <pid> --batch -o continue -k "thread backtrace all" -k kill`, and
+  don't `simctl terminate` the app while lldb holds it.
+
+## PR CI
+
+`.github/workflows/pr-ci.yml` pins the hosted Xcode path, iOS runtime, and phone
+model. Update these together after checking the runner's installed software;
+a missing pin fails setup rather than selecting another toolchain or runtime.
+CI tests on the iOS 27 simulator only. The `xcode-27` image ships no iOS 26
+runtime, and downloading one would add minutes to every run, so iOS 26 is
+deliberately not covered on CI to keep it fast. Run the affected tests on a
+local iOS 26 simulator when a change depends on OS behavior.
+CI resolves the device UDID and runs the complete suite with one test worker.
+Xcode owns that worker's simulator clone and boot. Explicit preboot plus fully
+serial execution did not improve the hosted trial, so retain the one-worker
+configuration unless new measurements justify changing it. Two more hosted
+experiments were measured and rejected (details in the closed PRs):
+
+- Booting the base device during the build and testing on it serially (#845):
+  the fresh device's first boot competed with the compiler on the 3-core
+  runner, tripling the build while saving less in test preparation, and a
+  keyboard test behaved differently on the base device.
+- Caching Swift packages and Xcode compilation results (#838): each compile
+  job's cache key covers its whole module's sources, so one edited app file
+  missed every compile job of the app target, the build's longest step, and a
+  typical PR built no faster; only reruns and test-only PRs gained. Package
+  caching saved about 3 s net.
+
+The test step has a 30-minute timeout covering worker preparation and the full
+suite, so a stalled worker does not consume the 90-minute job budget and prevent
+failure diagnostics from running. This is a combined limit, not a separate
+five-minute boot deadline.
+
+The Actions summary records phase timings, the failed phase, assertion messages,
+and slow tests. Failure artifacts include setup/build/test logs and any result
+bundle. Tests run with `-collect-test-diagnostics never`, as locally: on the
+`xcode-27` image a failure otherwise spends 10 minutes timing out a
+simulator sysdiagnose. A missing bundle does not establish an infrastructure flake; inspect the
+failed phase before rerunning. The reporter cannot turn a failed build or test
+green. Validate workflow changes with `actionlint .github/workflows/pr-ci.yml`
+and `python3 -m unittest discover -s ci -p 'test_*.py'`.
+
+A separate Linux job, Tooling Tests, runs the `scripts/tests` and `ci/` Python
+suites and the TestFlight build-number selector test on every PR and master
+push, including docs- and scripts-only PRs that skip the macOS runner. CI Gate
+fails when it fails.
+
+## Build and Launch With XcodeBuildMCP
+
+Defaults and the verification flow live in `AGENTS.md` § Verifying. Human/CLI equivalents:
 
 ```zsh
 xcodebuildmcp simulator list --enabled
 ```
 
 ```zsh
-xcodebuildmcp simulator test --output jsonl
-```
-
-```zsh
 xcodebuildmcp simulator build-and-run --output jsonl
 ```
 
-If `iPhone 17` is not installed, choose a nearby available iPhone simulator and update `.xcodebuildmcp/config.yaml` only if that should become the shared repo default.
+Update `.xcodebuildmcp/config.yaml` only when a new simulator should become the shared repo default.
+
+### Signing a simulator in
+
+Each simulator has its own Keychain, so a fresh or erased one starts logged out. When the installed Debug build shows the login screen (or Bots has no connection), run:
+
+```zsh
+scripts/sim-login <simulator-udid>
+```
+
+It relaunches the app with `HERMEX_DEV_*` environment variables read from the macOS Keychain; `DevAutoLogin.swift` (DEBUG builds only) signs in through the normal login paths. Nothing is printed and nothing is stored in the repo. One-time setup, prompting for each password:
+
+```zsh
+security add-generic-password -s hermex-webui -a <server-host> -w
+security add-generic-password -s hermex-bot -a <bot-username> -j <bot-address> -w
+```
+
+`hermex-bot` is optional; with it the script also saves the Bot connection and turns Bot Mode on.
+
+`scripts/sim-login <simulator-udid> --hermes` also adds a Hermes server at the `hermex-bot` address, signed in with the same username and password, and opens it once per launch; switching away afterwards sticks until the next run. It needs `hermex-bot`, or all three of `HERMEX_BOT_ADDRESS`, `HERMEX_BOT_USERNAME` and `HERMEX_BOT_PASSWORD` in the environment, which replace the Keychain item for that run. Without `--hermes` the script behaves as before.
+
+### Local Hermes test server
+
+For tool and approval turns without a real model or the real host, run the pinned hermes-agent on this Mac:
+
+```zsh
+scripts/local-hermes
+```
+
+The first run clones the commit in `HERMES_AGENT_TESTED_SHA` into `~/Library/Caches/hermex-local-hermes/` and installs it with `uv` (network needed); later runs start in seconds. It serves `http://127.0.0.1:9199` with the credentials it prints (`hermex` / `hermex-local`), backed by a scripted stub model: every turn says "Let me run a quick check.", asks to run `python3 -c "print(1)"` behind a manual approval, then replies "The command returned: …" with the result or the denial. **Approving really runs that command on this Mac.** Each run uses a temporary Hermes home, deleted on exit, with a fixed install id, so a saved connection keeps working across restarts. Ctrl-C stops only the process group the script started.
+
+It listens on loopback, so only the simulator can reach it. To open it as a Hermes server, run:
+
+```zsh
+HERMEX_BOT_ADDRESS=http://127.0.0.1:9199 HERMEX_BOT_USERNAME=hermex HERMEX_BOT_PASSWORD=hermex-local \
+  scripts/sim-login <simulator-udid> --hermes
+```
+
+That also saves it as your webui server's own Hermes connection if that server has none yet. To point an existing webui server's connection at it instead, open Settings → your server → **Hermes connection**, enter `http://127.0.0.1:9199` and the printed credentials, and save. This replaces that server's saved Hermes connection until you enter the real one again. `scripts/sim-login` never replaces an existing connection, so it won't switch back for you.
+
+## Launch arguments and profiling
+
+Debug builds read these launch arguments; Release builds compile none of them in.
+
+| Argument | What it does |
+|---|---|
+| `--rating-prompt-eligible` | Makes this launch eligible for the App Store rating prompt, so its real navigation and stream guards can be exercised. It rewrites the stored rating and tip-jar counters. |
+| `--stale-runtime-send` | Fails the first chat send of this launch with hermes-webui's `agent_runtime_stale` 409 instead of sending it, so the composer's restart banner and **Copy fix prompt** can be checked without updating Hermes on a server (#955). Later sends go to the server as usual. |
+| `--hitch-meter` | Shows a frame-hitch readout in the top-leading corner, such as `12.4 ms/s · 3 hitches · 60 Hz`: late-frame milliseconds per second, hitch count, and the refresh rate the display link reports, over the last second. It takes no touches, VoiceOver skips it, and it updates at most twice a second. |
+
+```zsh
+xcrun simctl launch <simulator-udid> com.uzairansar.hermesmobile --hitch-meter
+```
+
+The `HERMEX_DEV_*` environment variables (`HERMEX_DEV_SERVER_URL`, `HERMEX_DEV_PASSWORD`, `HERMEX_DEV_BOT_ADDRESS`/`_USERNAME`/`_PASSWORD`, and `HERMEX_DEV_HERMES_SERVER=1` for a Hermes server) sign a Debug build in; `scripts/sim-login` sets them from the macOS Keychain (§ Signing a simulator in).
+
+### Recording signposts
+
+`HermesMobile/Config/PerformanceSignposts.swift` marks eight intervals in every build, under the bundle ID as subsystem (`com.uzairansar.hermesmobile`, or `com.uzairansar.hermesmobile.branch` for Hermex Branch) and category `Performance`. Metadata is counts only; never add text, titles, paths, URLs, or IDs.
+
+| Interval | Measures | Metadata |
+|---|---|---|
+| `Launch` | The app's `init` to the first frame after a home list (webui or Hermes) holds session rows, cached or read; rows in a collapsed group count | `rows` |
+| `Session Open` | A session-list open (tap or keyboard, or a Hermes list pushing its chat) to the first transcript frame, or to the empty state when the transcript is empty | `messages` |
+| `Load Earlier` | Load earlier (button or pull) to the layout of the prepended rows | `messages` |
+| `Transcript Apply` | Painting the cached transcript, or applying a reloaded one | `messages` |
+| `Markdown Parse` | Parsing one markdown block | `chars` |
+| `Stream Batch Apply` | Applying one batch of streamed tokens | `mutated` (0 or 1) |
+| `Cache Read` | A SwiftData read of cached sessions or messages | `rows` |
+| `Cache Write` | A SwiftData write of cached sessions or messages | `rows` |
+
+In Xcode: Product → Profile (a Release build), choose the Animation Hitches or Time Profiler template, add the `os_signpost` instrument from the library, and filter it by the subsystem and category `Performance`.
+
+From the command line, with the app running on a simulator (`--attach` takes the app's display name, `Hermex`), then print the recorded intervals as XML:
+
+```zsh
+xcrun xctrace record --template 'Time Profiler' --instrument os_signpost \
+  --device <simulator-udid> --attach Hermex --time-limit 30s --output /tmp/hermex.trace
+xcrun xctrace export --input /tmp/hermex.trace \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="OSSignpostIntervals"][1]'
+```
+
+### Watching the Bot connection log
+
+`HermesConnection` logs Bot sign-ins and the gateway socket's lifecycle under the bundle ID as subsystem and the category `HermesConnection` (`docs/agents/hermes-server.md`). In Console.app, select a cabled iPhone, start streaming, and filter `subsystem:com.uzairansar.hermesmobile category:HermesConnection` (`com.uzairansar.hermesmobile.branch` for Hermex Branch). Check it on a device: the simulator's `log show` doesn't show these lines.
 
 ## Swift File-Size Policy
 
-The repo keeps the project style target of small Swift files, but file-size enforcement is warning-only while the large code-audit refactors continue.
-
-Run:
-
-```zsh
-scripts/check-swift-file-sizes
-```
-
-Policy:
-
-- Warn on production app Swift files over 500 LOC.
-- Exit successfully even when warnings are present.
-- Scope the check to `HermesMobile/` production app files.
-- Exempt tests, generated files, preview files, the share extension, and the live activity widget for now.
-- Use warnings to make future drift visible; do not block current work on known oversized files.
-
-You can override the warning threshold for local experiments:
-
-```zsh
-HERMES_SWIFT_FILE_SIZE_LIMIT=300 scripts/check-swift-file-sizes
-```
+`scripts/check-swift-file-sizes` warns on production app Swift files (`HermesMobile/`) over 500 LOC; tests, generated files, preview files, the share extension, and the live activity widget are exempt. It exits successfully even with warnings — it makes drift visible without blocking current work. Override the threshold for local experiments with `HERMES_SWIFT_FILE_SIZE_LIMIT=300 scripts/check-swift-file-sizes`.
 
 ## Raw xcodebuild Fallback
 
-Use raw `xcodebuild` when XcodeBuildMCP is unavailable, when validating lower-level build failures, or when matching the GitHub Actions release/archive commands exactly. The TestFlight workflows continue to use raw `xcodebuild` and are not replaced by XcodeBuildMCP.
+Use raw `xcodebuild` for builds when XcodeBuildMCP is unavailable, when validating lower-level build failures, or when matching the GitHub Actions release/archive commands exactly. Local XCTest uses `scripts/test-sim` above. The TestFlight workflows continue to use raw `xcodebuild` and are not replaced by XcodeBuildMCP.
 
 List available simulators:
 
@@ -174,38 +366,15 @@ xcrun simctl list devices available
 Build for an available iPhone simulator:
 
 ```zsh
-xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 15' build
+xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17' build
 ```
 
-If `iPhone 15` is not installed, choose a nearby available iPhone simulator.
+If `iPhone 17` is not installed, choose a nearby available iPhone simulator.
 
-## TestFlight Readiness Notes
+## TestFlight
 
-Current status:
-
-- App Store Connect app name: `Hermex`.
-- Xcode target/scheme name: `HermesMobile`.
-- iPhone home-screen display name: `Hermex`.
-- Bundle ID: `com.uzairansar.hermesmobile`.
-- Test bundle ID: `com.uzairansar.hermesmobile.tests`.
-- SKU: `hermes-mobile-ios`.
-- Apple Developer Team ID: `6GYD9C9N6R`.
-- Signing uses Xcode automatic signing.
-- Export compliance is declared in `Info.plist` with `ITSAppUsesNonExemptEncryption = NO`; the app does not implement custom/proprietary encryption and uses normal Apple/platform networking security.
-- App icon uses owner-supplied light and dark assets in `AppIcon.appiconset`.
-- Launch screen uses the plist-based `UILaunchScreen` placeholder from `Info.plist`, which is acceptable for internal TestFlight validation.
-- `PrivacyInfo.xcprivacy` is bundled with the app target. It declares no tracking, no developer-collected data, and app-only `UserDefaults` access for local preferences.
-- Camera capture is deferred and is not declared. Add `NSCameraUsageDescription` and update the privacy review only if camera capture is implemented later.
-- The current GitHub Actions upload path is intentionally internal-only. External TestFlight readiness and Beta App Review sequencing are tracked in [`TESTFLIGHT.md`](TESTFLIGHT.md).
-
-### Owner checklist: App Store Connect rename to Hermex
-
-After merging the repo rebrand slice, update App Store Connect metadata separately:
-
-1. Production app (`com.uzairansar.hermesmobile`): rename listing from `Hermes Agent Mobile` → `Hermex`.
-2. Branch TestFlight app (`com.uzairansar.hermesmobile.branch`): rename listing from `Hermes Agent Branch` → `Hermex Branch`.
-3. Update TestFlight/review notes and any metadata copy that still says the old app name.
-4. Upload a build and confirm TestFlight shows **Hermex** / **Hermex Branch** on the home screen after processing.
+Production internal/external uploads, signing setup, release gates, and review notes
+live in [`TESTFLIGHT.md`](TESTFLIGHT.md). The separate branch-app upload is below.
 
 ### Branch TestFlight upload (CLI) — the "push to branch testflight" command
 
@@ -220,6 +389,7 @@ Branch TestFlight app identity:
 - Main bundle ID: `com.uzairansar.hermesmobile.branch`
 - Share extension bundle ID: `com.uzairansar.hermesmobile.branch.shareextension`
 - Live Activity widget bundle ID: `com.uzairansar.hermesmobile.branch.liveactivitywidget`
+- Notification Service Extension bundle ID: `com.uzairansar.hermesmobile.branch.notifications`
 - Display name: `Hermex Branch`
 - App group: `group.com.uzairansar.hermesmobile.branch`
 - URL scheme: `hermes-agent-branch`
@@ -229,74 +399,22 @@ Steps:
 
 1. Validate the branch first: at minimum `git diff --check` plus a simulator build; run
    focused or full tests based on the branch's risk.
-2. Use a unique `CURRENT_PROJECT_VERSION` for every upload — prefer a timestamp-like
-   number such as `YYYYMMDDHHMM`.
-3. Archive with the reusable branch build config `Config/BranchTestFlight.xcconfig`:
+2. Commit the work, then run from the feature branch:
 
    ```zsh
-   xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -configuration Release \
-     -destination 'generic/platform=iOS' -archivePath build/HermesAgentBranch.xcarchive \
-     -xcconfig Config/BranchTestFlight.xcconfig CURRENT_PROJECT_VERSION=<unique-build-number> \
-     archive -allowProvisioningUpdates
+   scripts/branch-testflight
    ```
 
-4. Upload with the reusable export config `Config/BranchTestFlightExportOptions.plist`:
-
-   ```zsh
-   xcodebuild -exportArchive -archivePath build/HermesAgentBranch.xcarchive \
-     -exportOptionsPlist Config/BranchTestFlightExportOptions.plist \
-     -exportPath build/HermesAgentBranchExport -allowProvisioningUpdates
-   ```
-
-5. After upload succeeds, tell the owner the version/build number and that App Store
-   Connect/TestFlight may need processing time before it appears on the phone.
-
-Manual internal TestFlight release flow:
-
-1. Confirm `master` is clean and validated with the current simulator build/tests.
-2. Increment `CURRENT_PROJECT_VERSION` before every upload. `MARKETING_VERSION` can remain `1.0` while internal builds iterate.
-3. In Xcode, select `Any iOS Device` and run `Product > Archive`.
-4. In Organizer, choose `Distribute App > App Store Connect > Upload`.
-5. Wait for App Store Connect processing to complete.
-6. Add the build to the internal TestFlight group first and test on the owner's iPhone.
-7. Promote only owner-verified builds to external testers later. The first external build requires Beta App Review.
-
-GitHub Actions internal TestFlight flow:
-
-1. Configure a GitHub environment named `internal-testflight`. Require manual approval on that environment if available for the repository plan.
-2. Add these environment secrets:
-   - `APP_STORE_CONNECT_KEY_ID`: the App Store Connect API key ID.
-   - `APP_STORE_CONNECT_ISSUER_ID`: the App Store Connect issuer ID.
-   - `APP_STORE_CONNECT_PRIVATE_KEY`: the full `.p8` private key contents. A one-line value with escaped `\n` separators also works.
-3. Use an App Store Connect team API key with enough access to upload builds and let `xcodebuild -allowProvisioningUpdates` manage automatic signing for Team ID `6GYD9C9N6R`. If provisioning fails in CI, check the API key role, Apple Developer agreements, and App Store Connect access before changing the project to manual signing.
-4. Run the `Internal TestFlight` workflow manually from the GitHub Actions tab after the workflow file exists on the default branch.
-5. Select `master` as the workflow ref, set `confirm_internal_only` to `INTERNAL`, and leave `build_number` blank so the workflow selects the next App Store Connect build number for the current marketing version.
-6. The workflow archives the Release build, uploads directly to App Store Connect, and uses `testFlightInternalTestingOnly = true` so uploaded builds cannot be promoted to external TestFlight or App Store distribution.
-7. Wait for App Store Connect processing to complete, then add the processed build to the internal TestFlight group and test on the owner's iPhone.
-
-CI upload guardrails and likely failure modes:
-
-- The workflow only runs on manual `workflow_dispatch`, fails unless the selected ref is `master`, and serializes uploads with a single concurrency group.
-- The workflow detects `MARKETING_VERSION` from Xcode build settings, queries App Store Connect for existing uploaded builds for that version, selects the next build number, and overrides `CURRENT_PROJECT_VERSION` without editing the Xcode project. If `build_number` is provided manually, the workflow still fails before archiving unless that value is greater than the latest App Store Connect build.
-- Missing or malformed secrets fail before archiving. The private key must remain a secret and must never be committed.
-- Automatic signing can fail if the API key lacks Developer Portal/provisioning access, the Apple Developer Program agreements are pending, or App Store Connect has not finished recognizing the app record.
-- GitHub macOS runner image or Xcode changes can break archive behavior; the workflow logs `xcodebuild -version` to make that visible.
-- Upload success only means Apple accepted delivery. Processing, TestFlight group assignment, and later external tester promotion remain manual App Store Connect steps.
-- Builds uploaded through this workflow are marked internal-only. They cannot be used for external TestFlight, Beta App Review, or App Store distribution; use the separate external-capable path described in [`TESTFLIGHT.md`](TESTFLIGHT.md) for external review builds.
-
-GitHub Actions external-capable TestFlight flow:
-
-1. Use this only after the intended RC commit has passed local validation, been pushed to `origin/master`, and passed owner internal TestFlight smoke on a physical iPhone.
-2. Configure a GitHub environment named `external-testflight`. Require manual approval on that environment if available for the repository plan.
-3. Add the same App Store Connect secrets used by the internal workflow to the `external-testflight` environment.
-4. Run the `External TestFlight` workflow manually from the GitHub Actions tab.
-5. Select `master` as the workflow ref, set `confirm_external_review` to `EXTERNAL_REVIEW`, and leave `build_number` blank so the workflow selects the next App Store Connect build number for the current marketing version.
-6. The workflow archives the Release build, uploads directly to App Store Connect, and uses `ci/ExternalTestFlightExportOptions.plist`, which intentionally does not set `testFlightInternalTestingOnly`.
-7. Wait for App Store Connect processing to complete. Adding the build to an external group and submitting it to Beta App Review remain manual App Store Connect steps; the workflow does not invite testers.
+   It archives Release with `Config/BranchTestFlight.xcconfig` and a `YYYYMMDDHHMMSS`
+   build number, uploads with the internal-only `Config/BranchTestFlightExportOptions.plist`,
+   and keeps the archive and log under `build/branch-testflight/<build-number>/`.
+   It refuses to run on `master` or with uncommitted changes.
+3. Tell the owner the version and build number it prints. TestFlight shows the build
+   after App Store Connect finishes processing.
 
 ## Full-App Manual Regression Checklist
 
-Use this before internal TestFlight smoke builds and again before adding external testers.
+Run this on the first release candidate of each marketing version ([TESTFLIGHT.md](TESTFLIGHT.md#test-the-release-candidate)).
 Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://github.com/uzairansaruzi/hermex/issues).
 
 ### Onboarding/Auth
@@ -341,12 +459,13 @@ Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://githu
 - Workspace picker.
 - Profile switch, including new-session confirmation.
 - Attach file.
+- Capture a photo with the camera; check denial, cancellation, and attachment import.
 - Attach one photo.
 - Attach multiple photos.
 - Paste image/file.
 - Failed upload preserves draft.
 - Voice input allowed, denied, stopped, and sent.
-- Haptics on send/response completion on device.
+- Haptics on send/response completion on device, in Sessions chat and Bot Chat. Bot Chat also plays them on Stop and answers; rooms on send, Stop and approve, never on completion. A Bot turn that finished in the background plays none.
 
 ### Slash Commands
 - `/help`
@@ -389,10 +508,3 @@ Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://githu
 - Launch screen acceptable.
 - Privacy permission prompts readable.
 - TestFlight install path documented.
-
-Preferred Git workflow before CI automation:
-
-1. Create one short branch per work item, such as `issue/<n>-slug`.
-2. Build and test on that branch.
-3. Merge to `master` only after validation passes.
-4. Treat `master` as the source for internal TestFlight candidates.

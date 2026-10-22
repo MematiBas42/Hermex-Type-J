@@ -2,18 +2,24 @@ import SwiftUI
 
 struct GitWorkspaceView: View {
     let onAPIError: (Error) -> Void
+    /// Forwarded to the diff surface so a line selection can land in the composer.
+    let onAddToPrompt: ((String) -> Void)?
 
-    private let session: SessionSummary
-    private let server: URL
+    private let git: (any GitDataClient)?
     @State private var viewModel: GitWorkspaceViewModel
     @State private var selectedFile: GitFile?
     @Environment(\.dismiss) private var dismiss
 
-    init(session: SessionSummary, server: URL, onAPIError: @escaping (Error) -> Void) {
-        self.session = session
-        self.server = server
+    /// `git` is the chat's repository client, shared with its toolbar menu.
+    init(
+        git: (any GitDataClient)?,
+        onAPIError: @escaping (Error) -> Void,
+        onAddToPrompt: ((String) -> Void)? = nil
+    ) {
+        self.git = git
         self.onAPIError = onAPIError
-        _viewModel = State(initialValue: GitWorkspaceViewModel(session: session, server: server))
+        self.onAddToPrompt = onAddToPrompt
+        _viewModel = State(initialValue: GitWorkspaceViewModel(git: git))
     }
 
     var body: some View {
@@ -35,7 +41,14 @@ struct GitWorkspaceView: View {
         .presentationDetents([.medium, .large])
         .adaptivePagePresentation()
         .sheet(item: $selectedFile) { file in
-            GitDiffView(session: session, server: server, file: file, onAPIError: onAPIError)
+            // Every changed file in one surface, opened at the tapped one.
+            GitDiffView(
+                git: git,
+                files: viewModel.status?.trackedFiles ?? [file],
+                initialFile: file,
+                onAPIError: onAPIError,
+                onAddToPrompt: onAddToPrompt
+            )
         }
     }
 
@@ -160,21 +173,30 @@ struct GitAheadBehindBadges: View {
     }
 }
 
+/// "+N −M" in green and red. `deletions: nil` hides the red count, for a
+/// change whose deletions are unknown (a written file's old content).
 struct DiffCountsLabel: View {
     let additions: Int
-    let deletions: Int
+    let deletions: Int?
 
     var body: some View {
         HStack(spacing: 8) {
             Text(verbatim: "+\(additions)").foregroundStyle(.green)
-            Text(verbatim: "−\(deletions)").foregroundStyle(.red)
+            if let deletions {
+                Text(verbatim: "−\(deletions)").foregroundStyle(.red)
+            }
         }
         .font(AppFont.mono(style: .caption, weight: .semibold))
         .monospacedDigit()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            Text("\(additions) added") + Text(verbatim: ", ") + Text("\(deletions) removed")
-        )
+        .accessibilityLabel(Self.spokenText(additions: additions, deletions: deletions))
+    }
+
+    /// "3 added, 1 removed", or "3 added" when deletions are unknown.
+    static func spokenText(additions: Int, deletions: Int?) -> String {
+        let added = String(localized: "\(additions) added")
+        guard let deletions else { return added }
+        return added + ", " + String(localized: "\(deletions) removed")
     }
 }
 

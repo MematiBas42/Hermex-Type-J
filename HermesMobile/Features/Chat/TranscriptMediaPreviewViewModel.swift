@@ -1,16 +1,20 @@
-import AVFoundation
 import Foundation
 import SwiftUI
 
+/// One transcript media reference's preview and export. A MEDIA path downloads through the
+/// chat's `WorkspaceFileClient`, from webui's `/api/media` or a Hermes host (#1112); nil is a
+/// chat without a session to read from. A remote URL downloads through `apiClient`.
 @MainActor
 @Observable
 final class TranscriptMediaPreviewViewModel {
-    private let sessionID: String?
+    private let files: (any WorkspaceFileClient)?
     private let reference: TranscriptMediaReference
     private let apiClient: APIClient
     private var didLoad = false
     private var loadGeneration = 0
     private var originalData: Data?
+    /// The preview stopped at its 25 MB cap (a Hermes host), so export reads the whole file.
+    private var isPastPreviewCap = false
     private var temporaryVideoURL: URL?
 
     private(set) var previewData: Data?
@@ -23,11 +27,11 @@ final class TranscriptMediaPreviewViewModel {
 
     init(
         server: URL,
-        sessionID: String?,
+        files: (any WorkspaceFileClient)?,
         reference: TranscriptMediaReference,
         apiClient: APIClient? = nil
     ) {
-        self.sessionID = sessionID
+        self.files = files
         self.reference = reference
         self.apiClient = apiClient ?? APIClient(baseURL: server)
     }
@@ -45,7 +49,7 @@ final class TranscriptMediaPreviewViewModel {
     }
 
     var canExportMedia: Bool {
-        originalData != nil
+        originalData != nil || isPastPreviewCap
     }
 
     func load(force: Bool = false) async {
@@ -58,6 +62,7 @@ final class TranscriptMediaPreviewViewModel {
         videoFileURL = nil
         originalByteCount = nil
         originalData = nil
+        isPastPreviewCap = false
         removeTemporaryVideoFile()
 
         guard reference.isRasterImageCandidate || reference.isVideoCandidate else {
@@ -88,6 +93,10 @@ final class TranscriptMediaPreviewViewModel {
                 }
                 temporaryVideoURL = fileURL
                 videoFileURL = fileURL
+            } else if reference.isExtensionlessRemoteMediaCandidate, Self.isAudioData(data) {
+                // Sniffed before the image decode: a WAV header is a RIFF
+                // container, which sends ImageIO looking for a WebP codec.
+                audioData = data
             } else {
                 if let downsampled = await ImagePreviewDownsampler.previewDataAsync(
                     from: data,
@@ -98,13 +107,9 @@ final class TranscriptMediaPreviewViewModel {
                 } else {
                     guard !Task.isCancelled, loadGeneration == generation else { return }
                     if reference.isExtensionlessRemoteMediaCandidate {
-                        if Self.isAudioData(data) {
-                            audioData = data
-                        } else {
-                            let fileURL = try writeTemporaryVideoFile(data)
-                            temporaryVideoURL = fileURL
-                            videoFileURL = fileURL
-                        }
+                        let fileURL = try writeTemporaryVideoFile(data)
+                        temporaryVideoURL = fileURL
+                        videoFileURL = fileURL
                     } else {
                         errorMessage = String(localized: "Could not decode this image.")
                     }
@@ -114,6 +119,7 @@ final class TranscriptMediaPreviewViewModel {
             guard !Task.isCancelled, loadGeneration == generation else { return }
             lastError = error
             errorMessage = error.localizedDescription
+            isPastPreviewCap = error as? BotArtifactFailure == .tooLarge
         }
     }
 
@@ -134,7 +140,11 @@ final class TranscriptMediaPreviewViewModel {
     }
 
     func exportPayload() async throws -> FileExportPayload {
-        let data = try await originalMediaData()
+        let data = if isPastPreviewCap, case let .localPath(path) = reference.source, let files {
+            try await files.mediaExportData(path: path)
+        } else {
+            try await originalMediaData()
+        }
         return TranscriptMediaExportSupport.payload(
             for: reference,
             data: data,
@@ -144,23 +154,12 @@ final class TranscriptMediaPreviewViewModel {
 
     private func transcriptMediaData() async throws -> Data {
         switch reference.source {
-        case .localPath:
-            guard let sessionID = resolvedSessionID else {
-                throw TranscriptMediaPreviewError.missingSessionID
-            }
-            return try await apiClient.transcriptMediaData(for: reference, sessionID: sessionID)
-        case .remoteURL:
-            return try await apiClient.transcriptMediaData(for: reference, sessionID: resolvedSessionID ?? "")
+        case let .localPath(path):
+            guard let files else { throw TranscriptMediaPreviewError.missingSessionID }
+            return try await files.mediaData(path: path)
+        case let .remoteURL(url):
+            return try await apiClient.remoteTranscriptMediaData(from: url)
         }
-    }
-
-    private var resolvedSessionID: String? {
-        guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionID.isEmpty
-        else {
-            return nil
-        }
-        return sessionID
     }
 
     func cleanupTemporaryFiles() {
@@ -187,7 +186,7 @@ final class TranscriptMediaPreviewViewModel {
     }
 
     private static func isAudioData(_ data: Data) -> Bool {
-        (try? AVAudioPlayer(data: data)) != nil
+        AttachmentAudioDetection.containerType(of: data) != nil
     }
 
     private var resolvedExportKind: TranscriptMediaResolvedExportKind? {
@@ -207,7 +206,7 @@ final class TranscriptMediaPreviewViewModel {
     }
 }
 
-private enum TranscriptMediaPreviewError: LocalizedError {
+enum TranscriptMediaPreviewError: LocalizedError {
     case missingSessionID
 
     var errorDescription: String? {

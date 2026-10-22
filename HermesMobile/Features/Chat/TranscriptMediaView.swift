@@ -12,6 +12,32 @@ struct TranscriptMediaPreviewItem: Identifiable, Equatable {
     }
 }
 
+/// The active session's workspace root, read by the transcript to resolve the relative
+/// forms of `![alt](path)` (`./`, `../`, `~/`). It is a base, not a boundary: absolute
+/// paths and `file:` URLs need no root, and `/api/media` owns the allow-list that decides
+/// what the server will actually serve.
+extension EnvironmentValues {
+    var chatWorkspaceRoot: String? {
+        get { self[ChatWorkspaceRootKey.self] }
+        set { self[ChatWorkspaceRootKey.self] = newValue }
+    }
+
+    /// Hermes sessions opt into document previews without changing the webui
+    /// transcript's download-only file rows.
+    var previewsHermesDocuments: Bool {
+        get { self[HermesDocumentPreviewKey.self] }
+        set { self[HermesDocumentPreviewKey.self] = newValue }
+    }
+}
+
+private struct ChatWorkspaceRootKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+private struct HermesDocumentPreviewKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 struct TranscriptMediaContentView: View {
     let segments: [TranscriptMediaSegment]
     let cacheNamespace: String
@@ -19,6 +45,7 @@ struct TranscriptMediaContentView: View {
     let loadMediaData: ((TranscriptMediaReference) async -> Data?)?
     let onPreviewMedia: ((TranscriptMediaReference) -> Void)?
     let isStreaming: Bool
+    @Environment(\.previewsHermesDocuments) private var previewsHermesDocuments
 
     init(
         segments: [TranscriptMediaSegment],
@@ -45,17 +72,22 @@ struct TranscriptMediaContentView: View {
                         MarkdownRenderer(content: text, isStreaming: isStreaming)
                     }
                 case let .media(reference):
-                    TranscriptMediaThumbnailView(
+                    let thumbnail = TranscriptMediaThumbnailView(
                         reference: reference,
                         cacheNamespace: cacheNamespace,
                         loadMediaImage: loadMediaImage,
                         loadMediaData: loadMediaData,
                         onPreviewMedia: onPreviewMedia
                     )
-                    // Pin the image container LTR so media keeps its leading-edge
-                    // anchor inside an RTL message (#259); the text segments above
-                    // still follow the chat direction.
-                    .forcedLeftToRight()
+                    // Pin other media LTR so it keeps its leading-edge anchor inside an RTL
+                    // message (#259); the text segments above still follow the chat
+                    // direction, and so does a Hermes document's preview row.
+                    if previewsHermesDocuments && reference.isHermesDocumentCandidate
+                        && onPreviewMedia != nil && loadMediaData != nil {
+                        thumbnail
+                    } else {
+                        thumbnail.forcedLeftToRight()
+                    }
                 }
             }
         }
@@ -68,6 +100,7 @@ private struct TranscriptMediaThumbnailView: View {
     let loadMediaImage: ((TranscriptMediaReference) async -> Data?)?
     let loadMediaData: ((TranscriptMediaReference) async -> Data?)?
     let onPreviewMedia: ((TranscriptMediaReference) -> Void)?
+    @Environment(\.previewsHermesDocuments) private var previewsHermesDocuments
 
     @State private var image: UIImage?
     @State private var didAttemptLoad = false
@@ -100,11 +133,10 @@ private struct TranscriptMediaThumbnailView: View {
                 guard let loadMediaImage else { return }
                 image = nil
                 didAttemptLoad = false
-                let loadedImage = await TranscriptMediaImageCache.shared.image(
-                    for: reference,
-                    cacheNamespace: cacheNamespace,
-                    loadMediaImage: loadMediaImage
-                )
+                let reference = reference
+                let loadedImage = await TranscriptImageCache.shared.image(forKey: imageCacheKey.cacheKey) {
+                    await loadMediaImage(reference)
+                }
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     image = loadedImage
@@ -138,7 +170,9 @@ private struct TranscriptMediaThumbnailView: View {
                     reference: reference,
                     loadMediaData: {
                         await loadMediaData(reference)
-                    }
+                    },
+                    onPreview: previewsHermesDocuments && reference.isHermesDocumentCandidate
+                        ? onPreviewMedia.map { preview in { preview(reference) } } : nil
                 )
             } else {
                 TranscriptMediaUnavailableChip(reference: reference)
@@ -158,7 +192,7 @@ private struct TranscriptMediaThumbnailView: View {
             return String(localized: "Open media video \(reference.displayName)")
         }
 
-        return String(localized: "Open media image \(reference.displayName)")
+        return String(localized: "Open media image \(reference.accessibilityName)")
     }
 
     @ViewBuilder
@@ -385,9 +419,13 @@ private struct TranscriptMediaAudioExportView: View {
     }
 }
 
+/// A MEDIA file's row: its download button exports the whole file. With `onPreview` (a
+/// Hermes document, #145) the rest of the row opens the capped native preview instead, so a
+/// file over the preview cap still saves and shares from here.
 private struct TranscriptMediaFileExportView: View {
     let reference: TranscriptMediaReference
     let loadMediaData: () async -> Data?
+    let onPreview: (() -> Void)?
 
     @State private var cachedData: Data?
     @State private var exportDocument = ExportedFileDocument(data: Data())
@@ -400,35 +438,32 @@ private struct TranscriptMediaFileExportView: View {
     init(
         reference: TranscriptMediaReference,
         initialData: Data? = nil,
-        loadMediaData: @escaping () async -> Data?
+        loadMediaData: @escaping () async -> Data?,
+        onPreview: (() -> Void)? = nil
     ) {
         self.reference = reference
         self.loadMediaData = loadMediaData
+        self.onPreview = onPreview
         _cachedData = State(initialValue: initialData)
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "doc")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(reference.displayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color(.label))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Text(isExporting
-                     ? String(localized: "Loading…")
-                     : String(localized: "Tap to download"))
-                    .font(.caption2)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .lineLimit(1)
+            if let onPreview {
+                Button(action: onPreview) {
+                    HStack(spacing: 8) {
+                        fileLabel
+                        Image(systemName: "chevron.forward")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color(.secondaryLabel))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.chatTactile(.thumbnail))
+                .accessibilityLabel(String(localized: "Preview \(reference.displayName)"))
+            } else {
+                fileLabel
             }
-
-            Spacer(minLength: 8)
 
             Button {
                 Task { await exportFile() }
@@ -476,6 +511,31 @@ private struct TranscriptMediaFileExportView: View {
             }
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    private var fileLabel: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reference.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(.label))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Text(isExporting
+                     ? String(localized: "Loading…")
+                     : onPreview == nil ? String(localized: "Tap to download") : String(localized: "Tap to preview"))
+                    .font(.caption2)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
         }
     }
 
@@ -592,44 +652,8 @@ private struct TranscriptMediaUnavailableChip: View {
     }
 }
 
-private actor TranscriptMediaImageCache {
-    static let shared = TranscriptMediaImageCache()
-
-    private var cache: [TranscriptMediaImageCacheKey: UIImage] = [:]
-    private var inFlight: [TranscriptMediaImageCacheKey: Task<UIImage?, Never>] = [:]
-
-    func image(
-        for reference: TranscriptMediaReference,
-        cacheNamespace: String,
-        loadMediaImage: @escaping (TranscriptMediaReference) async -> Data?
-    ) async -> UIImage? {
-        let key = TranscriptMediaImageCacheKey(namespace: cacheNamespace, reference: reference)
-        if let cached = cache[key] {
-            return cached
-        }
-
-        if let task = inFlight[key] {
-            return await task.value
-        }
-
-        let task = Task<UIImage?, Never> {
-            guard let data = await loadMediaImage(reference) else {
-                return nil
-            }
-            return UIImage(data: data)
-        }
-
-        inFlight[key] = task
-        let image = await task.value
-        inFlight[key] = nil
-
-        if let image {
-            cache[key] = image
-        }
-        return image
-    }
-}
-
+/// Identifies a linked image in `TranscriptImageCache`, scoped by server and
+/// session so identical `MEDIA:` paths can't bypass the session-aware fetch.
 struct TranscriptMediaImageCacheKey: Hashable {
     let namespace: String
     let referenceID: String
@@ -637,6 +661,12 @@ struct TranscriptMediaImageCacheKey: Hashable {
     init(namespace: String, reference: TranscriptMediaReference) {
         self.namespace = namespace
         referenceID = reference.id
+    }
+
+    /// The shared cache's key. The kind prefix keeps it apart from attachment
+    /// keys; the length prefix keeps the namespace boundary fixed.
+    var cacheKey: String {
+        "media|\(namespace.utf8.count)|\(namespace)|\(referenceID)"
     }
 }
 
@@ -657,7 +687,7 @@ struct TranscriptMediaPreviewView: View {
 
     init(
         server: URL,
-        sessionID: String?,
+        files: (any WorkspaceFileClient)?,
         item: TranscriptMediaPreviewItem,
         onAPIError: @escaping (Error) -> Void
     ) {
@@ -666,7 +696,7 @@ struct TranscriptMediaPreviewView: View {
         _viewModel = State(
             initialValue: TranscriptMediaPreviewViewModel(
                 server: server,
-                sessionID: sessionID,
+                files: files,
                 reference: item.reference
             )
         )
@@ -917,7 +947,10 @@ struct TranscriptMediaPreviewView: View {
                 }
                 try await PhotoLibrarySaver.saveImageData(payload.data)
             } else if payload.isVideo {
-                try await PhotoLibrarySaver.saveVideoData(payload.data, contentType: payload.contentType)
+                guard let videoFileURL = viewModel.videoFileURL else {
+                    throw PhotoLibrarySaveError.videoFileUnavailable
+                }
+                try await PhotoLibrarySaver.saveVideoFile(at: videoFileURL)
             } else {
                 throw PhotoLibrarySaveError.notPhotosMedia
             }

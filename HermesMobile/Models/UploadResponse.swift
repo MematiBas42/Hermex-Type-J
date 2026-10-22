@@ -11,13 +11,37 @@ struct UploadResponse: Codable {
 }
 
 struct PendingAttachment: Identifiable, Equatable {
-    let id = UUID()
+    let id: UUID
     let name: String
     let path: String
     let mime: String
     let size: Int?
     let isImage: Bool
     let thumbnailData: Data?
+    /// File name of the durable app-owned draft copy in ChatDraftAttachmentStore.
+    /// Fresh composer attachments always have one; standalone sends such as voice
+    /// notes do not participate in draft persistence and leave it nil.
+    let draftFileName: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        path: String,
+        mime: String,
+        size: Int? = nil,
+        isImage: Bool,
+        thumbnailData: Data? = nil,
+        draftFileName: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.path = path
+        self.mime = mime
+        self.size = size
+        self.isImage = isImage
+        self.thumbnailData = thumbnailData
+        self.draftFileName = draftFileName
+    }
 }
 
 enum ImagePreviewDownsampler {
@@ -115,14 +139,6 @@ extension PendingAttachment {
         "\(filename) is too large. Attachments must be \(maximumUploadSizeDescription) or smaller."
     }
 
-    var chatReference: String {
-        if isImage {
-            return path.isEmpty ? name : path
-        }
-
-        return path.isEmpty ? name : path
-    }
-
     func toJSONValue() -> JSONValue {
         var object: [String: JSONValue] = [
             "name": .string(name),
@@ -137,15 +153,50 @@ extension PendingAttachment {
     }
 
     static func chatMessageText(draft: String, attachments: [PendingAttachment]) -> String {
-        let references = attachments
-            .map(\.chatReference)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let references = agentReferences(for: attachments)
 
         guard !references.isEmpty else {
             return draft
         }
 
+        // Attachment-only sends synthesize the message the web UI sends
+        // (`static/messages.js`), since the server requires non-empty text.
+        let base = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty {
+            return "I've uploaded \(references.count) file(s): \(references.joined(separator: ", "))"
+        }
+
         return "\(draft)\n\n[Attached files: \(references.joined(separator: ", "))]"
+    }
+
+    /// True for the text `chatMessageText` makes up for an attachment-only
+    /// send: it names the files, not anything the user typed.
+    static func isAttachmentOnlyMessageText(_ text: String) -> Bool {
+        text.wholeMatch(of: /I've uploaded \d+ file\(s\): .+/) != nil
+    }
+
+    /// The steer text with the web UI's attached-files note appended verbatim
+    /// (`static/commands.js`, `_steerTextWithPendingFiles`), so a steer reads
+    /// the same from either client. The files are already uploaded, so the
+    /// note is all the agent needs to find them.
+    static func steerMessageText(draft: String, attachments: [PendingAttachment]) -> String {
+        let references = agentReferences(for: attachments)
+
+        guard !references.isEmpty else {
+            return draft
+        }
+
+        let note = "[Attached files for this steer: \(references.joined(separator: ", "))]\n"
+            + "Use the file tools/read_file to inspect these documents if needed."
+        return "\(draft)\n\n\(note)"
+    }
+
+    /// Where the agent reads each attachment: its uploaded path, or its name
+    /// when the upload returned no path.
+    private static func agentReferences(for attachments: [PendingAttachment]) -> [String] {
+        attachments
+            .map { $0.path.isEmpty ? $0.name : $0.path }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

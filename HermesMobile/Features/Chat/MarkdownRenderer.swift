@@ -16,44 +16,25 @@ struct MarkdownRenderer: View {
         self.isStreaming = isStreaming
     }
 
-    /// Keeps the streaming renderer mounted briefly after streaming ends so
-    /// the reveal queue's in-flight glyph cascade can finish instead of
-    /// snapping to the solid static rendering mid-fade.
-    @State private var lingersAfterStreaming = false
-
     var body: some View {
-        Group {
-            if isStreaming || lingersAfterStreaming {
-                StreamingMarkdownRenderer(content: content)
-            } else if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(verbatim: " ")
-            } else if let fallbackReason = MarkdownContentRenderingPolicy.fallbackReason(for: content) {
-                PlainMarkdownFallbackView(
-                    content: content,
-                    reason: fallbackReason
-                )
-            } else {
-                markdownContent
-            }
-        }
-        .onChange(of: isStreaming) { wasStreaming, nowStreaming in
-            if wasStreaming, !nowStreaming {
-                lingersAfterStreaming = true
-            }
-        }
-        .task(id: isStreaming) {
-            guard !isStreaming else { return }
-            try? await Task.sleep(for: .seconds(StreamingTextFadeDefaults.framePauseDelay))
-            guard !Task.isCancelled else { return }
-            lingersAfterStreaming = false
+        if isStreaming {
+            StreamingMarkdownRenderer(content: content)
+        } else if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text(verbatim: " ")
+        } else if let fallbackReason = MarkdownContentRenderingPolicy.fallbackReason(for: content) {
+            PlainMarkdownFallbackView(
+                content: content,
+                reason: fallbackReason
+            )
+        } else {
+            markdownContent
         }
     }
 
     @ViewBuilder
     private var markdownContent: some View {
-        let segments = MarkdownMathSegmenter.segments(in: content)
-
-        if segments.containsMath {
+        switch MarkdownMathLayoutCache.layout(for: content) {
+        case .segmented(let segments):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                     switch segment {
@@ -70,14 +51,14 @@ struct MarkdownRenderer: View {
                     }
                 }
             }
-            .textSelection(.enabled)
-        } else {
+            .responseTextSelectionPolicy()
+        case .plain(let markdown):
             ChatMarkdownView(
-                content: MarkdownMathFormatter.replacingInlineMath(in: content),
+                content: markdown,
                 colorScheme: colorScheme,
                 isStreaming: isStreaming
             )
-            .textSelection(.enabled)
+            .responseTextSelectionPolicy()
         }
     }
 }
@@ -85,7 +66,6 @@ struct MarkdownRenderer: View {
 struct StreamingMarkdownRenderer: View {
     let content: String
 
-    @Environment(\.colorScheme) private var colorScheme
     @State private var displayedContent: String
 
     init(content: String) {
@@ -94,31 +74,53 @@ struct StreamingMarkdownRenderer: View {
     }
 
     var body: some View {
-        Group {
-            if displayedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(verbatim: " ")
-            } else if let fallbackReason = MarkdownContentRenderingPolicy.fallbackReason(for: displayedContent) {
-                PlainMarkdownFallbackView(
-                    content: displayedContent,
-                    reason: fallbackReason
-                )
-            } else {
-                streamingMarkdownContent
+        // `content` changes first and `displayedContent` catches up after the
+        // yield, so the first body pass of each update hands the child the
+        // text it already drew. `.equatable()` skips the child's whole-reply
+        // work (trim, fallback policy, math layout) on that pass.
+        StreamingMarkdownDisplayedContentView(content: displayedContent)
+            .equatable()
+            .task(id: content) {
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                guard displayedContent != content else { return }
+                displayedContent = content
             }
-        }
-        .task(id: content) {
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            guard displayedContent != content else { return }
-            displayedContent = content
+    }
+}
+
+/// The streaming reply as `StreamingMarkdownRenderer` currently displays it.
+/// Equatable on `content` so a parent pass with unchanged text is free;
+/// environment changes (color scheme) still update it.
+private struct StreamingMarkdownDisplayedContentView: View, Equatable {
+    let content: String
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.content == rhs.content
+    }
+
+    var body: some View {
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text(verbatim: " ")
+        } else if let fallbackReason = MarkdownContentRenderingPolicy.fallbackReason(for: content) {
+            PlainMarkdownFallbackView(
+                content: content,
+                reason: fallbackReason
+            )
+        } else {
+            streamingMarkdownContent
         }
     }
 
     @ViewBuilder
     private var streamingMarkdownContent: some View {
-        let segments = MarkdownMathSegmenter.segments(in: displayedContent)
-
-        if segments.containsMath {
+        // Streaming text changes on nearly every token, so this deliberately
+        // does not memoize; it only avoids the redundant second full-string
+        // `replacingInlineMath` pass the no-math branch used to run.
+        switch MarkdownMathLayoutCache.uncachedLayout(for: content) {
+        case .segmented(let segments):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                     switch segment {
@@ -134,9 +136,9 @@ struct StreamingMarkdownRenderer: View {
                     }
                 }
             }
-        } else {
+        case .plain(let markdown):
             StreamingMarkdownChunkedView(
-                content: MarkdownMathFormatter.replacingInlineMath(in: displayedContent),
+                content: markdown,
                 colorScheme: colorScheme
             )
         }
@@ -144,41 +146,26 @@ struct StreamingMarkdownRenderer: View {
 
 }
 
+/// The background a wide markdown table fades its hidden edges into. Defaults
+/// to the transcript background. Grouped lists set their row colour; a host
+/// on a translucent fill sets nil, which turns the fade off.
+struct MarkdownTableEdgeFadeColorKey: EnvironmentKey {
+    static let defaultValue: SwiftUI.Color? = SwiftUI.Color(.systemBackground)
+}
+
+extension EnvironmentValues {
+    var markdownTableEdgeFadeColor: SwiftUI.Color? {
+        get { self[MarkdownTableEdgeFadeColorKey.self] }
+        set { self[MarkdownTableEdgeFadeColorKey.self] = newValue }
+    }
+}
+
 private struct StreamingMarkdownChunkedView: View {
     let content: String
     let colorScheme: ColorScheme
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage(StreamedTextAnimationSettings.isEnabledKey) private var isStreamedTextAnimationEnabled = true
-
-    /// First block ordinal still in the fade window. Starts at `Int.max`
-    /// (everything solid) until `onAppear` anchors it at the current block,
-    /// so text already on screen when the view mounts never fades.
-    @State private var firstFadeOrdinal = Int.max
-    /// Ordinal of the current block at mount; only blocks created after it
-    /// arm their stores (pre-existing blocks take the solid baseline).
-    @State private var mountBoundaryCount = Int.max
-    @State private var lastBoundaryCount = 0
-    @State private var lastTouchedAt: [Int: TimeInterval] = [:]
-    @State private var fadesActive = false
-    /// One reveal cursor for all fade blocks of this view, so consecutive
-    /// blocks (paragraphs, list items) appear in reading order even when a
-    /// fast stream backlogs a block's queue toward `maxStampLead`.
-    @State private var chain = StreamingTextFadeStampChain()
-
-    private var segments: StreamingMarkdownBlockSegments {
-        StreamingMarkdownBlockSplitter.split(content)
-    }
-
     var body: some View {
-        let blockSplit = StreamingTextFadeTailSplitter.split(
-            segments.activeMarkdown,
-            firstFadeOrdinal: StreamedTextAnimationSettings.effectiveFirstFadeOrdinal(
-                firstFadeOrdinal,
-                reduceMotion: reduceMotion,
-                isEnabled: isStreamedTextAnimationEnabled
-            )
-        )
+        let segments = StreamingMarkdownBlockSplitter.split(content)
 
         VStack(alignment: .leading, spacing: 0) {
             ForEach(segments.stableChunks) { chunk in
@@ -189,169 +176,12 @@ private struct StreamingMarkdownChunkedView: View {
                 )
             }
 
-            if !blockSplit.head.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !segments.activeMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ChatMarkdownView(
-                    content: blockSplit.head,
+                    content: segments.activeMarkdown,
                     colorScheme: colorScheme,
                     isStreaming: true
                 )
-            }
-
-            if !blockSplit.blocks.isEmpty {
-                // One shared frame clock for every fade block. Per frame only
-                // the renderer's clock input changes; each block's markdown
-                // inputs are untouched, so their bodies (and text layout) are
-                // not re-evaluated.
-                TimelineView(.animation(minimumInterval: nil, paused: !fadesActive)) { context in
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(blockSplit.blocks, id: \.ordinal) { block in
-                            StreamingFadeBlockView(
-                                text: block.text,
-                                colorScheme: colorScheme,
-                                fadeEnabled: block.fadeEnabled,
-                                armOnAppear: block.ordinal > mountBoundaryCount,
-                                clock: context.date.timeIntervalSinceReferenceDate,
-                                chain: chain
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear {
-            anchorFadeWindowAtCurrentBlock()
-        }
-        .onChange(of: content) { oldContent, newContent in
-            advanceFadeWindow(from: oldContent, to: newContent)
-        }
-        .onChange(of: isStreamedTextAnimationEnabled) { _, isEnabled in
-            if isEnabled {
-                anchorFadeWindowAtCurrentBlock()
-            }
-        }
-        .onChange(of: reduceMotion) { _, reduceMotion in
-            if !reduceMotion {
-                anchorFadeWindowAtCurrentBlock()
-            }
-        }
-        .task(id: content) {
-            // Let queued reveals and the newest fade finish, then pause frame
-            // updates until more content arrives (e.g. the stream stalls on
-            // tool use). A new change cancels this task and restarts it.
-            try? await Task.sleep(for: .seconds(StreamingTextFadeDefaults.framePauseDelay))
-            guard !Task.isCancelled else { return }
-            fadesActive = false
-        }
-    }
-
-    /// Anchors the fade window at the current block: everything visible now
-    /// takes the solid baseline, only text streamed afterwards fades. Used at
-    /// mount, and again whenever fading becomes active mid-stream (animation
-    /// setting flipped on, Reduce Motion turned off) — the window bookkeeping
-    /// keeps advancing while fades route to the head, so without re-anchoring
-    /// the reopened window would arm blocks the user is already reading and
-    /// visibly re-fade them.
-    private func anchorFadeWindowAtCurrentBlock() {
-        let split = StreamingTextFadeTailSplitter.split(segments.activeMarkdown, firstFadeOrdinal: 0)
-        firstFadeOrdinal = split.boundaryCount
-        mountBoundaryCount = split.boundaryCount
-        lastBoundaryCount = split.boundaryCount
-        lastTouchedAt = [:]
-    }
-
-    private func advanceFadeWindow(from oldContent: String, to newContent: String) {
-        let now = Date().timeIntervalSinceReferenceDate
-        let oldActive = StreamingMarkdownBlockSplitter.split(oldContent).activeMarkdown
-        let newActive = StreamingMarkdownBlockSplitter.split(newContent).activeMarkdown
-        let split = StreamingTextFadeTailSplitter.split(newActive, firstFadeOrdinal: firstFadeOrdinal)
-
-        if !newActive.hasPrefix(oldActive) {
-            // Replaced content or a sealed stable chunk shifted the active
-            // window: ordinals no longer line up, so restart the fade window
-            // at the current block (renders solid, then new text fades).
-            lastTouchedAt = [:]
-            firstFadeOrdinal = split.boundaryCount
-            lastBoundaryCount = split.boundaryCount
-            chain.reset()
-            fadesActive = true
-            return
-        }
-
-        // Only the current block and any blocks newly created by this append
-        // were touched; everything earlier is frozen text aging toward
-        // absorption. min() also covers an item boundary vanishing when its
-        // nested child arrives (the merged block is current again).
-        for block in split.blocks where block.ordinal >= min(lastBoundaryCount, split.boundaryCount) {
-            lastTouchedAt[block.ordinal] = now
-        }
-        lastBoundaryCount = split.boundaryCount
-
-        firstFadeOrdinal = StreamingTextFadeWindow.advanceStart(
-            current: min(firstFadeOrdinal, split.boundaryCount),
-            boundaryCount: split.boundaryCount,
-            lastTouchedAt: lastTouchedAt,
-            now: now
-        )
-        lastTouchedAt = lastTouchedAt.filter { $0.key >= firstFadeOrdinal }
-        fadesActive = true
-    }
-}
-
-/// One block of the streaming fade window, drawn through
-/// `StreamingTextFadeRenderer` with its own stamp store so neighbouring
-/// blocks' character offsets never collide. The block keeps fading after it
-/// completes — it only leaves the window (and joins the solid head) once its
-/// cascade is provably finished, which is what prevents end-of-block snaps.
-private struct StreamingFadeBlockView: View {
-    let text: String
-    let colorScheme: ColorScheme
-    let fadeEnabled: Bool
-    let armOnAppear: Bool
-    let clock: TimeInterval
-
-    @State private var store: StreamingTextFadeStampStore<Text.Layout.CharacterIndex>
-
-    init(
-        text: String,
-        colorScheme: ColorScheme,
-        fadeEnabled: Bool,
-        armOnAppear: Bool,
-        clock: TimeInterval,
-        chain: StreamingTextFadeStampChain
-    ) {
-        self.text = text
-        self.colorScheme = colorScheme
-        self.fadeEnabled = fadeEnabled
-        self.armOnAppear = armOnAppear
-        self.clock = clock
-        _store = State(initialValue: StreamingTextFadeStampStore(chain: chain))
-    }
-
-    var body: some View {
-        Group {
-            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if fadeEnabled {
-                    ChatMarkdownView(
-                        content: text,
-                        colorScheme: colorScheme,
-                        isStreaming: true
-                    )
-                    .textRenderer(StreamingTextFadeRenderer(clock: clock, store: store))
-                } else {
-                    ChatMarkdownView(
-                        content: text,
-                        colorScheme: colorScheme,
-                        isStreaming: true
-                    )
-                }
-            }
-        }
-        .onAppear {
-            // Blocks appearing after the view mounted are newly streamed text
-            // and must fade from their first glyph; blocks present at mount
-            // are pre-existing text and take the solid baseline instead.
-            if armOnAppear {
-                store.rolloverReset()
             }
         }
     }
@@ -363,24 +193,19 @@ private struct ChatMarkdownView: View {
     let isStreaming: Bool
 
     var body: some View {
-        Markdown(content)
+        // Parsed here rather than inside `Markdown(_: String)` so the parse alone is timed.
+        let signpost = performanceSignposter.beginInterval("Markdown Parse")
+        let parsedContent = MarkdownContent(content)
+        performanceSignposter.endInterval("Markdown Parse", signpost, "chars=\(content.count, privacy: .public)")
+
+        return Markdown(parsedContent)
+            .environment(\.containsInlineMath, content.contains(InlineMathSource.marker))
             .markdownTheme(MarkdownUI.Theme.chat(colorScheme: colorScheme, isStreaming: isStreaming))
             .markdownTextStyle {
                 ForegroundColor(.primary)
                 BackgroundColor(nil)
             }
-            .markdownTextStyle(\.code) {
-                FontFamilyVariant(.monospaced)
-                FontSize(.em(0.88))
-                BackgroundColor(SwiftUI.Color(.tertiarySystemGroupedBackground))
-            }
             .markdownCodeSyntaxHighlighter(.plainText)
-            .markdownBlockStyle(\.paragraph) { configuration in
-                configuration.label
-                    .fixedSize(horizontal: false, vertical: true)
-                    .relativeLineSpacing(.em(0.18))
-                    .markdownMargin(top: 0, bottom: 8)
-            }
     }
 }
 
@@ -413,17 +238,26 @@ private struct ChatCodeBlock: View {
     let isStreaming: Bool
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(ChatTranscriptDisplaySettings.wrapsCodeBlockLinesKey) private var wrapsCodeBlockLines = false
-    @State private var didCopy = false
+    @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
+    @Environment(\.chatDisclosureToggled) private var chatDisclosureToggled
     @State private var highlightedCode: NSAttributedString?
+    /// Whether a long settled diff shows every line instead of the first `collapsedLineLimit`.
+    @State private var showsAllDiffLines = false
 
     private let logger = Logger.hermesMarkdownRendering
 
     var body: some View {
+        let diff = MarkdownDiffFormatter.document(for: content, language: language, isStreaming: isStreaming)
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(displayLanguage)
                     .font(.subheadline.weight(.semibold))
+
+                if let diff {
+                    DiffCountsLabel(additions: diff.additions, deletions: diff.deletions)
+                }
 
                 Spacer()
 
@@ -433,31 +267,32 @@ private struct ChatCodeBlock: View {
                     Image(systemName: wrapsCodeBlockLines ? "arrow.turn.down.left" : "arrow.left.and.right")
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 36, height: 36)
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.chatTactile(.icon))
                 .foregroundStyle(SwiftUI.Color.primary)
                 .accessibilityLabel(wrapsCodeBlockLines ? "Disable code line wrapping" : "Enable code line wrapping")
 
-                Button {
+                ChatCopyButton(
+                    label: String(localized: "Copy code"),
+                    copiedLabel: String(localized: "Copied code"),
+                    size: 36,
+                    glyphSize: 18,
+                    glyphWeight: .semibold
+                ) {
                     UIPasteboard.general.string = content
-                    didCopy = true
-                } label: {
-                    Image(systemName: didCopy ? "checkmark" : "square.on.square")
-                        .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 36, height: 36)
-                    .contentTransition(.symbolEffect(.replace))
+                    ChatHaptics.copied(isEnabled: isHapticsEnabled)
                 }
-                .buttonStyle(.plain)
                 .foregroundStyle(SwiftUI.Color.primary)
-                .accessibilityLabel(didCopy ? "Copied code" : "Copy code")
             }
             .padding(.leading, 16)
             .padding(.trailing, 10)
             .padding(.top, 14)
             .padding(.bottom, 4)
 
-            if wrapsCodeBlockLines {
+            if let diff {
+                diffBody(diff)
+            } else if wrapsCodeBlockLines {
                 styledCodeText(fixedHorizontal: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -471,9 +306,6 @@ private struct ChatCodeBlock: View {
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(SwiftUI.Color(.separator).opacity(0.35), lineWidth: 1)
-        }
-        .onChange(of: content) { _, _ in
-            didCopy = false
         }
         .task(id: highlightRequest) {
             await updateHighlightedCode(for: highlightRequest)
@@ -489,12 +321,62 @@ private struct ChatCodeBlock: View {
             : SwiftUI.Color(.secondarySystemBackground)
     }
 
+    /// Falls back to a synchronous cache peek so a block that was already highlighted
+    /// (reopen, scrolling back, or a sealed stable chunk at the streaming-to-settled swap)
+    /// draws highlighted on its first frame, before its task runs.
     @ViewBuilder
     private var codeText: some View {
-        if let highlightedCode {
+        if let highlightedCode = highlightedCode
+            ?? MarkdownCodeHighlighter.shared.cachedHighlight(for: highlightRequest) {
             HighlightedCodeBlockText(content: highlightedCode, wraps: wrapsCodeBlockLines)
         } else {
             PlainCodeBlockText(content: content, wraps: wrapsCodeBlockLines)
+        }
+    }
+
+    /// A settled diff: tinted rows, capped at `collapsedLineLimit` lines behind a
+    /// full-width Show all row. Copy still copies the whole source.
+    @ViewBuilder
+    private func diffBody(_ diff: MarkdownDiffDocument) -> some View {
+        let lines = diff.visibleLines(showingAll: showsAllDiffLines)
+
+        Group {
+            if wrapsCodeBlockLines {
+                DiffCodeBlockText(lines: lines, wraps: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                DiffCodeBlockScrollBody(lines: lines)
+            }
+        }
+        .padding(.top, 8)
+        .padding(.bottom, diff.isCollapsible ? 12 : 16)
+
+        if diff.isCollapsible {
+            Button {
+                // Pins the reader's offset while the block grows or shrinks by up to 1,920 rows.
+                chatDisclosureToggled()
+                showsAllDiffLines.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    if showsAllDiffLines {
+                        Text("Show first \(MarkdownDiffFormatter.collapsedLineLimit) lines")
+                    } else {
+                        Text("Show all \(diff.lines.count) lines")
+                    }
+                    Image(systemName: showsAllDiffLines ? "chevron.up" : "chevron.down")
+                        .accessibilityHidden(true)
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.top, 11)
+                .padding(.bottom, 13)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.chatTactile(.compactControl))
+            .foregroundStyle(.tint)
+            .overlay(alignment: .top) { Divider() }
+            .accessibilityHint("Copy includes every line.")
         }
     }
 
@@ -523,15 +405,21 @@ private struct ChatCodeBlock: View {
         )
     }
 
+    /// Seeds from the cache when it can; otherwise shows plain text while the
+    /// highlighter works off main, and drops the result if the block moved on.
     @MainActor
     private func updateHighlightedCode(for request: MarkdownCodeHighlightRequest) async {
+        // Diff and patch never highlight: `MarkdownDiffFormatter` styles them natively.
+        guard !MarkdownDiffFormatter.isDiffLanguage(request.language) else { return }
+        let highlighter = MarkdownCodeHighlighter.shared
+        if let cached = highlighter.cachedHighlight(for: request) {
+            highlightedCode = cached
+            return
+        }
+
         highlightedCode = nil
-        await Task.yield()
-
-        guard !Task.isCancelled else { return }
-
-        let result = MarkdownCodeHighlighter.highlightedCode(for: request)
-        guard !Task.isCancelled else { return }
+        let result = await highlighter.highlightedCode(for: request)
+        guard !Task.isCancelled, request == highlightRequest else { return }
 
         switch result {
         case .highlighted(let attributedString):
@@ -598,6 +486,7 @@ private struct PlainCodeBlockText: View {
             ForEach(lines) { line in
                 if wraps {
                     combinedText(for: line)
+                        .responseSelectableText(line.segments.map(\.text).joined())
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .multilineTextAlignment(.leading)
@@ -605,6 +494,7 @@ private struct PlainCodeBlockText: View {
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         ForEach(line.segments) { segment in
                             Text(verbatim: segment.text)
+                                .responseSelectableText(segment.text, separator: segment.id == line.segments.last?.id ? "\n" : "")
                         }
                     }
                 }
@@ -636,6 +526,7 @@ private struct HighlightedCodeBlockText: View {
             ForEach(lines) { line in
                 if wraps {
                     combinedText(for: line)
+                        .responseSelectableText(line.segments.map { $0.attributedText.string }.joined())
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .multilineTextAlignment(.leading)
@@ -643,6 +534,7 @@ private struct HighlightedCodeBlockText: View {
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         ForEach(line.segments) { segment in
                             Text(AttributedString(segment.attributedText))
+                                .responseSelectableText(segment.attributedText.string, separator: segment.id == line.segments.last?.id ? "\n" : "")
                         }
                     }
                 }
@@ -681,19 +573,7 @@ enum MarkdownPlainCodeFormatter {
     static let maxSegmentLength = 500
 
     static func lines(in code: String) -> [MarkdownPlainCodeLine] {
-        let normalizedCode = code
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .replacingOccurrences(of: "\u{2028}", with: "\n")
-            .replacingOccurrences(of: "\u{2029}", with: "\n")
-
-        let rawLines = normalizedCode
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        let renderedLines = rawLines.isEmpty ? [""] : rawLines
-
-        return renderedLines.enumerated().map { lineIndex, line in
+        rawLines(in: code).enumerated().map { lineIndex, line in
             MarkdownPlainCodeLine(
                 id: lineIndex,
                 segments: segments(in: line)
@@ -701,7 +581,23 @@ enum MarkdownPlainCodeFormatter {
         }
     }
 
-    private static func segments(in line: String) -> [MarkdownPlainCodeSegment] {
+    /// The code's lines with CRLF, CR, and Unicode line and paragraph separators
+    /// treated as newlines; an empty string is one empty line.
+    static func rawLines(in code: String) -> [String] {
+        let normalizedCode = code
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\u{2028}", with: "\n")
+            .replacingOccurrences(of: "\u{2029}", with: "\n")
+
+        let lines = normalizedCode
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        return lines.isEmpty ? [""] : lines
+    }
+
+    /// Splits one line into `maxSegmentLength`-character segments; an empty line is one space.
+    static func segments(in line: String) -> [MarkdownPlainCodeSegment] {
         guard !line.isEmpty else {
             return [MarkdownPlainCodeSegment(id: 0, text: " ")]
         }
@@ -853,6 +749,8 @@ enum MarkdownHighlightFallbackReason: String, Equatable {
     case tooManyLines
     case lineTooLong
     case highlighterUnavailable
+    /// The owning block's task was cancelled before the highlight pass ran.
+    case cancelled
 }
 
 enum MarkdownHighlightDecision: Equatable {
@@ -879,7 +777,7 @@ enum MarkdownHighlightPolicy {
         "text",
         "txt"
     ]
-    private static let highlightrLanguages: Set<String> = [
+    static let highlightrLanguages: Set<String> = [
         "bash",
         "c",
         "cpp",
@@ -962,6 +860,13 @@ enum MarkdownHighlightPolicy {
         }
 
         return .plain(reason: .unsupportedLanguage, normalizedLanguage: normalizedLanguage)
+    }
+
+    /// Whether a fence language can ever be highlighted. Reads only the language,
+    /// so it is a cheap gate before any work that touches the code.
+    static func canHighlight(language: String?) -> Bool {
+        guard let normalized = normalizedLanguage(from: language) else { return false }
+        return splashSwiftLanguages.contains(normalized) || highlightrLanguages.contains(normalized)
     }
 
     static func normalizedLanguage(from language: String?) -> String? {
@@ -1083,36 +988,102 @@ enum MarkdownCodeHighlightResult {
     case plain(reason: MarkdownHighlightFallbackReason, normalizedLanguage: String?)
 }
 
-enum MarkdownCodeHighlighter {
-    @MainActor
-    static func highlightedCode(for request: MarkdownCodeHighlightRequest) -> MarkdownCodeHighlightResult {
+/// Highlights settled chat code blocks off the main actor. Highlightr runs
+/// highlight.js in a JSContext, so both the context load and each block's pass
+/// stay off main. Results are cached by appearance, fence language, and code;
+/// a remounted block that was highlighted before (session reopen, scrolling back,
+/// or code in a sealed stable chunk at the streaming-to-settled swap) reads its
+/// result synchronously through `cachedHighlight(for:)` instead of flashing plain.
+/// Code in a reply's unsealed streaming tail is first highlighted at the swap.
+actor MarkdownCodeHighlighter {
+    static let shared = MarkdownCodeHighlighter()
+
+    /// NSCache is thread-safe, which is what lets the main actor peek it synchronously.
+    /// Content-addressed: a hit needs the code itself, so entries never reveal
+    /// one server's transcript under another.
+    private nonisolated(unsafe) let cache: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>()
+        cache.countLimit = 256
+        // Cost is the UTF-16 length held by the key and the result, each of which
+        // carries the code; the largest highlighted block is 80k characters.
+        cache.totalCostLimit = 2_000_000
+        return cache
+    }()
+    private var highlightrsByAppearance: [ColorScheme: Highlightr] = [:]
+
+    /// A fresh instance with its own cache; the app uses `shared`.
+    init() {}
+
+    /// The cached highlight for a settled request, or nil when it has not been highlighted yet.
+    /// Requests that can never highlight return before building a key from the code.
+    nonisolated func cachedHighlight(for request: MarkdownCodeHighlightRequest) -> NSAttributedString? {
+        guard !request.isStreaming,
+              MarkdownHighlightPolicy.canHighlight(language: request.language) else { return nil }
+        return cache.object(forKey: Self.cacheKey(for: request))
+    }
+
+    func highlightedCode(for request: MarkdownCodeHighlightRequest) -> MarkdownCodeHighlightResult {
+        if let cached = cachedHighlight(for: request) {
+            return .highlighted(cached)
+        }
+
         let decision = MarkdownHighlightPolicy.decision(
             for: request.code,
             language: request.language,
             isStreaming: request.isStreaming
         )
 
+        // A block that scrolled away while queued on this actor skips its pass.
+        if case .highlight(let normalizedLanguage, _) = decision, Task.isCancelled {
+            return .plain(reason: .cancelled, normalizedLanguage: normalizedLanguage)
+        }
+
+        let highlighted: NSAttributedString
         switch decision {
         case .highlight(_, .splashSwift):
-            return .highlighted(
-                SplashSwiftCodeHighlighter.highlightedAttributedString(
-                    for: request.code,
-                    colorScheme: request.colorScheme
-                )
+            highlighted = SplashSwiftCodeHighlighter.highlightedAttributedString(
+                for: request.code,
+                colorScheme: request.colorScheme
             )
         case .highlight(let normalizedLanguage, .highlightr):
-            guard let highlighted = StableHighlightrStore.shared.highlight(
+            guard let result = highlightr(for: request.colorScheme)?.highlight(
                 request.code,
-                language: normalizedLanguage,
-                colorScheme: request.colorScheme
+                as: normalizedLanguage,
+                fastRender: true
             ) else {
                 return .plain(reason: .highlighterUnavailable, normalizedLanguage: normalizedLanguage)
             }
-
-            return .highlighted(highlighted)
+            highlighted = result
         case .plain(let reason, let normalizedLanguage):
             return .plain(reason: reason, normalizedLanguage: normalizedLanguage)
         }
+
+        // Freeze the result so a cached string never aliases a mutable one.
+        let frozen = highlighted.copy() as? NSAttributedString ?? highlighted
+        let key = Self.cacheKey(for: request)
+        cache.setObject(frozen, forKey: key, cost: key.length + frozen.length)
+        return .highlighted(frozen)
+    }
+
+    private func highlightr(for colorScheme: ColorScheme) -> Highlightr? {
+        if let highlightr = highlightrsByAppearance[colorScheme] {
+            return highlightr
+        }
+
+        guard let highlightr = Highlightr() else {
+            return nil
+        }
+
+        highlightr.setTheme(to: colorScheme == .dark ? "github-dark" : "xcode")
+        highlightrsByAppearance[colorScheme] = highlightr
+        return highlightr
+    }
+
+    private static func cacheKey(for request: MarkdownCodeHighlightRequest) -> NSString {
+        let scheme = request.colorScheme == .dark ? "dark" : "light"
+        // Length-prefix the language so a `|` in it or in the code can't shift the boundary.
+        let language = request.language ?? ""
+        return "\(scheme)|\(language.utf16.count):\(language)|\(request.code)" as NSString
     }
 }
 
@@ -1129,39 +1100,6 @@ private enum SplashSwiftCodeHighlighter {
     }
 }
 
-@MainActor
-private final class StableHighlightrStore {
-    static let shared = StableHighlightrStore()
-
-    private enum ThemeKey: Hashable {
-        case light
-        case dark
-    }
-
-    private var highlightrs: [ThemeKey: Highlightr] = [:]
-
-    private init() {}
-
-    func highlight(_ code: String, language: String, colorScheme: ColorScheme) -> NSAttributedString? {
-        return highlightr(for: colorScheme)?.highlight(code, as: language, fastRender: true)
-    }
-
-    private func highlightr(for colorScheme: ColorScheme) -> Highlightr? {
-        let key: ThemeKey = colorScheme == .dark ? .dark : .light
-        if let highlightr = highlightrs[key] {
-            return highlightr
-        }
-
-        guard let highlightr = Highlightr() else {
-            return nil
-        }
-
-        highlightr.setTheme(to: key == .dark ? "github-dark" : "xcode")
-        highlightrs[key] = highlightr
-        return highlightr
-    }
-}
-
 private struct PlainMarkdownFallbackView: View {
     let content: String
     let reason: MarkdownContentFallbackReason
@@ -1170,15 +1108,24 @@ private struct PlainMarkdownFallbackView: View {
 
     var body: some View {
         Text(verbatim: content)
+            .responseSelectableText(content)
             .font(.body)
             .foregroundStyle(.primary)
             .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
+            .responseTextSelectionPolicy()
             .onAppear {
                 logger.info(
                     "Markdown plain fallback reason=\(reason.rawValue, privacy: .public) characters=\(content.count, privacy: .public) lines=\(MarkdownHighlightPolicy.lineCount(in: content), privacy: .public)"
                 )
             }
+    }
+}
+
+enum ChatMarkdownInlineStyle {
+    static let codeFontScale = 0.85
+
+    static func codeBackground(dark: Bool) -> SwiftUI.Color {
+        dark ? SwiftUI.Color(red: 0.08, green: 0.09, blue: 0.12) : SwiftUI.Color(.tertiarySystemGroupedBackground)
     }
 }
 
@@ -1190,14 +1137,22 @@ private extension MarkdownUI.Theme {
                 BackgroundColor(nil)
                 FontSize(16)
             }
+            .paragraph { configuration in
+                MathMarkdownLabel(content: configuration.content, label: configuration.label)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .relativeLineSpacing(.em(0.25))
+                    .markdownMargin(top: 0, bottom: 16)
+            }
+            .heading1 { SelectableMarkdownHeading(configuration: $0, level: 1, colorScheme: colorScheme) }
+            .heading2 { SelectableMarkdownHeading(configuration: $0, level: 2, colorScheme: colorScheme) }
+            .heading3 { SelectableMarkdownHeading(configuration: $0, level: 3, colorScheme: colorScheme) }
+            .heading4 { SelectableMarkdownHeading(configuration: $0, level: 4, colorScheme: colorScheme) }
+            .heading5 { SelectableMarkdownHeading(configuration: $0, level: 5, colorScheme: colorScheme) }
+            .heading6 { SelectableMarkdownHeading(configuration: $0, level: 6, colorScheme: colorScheme) }
             .code {
                 FontFamilyVariant(.monospaced)
-                FontSize(.em(0.85))
-                BackgroundColor(
-                    colorScheme == .dark
-                        ? SwiftUI.Color(red: 0.08, green: 0.09, blue: 0.12)
-                        : SwiftUI.Color(.tertiarySystemGroupedBackground)
-                )
+                FontSize(.em(ChatMarkdownInlineStyle.codeFontScale))
+                BackgroundColor(ChatMarkdownInlineStyle.codeBackground(dark: colorScheme == .dark))
             }
             .codeBlock { configuration in
                 MathFenceOrCodeBlock(
@@ -1219,7 +1174,9 @@ private extension MarkdownUI.Theme {
                     minWidth: ChatMarkdownTable.cellMinWidth,
                     maxWidth: ChatMarkdownTable.cellMaxWidth
                 ) {
-                    configuration.label
+                    MathMarkdownLabel(content: configuration.content, label: configuration.label,
+                                      separator: "\t", tableColumn: configuration.column,
+                                      weight: configuration.row == 0 ? .semibold : .regular)
                         .markdownTextStyle {
                             if configuration.row == 0 {
                                 FontWeight(.semibold)
@@ -1242,8 +1199,13 @@ private struct ChatMarkdownTable: View {
     let label: MarkdownUI.BlockConfiguration.Label
     let colorScheme: ColorScheme
 
+    @Environment(\.markdownTableEdgeFadeColor) private var edgeFadeColor
+
+    /// A table wider than its column fades the edge that hides columns, so a
+    /// cut-off column never reads as the whole table.
+    @ViewBuilder
     var body: some View {
-        ScrollView(.horizontal) {
+        let scroller = ScrollView(.horizontal) {
             label
                 .fixedSize(horizontal: true, vertical: true)
                 .markdownTableBorderStyle(.init(color: borderColor))
@@ -1252,6 +1214,12 @@ private struct ChatMarkdownTable: View {
                 )
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+
+        if let edgeFadeColor {
+            scroller.horizontalOverflowFades(.overlay(edgeFadeColor))
+        } else {
+            scroller
+        }
     }
 
     private var backgroundColor: SwiftUI.Color {
@@ -1332,4 +1300,45 @@ private extension Logger {
         subsystem: Bundle.main.bundleIdentifier ?? "HermesMobile",
         category: "MarkdownRendering"
     )
+}
+
+/// Matches MarkdownUI's GitHub heading metrics, registering only the text label.
+private struct SelectableMarkdownHeading: View {
+    let configuration: BlockConfiguration
+    let level: Int
+    let colorScheme: ColorScheme
+
+    private var fontScale: Double { [2, 1.5, 1.25, 1, 0.875, 0.85][level - 1] }
+    private var tertiaryColor: SwiftUI.Color {
+        colorScheme == .dark
+            ? SwiftUI.Color(red: 109 / 255, green: 112 / 255, blue: 125 / 255)
+            : SwiftUI.Color(red: 107 / 255, green: 110 / 255, blue: 123 / 255)
+    }
+    private var dividerColor: SwiftUI.Color {
+        colorScheme == .dark
+            ? SwiftUI.Color(red: 51 / 255, green: 52 / 255, blue: 56 / 255)
+            : SwiftUI.Color(red: 208 / 255, green: 208 / 255, blue: 211 / 255)
+    }
+    var body: some View {
+        if level <= 2 {
+            VStack(alignment: .leading, spacing: 0) {
+                label.relativePadding(.bottom, length: .em(0.3))
+                Divider().overlay(dividerColor)
+            }
+        } else {
+            label
+        }
+    }
+    private var label: some View {
+        MathMarkdownLabel(content: configuration.content, label: configuration.label,
+                          fontScale: fontScale, weight: .semibold, tintImages: level == 6)
+            .foregroundStyle(level == 6 ? tertiaryColor : SwiftUI.Color.primary)
+            .relativeLineSpacing(.em(0.125))
+            .markdownMargin(top: 24, bottom: 16)
+            .markdownTextStyle {
+                FontWeight(.semibold)
+                FontSize(.em(fontScale))
+                if level == 6 { ForegroundColor(tertiaryColor) }
+            }
+    }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct ParsedSlashCommand: Equatable {
     let command: SlashCommand?
@@ -9,9 +10,21 @@ struct ParsedSlashCommand: Equatable {
 enum SlashCommandExecutionResult: Equatable {
     case executed(message: String?)
     case openedSession(SessionSummary)
+    /// `/new` in a Hermes chat: a new chat in its Profile (#1036).
+    case openedHermesSession(HermesSessionChat)
+    /// `/clear` in a Hermes chat: a new chat that takes this one's place (#1050).
+    case replacedHermesSession(HermesSessionChat)
+    /// `/sessions` or `/resume` in a Hermes chat: its Profile's Sessions list, searching the
+    /// entry's query (#1053).
+    case openedHermesSessionList(HermesSessionListEntry)
+    /// The host's `prefill`: this text replaces the draft (#1036).
+    case prefill(String)
     case sendAsMessage
     case unsupported(friendlyMessage: String)
     case needsSubArg
+    /// The message didn't reach the run (a refused steer). The draft stays in
+    /// the composer, and the composer's status line says why.
+    case notDelivered
 }
 
 enum SlashCommandExecutor {
@@ -37,8 +50,14 @@ enum SlashCommandExecutor {
         )
     }
 
+    /// `modelContext` reaches the handful of commands that rewrite the offline
+    /// cache (`/clear`); callers with no SwiftData context can omit it.
     @MainActor
-    static func execute(text: String, viewModel: ChatViewModel) async -> SlashCommandExecutionResult {
+    static func execute(
+        text: String,
+        viewModel: ChatViewModel,
+        modelContext: ModelContext? = nil
+    ) async -> SlashCommandExecutionResult {
         guard let parsed = parse(text) else { return .sendAsMessage }
         guard !parsed.name.isEmpty else { return .needsSubArg }
 
@@ -57,10 +76,12 @@ enum SlashCommandExecutor {
         }
 
         switch command.handler {
-        case .clientSide:
-            return await viewModel.executeSlashCommand(command, args: parsed.args)
-        case .serverSide:
-            return await viewModel.executeSlashCommand(command, args: parsed.args)
+        case .clientSide, .serverSide:
+            return await viewModel.executeSlashCommand(
+                command,
+                args: parsed.args,
+                modelContext: modelContext
+            )
         case .unsupported:
             return .unsupported(friendlyMessage: unsupportedMessage(for: command.name))
         }

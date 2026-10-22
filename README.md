@@ -448,6 +448,18 @@ this Android work possible.
 Android-specific issues and pull requests belong in this fork. Changes to the
 iOS product should be proposed upstream.
 
+### Supporters
+
+Hermex is funded by its members. Thank you.
+
+**Patrons:** Robin Edwards
+
+**Members:** Aaron Kaufer
+
+**Founding members:** James Cross · Alexey
+
+<sub>Updated monthly from [Buy Me a Coffee](https://buymeacoffee.com/callmeuzi/membership). Members who join anonymously aren't listed. Email [uzairansar@gmail.com](mailto:uzairansar@gmail.com) to be added or removed.</sub>
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

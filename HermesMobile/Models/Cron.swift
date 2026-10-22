@@ -8,6 +8,13 @@ struct CronMutationResponse: Decodable, Equatable {
     let ok: Bool?
     let job: CronJob?
     let error: String?
+    /// Set when the server saved the job but warns about it: a Hermes host whose scheduler
+    /// could not register a new Task (424, #1040). Never decoded from webui.
+    var warning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, job, error
+    }
 }
 
 struct CronStatusResponse: Decodable, Equatable {
@@ -36,8 +43,11 @@ struct CronStatusResponse: Decodable, Equatable {
 }
 
 struct CronJob: Decodable, Equatable, Identifiable {
+    /// Stable across refreshes. Never a fresh `UUID` — `id` is computed, so a
+    /// UUID fallback would hand SwiftUI a different identity on every read and
+    /// rebuild every row of the list on every poll.
     var id: String {
-        jobId ?? name ?? UUID().uuidString
+        jobId ?? name ?? ""
     }
 
     let jobId: String?
@@ -59,6 +69,14 @@ struct CronJob: Decodable, Equatable, Identifiable {
     let provider: String?
     let profile: String?
     let toastNotifications: Bool?
+    /// A Hermes host's claim on a run in progress (`fire_claim`); nil when none is held.
+    let fireClaim: CronFireClaim?
+    /// `latest_execution.status` from a Hermes host's executions ledger: `claimed`,
+    /// `running`, `completed`, `failed` or `unknown`.
+    let latestExecutionStatus: String?
+    /// `scheduler_heartbeat_age_s`: seconds since a Hermes host's scheduler last ticked for
+    /// this job's Profile; nil when it never has or the host can't tell.
+    let schedulerHeartbeatAge: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -81,6 +99,9 @@ struct CronJob: Decodable, Equatable, Identifiable {
         case provider
         case profile
         case toastNotifications
+        case fireClaim
+        case latestExecution
+        case schedulerHeartbeatAge = "schedulerHeartbeatAgeS"
     }
 
     init(from decoder: Decoder) throws {
@@ -105,6 +126,16 @@ struct CronJob: Decodable, Equatable, Identifiable {
         provider = container.decodeLossyStringIfPresent(forKey: .provider)
         profile = container.decodeLossyStringIfPresent(forKey: .profile)
         toastNotifications = container.decodeLossyBoolIfPresent(forKey: .toastNotifications)
+        fireClaim = (try? container.decodeIfPresent(CronFireClaim.self, forKey: .fireClaim)) ?? nil
+        latestExecutionStatus = ((try? container.decodeIfPresent(CronExecution.self, forKey: .latestExecution)) ?? nil)?.status
+        schedulerHeartbeatAge = (try? container.decodeFlexibleDoubleIfPresent(forKey: .schedulerHeartbeatAge)) ?? nil
+    }
+
+    /// The job's Profile as a row names it, "Default" for the host's default Profile; nil
+    /// when the job names none.
+    var profileLabel: String? {
+        guard let profile = profile?.trimmingCharacters(in: .whitespacesAndNewlines), !profile.isEmpty else { return nil }
+        return profile == "default" ? String(localized: "Default") : profile
     }
 
     var displayName: String {
@@ -206,6 +237,30 @@ struct CronRepeat: Decodable, Equatable {
     let completed: Int?
 }
 
+/// A Hermes host's `fire_claim`, `{at, by}`: a run of the job is in progress. `by` names
+/// the claiming machine and is never decoded.
+struct CronFireClaim: Decodable, Equatable {
+    let at: Date?
+
+    enum CodingKeys: String, CodingKey { case at }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        at = ((try? container.decodeIfPresent(CronDateValue.self, forKey: .at)) ?? nil)?.date
+    }
+}
+
+/// The part of a Hermes host's `latest_execution` the Tasks list reads.
+private struct CronExecution: Decodable {
+    let status: String?
+
+    enum CodingKeys: String, CodingKey { case status }
+
+    init(from decoder: Decoder) throws {
+        status = try decoder.container(keyedBy: CodingKeys.self).decodeLossyStringIfPresent(forKey: .status)
+    }
+}
+
 struct CronOutputResponse: Decodable, Equatable {
     let jobId: String?
     let outputs: [CronOutputItem]?
@@ -231,6 +286,11 @@ struct CronOutputItem: Decodable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case filename
         case content
+    }
+
+    init(filename: String?, content: String?) {
+        self.filename = filename
+        self.content = content
     }
 
     init(from decoder: Decoder) throws {
@@ -461,6 +521,67 @@ struct CronJobEditorDraft: Equatable {
         }
 
         return nil
+    }
+
+    /// Applies a model picked in the editor, or `nil` for "Server default".
+    ///
+    /// Model and provider always move together, because every picker option
+    /// names both: writing one without the other is how a job ends up asking a
+    /// provider for a model it does not serve. Clearing writes both back to
+    /// empty, which is the server's cue to fall back to the selected profile.
+    mutating func applyModelSelection(_ option: ModelCatalogOption?) {
+        model = option?.id ?? ""
+        provider = option?.providerID ?? ""
+    }
+
+    /// Applies a profile picked in the editor, or `nil` for "Server default".
+    ///
+    /// Deliberately leaves `model` and `provider` alone. Upstream computes both
+    /// from the profile's environment only when at least one of them is blank
+    /// (`_selected_profile_snapshot_updates`), so prefilling the model here
+    /// would suppress the server's own snapshot and move a server decision into
+    /// the app.
+    mutating func applyProfileSelection(_ profileName: String?) {
+        profile = profileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// Applies a skill selection from the picker.
+    ///
+    /// `skillsText` stays the storage, so a job created before the picker
+    /// existed keeps round-tripping through the same comma-separated form the
+    /// server has always received.
+    mutating func applySkillSelection(_ names: [String]) {
+        skillsText = names.joined(separator: ", ")
+    }
+
+    /// Drops the delivery targets and skills chosen in `earlier`, the draft when another
+    /// Profile was picked, that the new Profile doesn't offer, once its lists have loaded
+    /// (#1040). Choices made since the pick stay. A target is kept when its platform
+    /// (`telegram` in `telegram:123`) is offered; with none left, delivery falls back to
+    /// `local`, which every Profile offers. A list that didn't load (nil) checks nothing.
+    mutating func keepChoices(madeBefore earlier: CronJobEditorDraft, offeredTargets: [String]?,
+                              offeredSkills: [String]?) {
+        if let offeredTargets, deliver == earlier.deliver {
+            let kept = deliver.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { offeredTargets.contains(String($0.prefix { $0 != ":" })) }
+            deliver = kept.isEmpty ? "local" : kept.joined(separator: ",")
+        }
+        if let offeredSkills {
+            applySkillSelection(skills.filter { offeredSkills.contains($0) || !earlier.skills.contains($0) })
+        }
+    }
+
+    /// `selection` with `name` added if absent, removed if present.
+    ///
+    /// Order is the user's: a newly selected skill goes on the end rather than
+    /// re-sorting a list they just read. Matching is exact, because the server
+    /// stores back whatever spelling it was sent.
+    static func togglingSkill(_ name: String, in selection: [String]) -> [String] {
+        guard let index = selection.firstIndex(of: name) else { return selection + [name] }
+
+        var next = selection
+        next.remove(at: index)
+        return next
     }
 
     private static func nonEmpty(_ value: String) -> String? {

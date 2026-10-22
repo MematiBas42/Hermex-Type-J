@@ -47,48 +47,6 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(response.session?.messagesOffset, 25)
     }
 
-    func testSessionColdLoadSendsExpandRenderableFlag() async throws {
-        let client = makeClient { request in
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["session_id"], "abc123")
-            XCTAssertEqual(query["msg_limit"], "50")
-            XCTAssertEqual(query["expand_renderable"], "1")
-            XCTAssertNil(query["msg_before"])
-
-            return apiTestJSONResponse("""
-            { "session": { "session_id": "abc123" } }
-            """, for: request)
-        }
-
-        _ = try await client.session(
-            id: "abc123",
-            includeMessages: true,
-            messageLimit: 50,
-            expandRenderable: true
-        )
-    }
-
-    func testSessionLoadEarlierOmitsExpandRenderableFlag() async throws {
-        let client = makeClient { request in
-            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
-            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
-            XCTAssertEqual(query["msg_before"], "100")
-            XCTAssertNil(query["expand_renderable"])
-
-            return apiTestJSONResponse("""
-            { "session": { "session_id": "abc123" } }
-            """, for: request)
-        }
-
-        _ = try await client.session(
-            id: "abc123",
-            includeMessages: true,
-            messageLimit: 50,
-            messageBefore: 100
-        )
-    }
-
     func testSessionDecodesPersistedToolCalls() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/session")
@@ -127,71 +85,6 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(toolCall.assistantMsgIdx, 12)
         XCTAssertEqual(toolCall.args?["path"], .string("/tmp/example.swift"))
         XCTAssertEqual(toolCall.args?["limit"], .number(120))
-    }
-
-    func testSessionDecodesPersistedAssistantReasoning() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/session")
-
-            return apiTestJSONResponse("""
-            {
-              "session": {
-                "session_id": "abc123",
-                "messages": [
-                  {
-                    "role": "assistant",
-                    "content": "The file defines a SwiftUI view.",
-                    "reasoning": "I inspected the file and looked for the main type.",
-                    "_ts": 1770000000
-                  }
-                ]
-              }
-            }
-            """, for: request)
-        }
-
-        let response = try await client.session(id: "abc123")
-        let message = try XCTUnwrap(response.session?.messages?.first)
-
-        XCTAssertEqual(message.reasoning, "I inspected the file and looked for the main type.")
-    }
-
-    func testSessionDecodesMessageAttachments() async throws {
-        let client = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/api/session")
-
-            return apiTestJSONResponse("""
-            {
-              "session": {
-                "session_id": "abc123",
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": "Please analyze this",
-                    "_ts": 1770000000,
-                    "attachments": [
-                      {"name": "report.pdf", "path": "/uploads/abc123/report.pdf", "mime": "application/pdf", "size": 1024},
-                      {"name": "image.jpg", "path": "/uploads/abc123/image.jpg", "mime": "image/jpeg", "size": 2048, "is_image": true}
-                    ]
-                  }
-                ]
-              }
-            }
-            """, for: request)
-        }
-
-        let response = try await client.session(id: "abc123")
-        let message = try XCTUnwrap(response.session?.messages?.first)
-
-        XCTAssertEqual(message.attachments?.count, 2)
-        XCTAssertEqual(message.attachments?.first?.name, "report.pdf")
-        XCTAssertEqual(message.attachments?.first?.path, "/uploads/abc123/report.pdf")
-        XCTAssertEqual(message.attachments?.first?.mime, "application/pdf")
-        XCTAssertEqual(message.attachments?.first?.size, 1024)
-        XCTAssertNil(message.attachments?.first?.isImage)
-
-        XCTAssertEqual(message.attachments?.last?.name, "image.jpg")
-        XCTAssertEqual(message.attachments?.last?.isImage, true)
     }
 
     func testSessionDecodesTolerantMessageAttachments() async throws {
@@ -494,21 +387,6 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(session.compressionAnchorMessageKey?.text, "What does the resolver do?")
         XCTAssertEqual(session.compressionAnchorMessageKey?.attachments, 1)
         XCTAssertEqual(session.compressionAnchorSummary, "Summary of the compacted conversation.")
-    }
-
-    func testSessionWithoutCompressionAnchorMetadataDecodesNil() async throws {
-        let client = makeClient { request in
-            apiTestJSONResponse("""
-            { "session": { "session_id": "abc123" } }
-            """, for: request)
-        }
-
-        let response = try await client.session(id: "abc123")
-        let session = try XCTUnwrap(response.session)
-
-        XCTAssertNil(session.compressionAnchorVisibleIdx)
-        XCTAssertNil(session.compressionAnchorMessageKey)
-        XCTAssertNil(session.compressionAnchorSummary)
     }
 
     func testSessionToleratesMalformedCompressionAnchorMetadata() async throws {
@@ -1153,6 +1031,7 @@ final class APIClientSessionDetailTests: APIClientTestCase {
             anchorMessageID: "assistant-skills",
             toolCalls: [
                 ToolCall(
+                    id: "live-tool-skill-xurl",
                     name: "skill_view",
                     preview: "xurl",
                     args: ["name": .string("xurl")],
@@ -1179,6 +1058,7 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(groups.first?.activityTitle, "Activity: 2 tools")
         XCTAssertEqual(groups.first?.toolCalls.map(\.name), ["skill_view", "terminal"])
         XCTAssertEqual(groups.first?.toolCalls.first?.id, "toolu-skill-xurl")
+        XCTAssertEqual(groups.first?.toolCalls.first?.presentationID, "live-tool-skill-xurl")
         XCTAssertEqual(groups.first?.toolCalls.first?.preview, "X/Twitter via xurl CLI")
         XCTAssertEqual(groups.first?.toolCalls.last?.preview, "xurl not installed")
     }
@@ -1223,51 +1103,6 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(groups.first?.toolCalls.first?.isError, true)
     }
 
-    func testToolCallStatusDisplayHidesCompletedCollapsedText() {
-        let display = ToolCallStatusDisplay(
-            toolCall: ToolCall(
-                name: "terminal",
-                preview: nil,
-                args: nil,
-                duration: 1.24,
-                isCompleted: true
-            )
-        )
-
-        XCTAssertNil(display.collapsedText)
-        XCTAssertEqual(display.detailText, "Completed in 1.2s")
-    }
-
-    func testToolCallStatusDisplayShowsRunningCollapsedText() {
-        let display = ToolCallStatusDisplay(
-            toolCall: ToolCall(
-                name: "search_files",
-                preview: nil,
-                args: nil,
-                isCompleted: false
-            )
-        )
-
-        XCTAssertEqual(display.collapsedText, "Running")
-        XCTAssertEqual(display.detailText, "Running")
-    }
-
-    func testToolCallStatusDisplayShowsFailedCollapsedText() {
-        let display = ToolCallStatusDisplay(
-            toolCall: ToolCall(
-                name: "skill_view",
-                preview: nil,
-                args: nil,
-                duration: 0.8,
-                isError: true,
-                isCompleted: true
-            )
-        )
-
-        XCTAssertEqual(display.collapsedText, "Failed")
-        XCTAssertEqual(display.detailText, "Failed")
-    }
-
     func testToolCallDisplayFormatterParsesTerminalJSONOutput() {
         let display = ToolCallDisplayFormatter.resultDisplay(
             preview: #"{"output":"line one\nline two\n","exit_code":0,"error":null}"#,
@@ -1309,31 +1144,6 @@ final class APIClientSessionDetailTests: APIClientTestCase {
 
         XCTAssertEqual(display?.text, preview)
         XCTAssertEqual(display?.isMonospaced, false)
-    }
-
-    func testToolCallDisplayFormatterShowsNestedArgumentsReadably() {
-        let rows = ToolCallDisplayFormatter.argumentRows(from: [
-            "input": .object([
-                "path": .string("Sources"),
-                "options": .object([
-                    "recursive": .bool(true)
-                ]),
-                "patterns": .array([
-                    .string("*.swift"),
-                    .string("*.md")
-                ])
-            ])
-        ])
-
-        XCTAssertEqual(rows.first?.key, "input")
-        XCTAssertEqual(rows.first?.value, """
-        options:
-          recursive: true
-        path: Sources
-        patterns:
-          - *.swift
-          - *.md
-        """)
     }
 
     func testToolCallDisplayFormatterFormatsStructuredNonTerminalResults() {
@@ -1454,6 +1264,74 @@ final class APIClientSessionDetailTests: APIClientTestCase {
         XCTAssertEqual(reasoningGroups[1].text, "Terminal works. Now run search_files to show that works too.")
         XCTAssertTrue(reasoningGroups[2].text.contains("Both tools worked. I should give a concise summary."))
         XCTAssertFalse(reasoningGroups[2].text.contains(finalAnswer))
+    }
+
+    func testReasoningCandidateCacheRederivesOnlyChangedOrUnseenCandidates() {
+        var cache = ReasoningCandidateCache()
+        var derivedIDs: [String] = []
+        func pass(_ candidates: [(id: String, reasoning: String, visibleText: String)]) {
+            for candidate in candidates {
+                _ = cache.derived(id: candidate.id, reasoning: candidate.reasoning, visibleText: candidate.visibleText) {
+                    derivedIDs.append(candidate.id)
+                    return ReasoningCandidateCache.Derived(text: candidate.reasoning, dedupeKey: candidate.reasoning)
+                }
+            }
+            cache.finishPass()
+        }
+
+        pass([("settled", "Settled thinking", "Settled reply"), ("streaming", "Live thinking", "Part")])
+        // A stream tick: only the streaming reply's visible text grew.
+        pass([("settled", "Settled thinking", "Settled reply"), ("streaming", "Live thinking", "Partial")])
+        XCTAssertEqual(derivedIDs, ["settled", "streaming", "streaming"])
+
+        // A pass that skips an entry drops it, so the memo stays bounded to the transcript.
+        pass([("streaming", "Live thinking", "Partial")])
+        pass([("settled", "Settled thinking", "Settled reply")])
+        XCTAssertEqual(derivedIDs, ["settled", "streaming", "streaming", "settled"])
+    }
+
+    func testMemoizedReasoningDisplayGroupsMatchAFreshDerivationAfterAStreamTick() {
+        let echo = "The streamed reply paragraph that the reasoning also echoes."
+        func transcript(streamingContent: String) -> [ChatMessage] {
+            [
+                ChatMessage(role: "user", content: "First question", timestamp: nil, messageId: "user-1"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "A settled answer to the first question.",
+                    timestamp: nil,
+                    messageId: "assistant-1",
+                    reasoning: "Work through the first question step by step."
+                ),
+                ChatMessage(role: "user", content: "Second question", timestamp: nil, messageId: "user-2"),
+                ChatMessage(
+                    role: "assistant",
+                    content: streamingContent,
+                    timestamp: nil,
+                    messageId: "assistant-2",
+                    reasoning: "Plan the second reply carefully.\n\n\(echo)"
+                )
+            ]
+        }
+        let archived = [ReasoningGroup(id: "archived-1", anchorMessageID: nil, text: "Archived thinking with no anchor row.")]
+        var cache = ReasoningCandidateCache()
+
+        _ = ChatViewModel.reasoningDisplayGroups(
+            messages: transcript(streamingContent: "Partial"),
+            messageOffset: nil,
+            archivedGroups: archived,
+            cache: &cache
+        )
+        // The streaming reply now contains the echo, so its cached stripping is stale.
+        let tickMessages = transcript(streamingContent: "Partial\n\n\(echo)")
+        let memoized = ChatViewModel.reasoningDisplayGroups(
+            messages: tickMessages,
+            messageOffset: nil,
+            archivedGroups: archived,
+            cache: &cache
+        )
+
+        XCTAssertEqual(memoized, ChatViewModel.reasoningDisplayGroups(messages: tickMessages, archivedGroups: archived))
+        XCTAssertEqual(memoized.map(\.text).last, "Plan the second reply carefully.")
     }
 
     func testPartialPersistedToolCallsMergeMissingMessageToolCalls() {

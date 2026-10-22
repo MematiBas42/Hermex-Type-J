@@ -1,6 +1,19 @@
 import Foundation
 
+/// The server a Kanban client reads. A Hermes host (#1043) has no Columns in `/config`, no
+/// `changed` Board envelope and no events route, and its live updates come over a socket
+/// (#1045), so the feature state checks, refreshes and reconnects it differently.
+enum KanbanBackend: Sendable {
+    case webui
+    case hermes
+}
+
+/// Everything the Kanban screens read and write. `APIClient` serves a webui server and
+/// `HermesKanbanClient` a Hermes host (#1043, #1044); a write a client does not implement throws.
 protocol KanbanDataClient: Sendable {
+    var backend: KanbanBackend { get }
+    /// The server's live-update channel: webui's SSE stream, or a Hermes host's Kanban socket.
+    @MainActor func makeEventStream(server: URL) -> any KanbanEventStreamingClient
     func kanbanConfiguration() async throws -> KanbanConfiguration
     func kanbanBoards() async throws -> KanbanBoardsResponse
     func createKanbanBoard(_ request: KanbanCreateBoardRequest) async throws -> KanbanBoardMutationEnvelope
@@ -26,6 +39,12 @@ protocol KanbanDataClient: Sendable {
 }
 
 extension KanbanDataClient {
+    var backend: KanbanBackend { .webui }
+
+    @MainActor func makeEventStream(server: URL) -> any KanbanEventStreamingClient {
+        KanbanEventStreamClient(server: server)
+    }
+
     func createKanbanBoard(_ request: KanbanCreateBoardRequest) async throws -> KanbanBoardMutationEnvelope {
         throw KanbanUnsupportedClientMethod.createBoard
     }
@@ -413,7 +432,7 @@ private struct KanbanCreateCardBody: Encodable {
         priority = request.priority
         assignee = request.assignee
         tenant = request.tenant
-        workspaceKind = request.workspaceKind
+        workspaceKind = request.workspaceKind ?? "scratch"
         workspacePath = request.workspacePath
         skills = request.skills
         maxRuntimeSeconds = request.maxRuntimeSeconds

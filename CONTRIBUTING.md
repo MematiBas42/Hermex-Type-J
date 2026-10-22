@@ -10,12 +10,15 @@ read the [Code of Conduct](CODE_OF_CONDUCT.md).
   deployment target is iOS 18).
 - Clone the repo and open `HermesMobile.xcodeproj`. Dependencies resolve
   automatically via Swift Package Manager — the dependency list is locked in
-  `PROJECT_SPEC.md`; do not add new ones without maintainer approval.
+  `AGENTS.md`; do not add new ones without maintainer approval. Their versions
+  are pinned in the committed `Package.resolved`; Dependabot proposes updates,
+  and CI fails rather than re-resolving when the pin no longer matches the
+  project.
 - Build and run the **`HermesMobile`** scheme on an iPhone simulator
   (`iPhone 17` is the reference device; any recent iPhone simulator works).
 - To actually use the app you need your own
   [hermes-webui](https://github.com/nesquena/hermes-webui) server — the app is
-  a client only. See the [README](README.md#you-need-your-own-server) for
+  a client only. See the [README](README.md#getting-started) for
   reachable-server options (Cloudflare Tunnel, reverse proxy, Tailscale, or
   `http://localhost:8787` for simulator-only testing).
 
@@ -24,12 +27,14 @@ read the [Code of Conduct](CODE_OF_CONDUCT.md).
 The full XCTest suite is the repo's green bar — it must pass before any PR:
 
 ```zsh
-xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'
+scripts/test-sim <simulator-udid>
 ```
 
-If that simulator name isn't installed, pick a nearby iPhone from
-`xcrun simctl list devices available`. The same suite runs in CI on every pull
-request with code signing disabled, so forks get green CI without any secrets.
+Choose an available iPhone UDID from `xcrun simctl list devices available`.
+The runner builds a signed Debug app and runs tests serially on that device;
+see [Local XCTest](DEVELOPMENT.md#local-xctest) for focused tests and logs.
+The same suite runs in CI on every pull request with code signing disabled,
+so forks get green CI without any secrets.
 
 ## Code signing for contributors
 
@@ -41,18 +46,22 @@ team** — override locally instead:
 
    ```xcconfig
    DEVELOPMENT_TEAM = YOUR_TEAM_ID
-   // Optional — only needed if provisioning complains about the bundle ID.
+   // Required whenever you set your own team: use your own bundle ID prefix.
    // The app-group entitlement must stay in sync with the bundle ID.
-   // APP_BUNDLE_IDENTIFIER = com.yourname.hermex
-   // APP_GROUP_IDENTIFIER = group.com.yourname.hermex
+   APP_BUNDLE_IDENTIFIER = com.yourname.hermex
+   APP_GROUP_IDENTIFIER = group.com.yourname.hermex
    ```
+
+   Always override the bundle and app-group IDs along with the team. With the
+   committed defaults, Xcode registers any extension ID the maintainer hasn't
+   registered yet to *your* team, and the release can't use that ID afterwards.
 
 2. Build normally. `Config/Shared.xcconfig` is wired into the project and ends
    with `#include? "Local.xcconfig"`, so your local values override the
    committed defaults for every target — no project-file changes needed.
 
 For simulator-only development you usually don't need any of this: simulator
-builds don't require a paid team. Note that unit tests and CI run with
+builds don't require a paid team. CI runs with
 `CODE_SIGNING_ALLOWED=NO`; installing such a build on a simulator for *manual*
 testing breaks Keychain entitlements — use a normally-signed build for that
 (see `AGENTS.md`).
@@ -62,11 +71,33 @@ testing breaks Keychain entitlements — use a normally-signed build for that
 Bug fixes, test coverage, and focused improvements are always welcome. For
 anything larger than a small fix, **open an issue first and wait for a
 maintainer nod before writing code** — it protects your time as much as the
-review queue. Drive-by rewrites, reformat-the-world diffs, and unannounced
-architecture overhauls will be closed without detailed review.
+review queue ([PR workflow](#pr-workflow) says what the nod looks like).
+Drive-by rewrites, reformat-the-world diffs, and unannounced architecture
+overhauls will be closed without detailed review.
 
 Keep each PR to **one logical change** with a reviewable diff. If a change is
 independently useful, it deserves its own PR.
+
+Hermex has one maintainer and limited review time. Opening a PR does not
+create an obligation to review or merge it.
+
+## What to expect
+
+- **A first answer within 7 days.** Every issue, and every PR once it is
+  marked ready for review, gets a public first answer within 7 days. An
+  answer is a review, a question, a label with a short reply, or a closure.
+  It is not a promise to merge.
+- **Who writes it.** Triage replies may be drafted by the maintainer's coding
+  agent. Each one says so, naming the model and harness, and the maintainer
+  approves it before it is posted.
+- **How things get closed.** A closure names its reason: the rule in this
+  document that applies, or that the maintainer has decided not to take the
+  work on (`wontfix`). It gives the evidence and says what would get it
+  reconsidered. Closed work can be reopened.
+- **The 30-day rule.** A draft PR with no activity from its author for 30
+  days is closed with a "reopen when ready" note. So is an issue where the
+  maintainer asked a public question and the reporter has not answered for
+  30 days. The clock starts at the question, not at a label.
 
 ## App bug or server bug?
 
@@ -82,9 +113,16 @@ bug here, reproduce it in the hermes-webui **web UI** against the same server:
 
 ## PR workflow
 
-1. **Start from an issue.** Every change should trace to a GitHub issue —
-   comment on it so work isn't duplicated, or open one first (bug/feature
-   templates are provided).
+1. **Start from an issue.** Every change should trace to a GitHub issue; open
+   one first if none exists (bug/feature templates are provided).
+   - **Small fixes** (a small bug fix, added test coverage, a docs
+     correction) need the linked issue and nothing more.
+   - **Anything larger**, bug fix or not, needs a go-ahead: comment on the
+     issue asking to take it, and wait until the maintainer assigns it to you
+     on GitHub. The assignment is the go-ahead.
+   - An issue that is not assigned to a contributor is not reserved. The
+     maintainer's coding agents may build it at any time, including
+     overnight.
 2. **Branch** from `master` as `issue/<number>-<short-slug>` (e.g.
    `issue/42-fix-session-search`).
 3. **Make the change**, keeping these repo hard rules (full list in

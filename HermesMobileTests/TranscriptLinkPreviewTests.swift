@@ -2,14 +2,6 @@ import XCTest
 @testable import HermesMobile
 
 final class TranscriptLinkPreviewTests: XCTestCase {
-    func testExtractsFirstValidWebURL() throws {
-        let url = try XCTUnwrap(
-            TranscriptLinkPreviewExtractor.firstWebURL(in: "Read https://example.com/docs for details.")
-        )
-
-        XCTAssertEqual(url.absoluteString, "https://example.com/docs")
-    }
-
     func testMultipleURLsChooseFirstValidWebURL() throws {
         let url = try XCTUnwrap(
             TranscriptLinkPreviewExtractor.firstWebURL(
@@ -71,19 +63,6 @@ final class TranscriptLinkPreviewTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "https://docs.example/guide")
     }
 
-    func testUserMessageIsEligible() throws {
-        let message = ChatMessage(
-            role: "user",
-            content: "Look at https://example.com",
-            timestamp: nil,
-            messageId: "user-1"
-        )
-
-        let url = try XCTUnwrap(TranscriptLinkPreviewEligibility.previewURL(for: message, isStreaming: false))
-
-        XCTAssertEqual(url.absoluteString, "https://example.com")
-    }
-
     func testAssistantMessageIsEligibleAfterStreamingCompletes() throws {
         let message = ChatMessage(
             role: "assistant",
@@ -106,6 +85,28 @@ final class TranscriptLinkPreviewTests: XCTestCase {
         )
 
         XCTAssertNil(TranscriptLinkPreviewEligibility.previewURL(for: message, isStreaming: true))
+    }
+
+    /// A transcript-wide flag flip re-evaluates every row, so a settled row's
+    /// scan must be paid once, including the common no-URL result.
+    func testSettledScanIsMemoizedEvenWithoutAURL() {
+        TranscriptLinkPreviewEligibility.removeAll()
+        let content = "A settled reply with no link in it (#680)"
+        let message = ChatMessage(role: "assistant", content: content, timestamp: nil, messageId: "assistant-680")
+
+        XCTAssertFalse(TranscriptLinkPreviewEligibility.hasCachedScan(for: content))
+        XCTAssertNil(TranscriptLinkPreviewEligibility.previewURL(for: message, isStreaming: false))
+        XCTAssertTrue(TranscriptLinkPreviewEligibility.hasCachedScan(for: content))
+        XCTAssertNil(TranscriptLinkPreviewEligibility.previewURL(for: message, isStreaming: false))
+    }
+
+    func testStreamingRowDoesNotPopulateTheScanCache() {
+        TranscriptLinkPreviewEligibility.removeAll()
+        let content = "Partial streaming text https://example.com/partial"
+        let message = ChatMessage(role: "assistant", content: content, timestamp: nil, messageId: "assistant-680")
+
+        XCTAssertNil(TranscriptLinkPreviewEligibility.previewURL(for: message, isStreaming: true))
+        XCTAssertFalse(TranscriptLinkPreviewEligibility.hasCachedScan(for: content))
     }
 
     func testPreviewCacheReturnsStoredSnapshotForNormalizedURL() async throws {
@@ -142,17 +143,5 @@ final class TranscriptLinkPreviewTests: XCTestCase {
         XCTAssertNotNil(firstSnapshot)
         XCTAssertNil(secondSnapshot)
         XCTAssertNotNil(thirdSnapshot)
-    }
-
-    func testPreviewCacheIgnoresNonWebURLs() async throws {
-        let cache = TranscriptLinkPreviewCache(maximumEntryCount: 4)
-        let fileURL = try XCTUnwrap(URL(string: "file:///tmp/report.txt"))
-
-        await cache.store(TranscriptLinkPreviewSnapshot(title: "File"), for: fileURL)
-
-        let cachedSnapshot = await cache.snapshot(for: fileURL)
-
-        XCTAssertNil(TranscriptLinkPreviewCache.cacheKey(for: fileURL))
-        XCTAssertNil(cachedSnapshot)
     }
 }

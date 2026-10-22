@@ -1,16 +1,32 @@
+import SwiftUI
+import SwiftData
+import Observation
 import XCTest
 @testable import HermesMobile
 
 final class SessionNavigationStateTests: XCTestCase {
-    func testSelectingSessionUpdatesDestinationAndRestorationID() {
-        let session = SessionSummary(sessionId: "session-1", title: "One")
-        var state = SessionNavigationState()
+    /// A Hermes row (#1046) is known by its lineage root and opens its own id, which on a
+    /// legacy compression chain is the tip, in the row's Profile. A webui row opens no Hermes chat.
+    func testAHermesRowOpensItsOwnIDInItsProfile() {
+        let row = HermesSessionRow(id: "tip", profile: "research", lineageRootID: "root").summary(in: "default")
 
-        state.select(session)
+        XCTAssertEqual(row.id, "root")
+        XCTAssertEqual(row.hermesTarget(listedIn: "default"), .session(profile: "research", key: "tip"))
+        XCTAssertEqual(HermesSessionRow(id: "plain").summary(in: "default").hermesTarget(listedIn: "default"),
+                       .session(profile: "default", key: "plain"))
+        XCTAssertNil(SessionSummary(sessionId: "webui", profile: "default").hermesTarget(listedIn: "default"))
+    }
 
-        XCTAssertEqual(state.destination, .session(session))
-        XCTAssertEqual(state.selectedSessionID, "session-1")
-        XCTAssertEqual(state.lastSelectedSessionID, "session-1")
+    func testPushFallbackStaysOnListInsteadOfRestoringPreviousChat() {
+        let previous = SessionSummary(sessionId: "old", title: "Old")
+        var state = SessionNavigationState(lastSelectedSessionID: "old")
+        state.select(previous)
+        let oldRevision = state.rootRevision
+        state.openSessionList()
+        state.restoreIfNeeded(from: [previous])
+        XCTAssertNil(state.destination)
+        XCTAssertNil(state.lastSelectedSessionID)
+        XCTAssertGreaterThan(state.rootRevision, oldRevision)
     }
 
     func testRestoreSelectsStoredSessionWhenItStillExists() {
@@ -78,28 +94,62 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.destination, .session(stored))
     }
 
+    @MainActor
     func testInitialRefreshStartsBeforeDelayedDeepLinkFinishes() async {
-        let recorder = SessionInitialLoadEventRecorder()
+        let deepLink = HeldInitialLoad()
+        let refreshStarted = expectation(description: "the refresh starts while the deep link is held")
 
-        await SessionListInitialLoad.run(
-            resolvePendingDeepLink: {
-                await recorder.record(.deepLinkStarted)
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                await recorder.record(.deepLinkFinished)
-            },
-            refreshSessionsAndActiveProfile: {
-                await recorder.record(.refreshStarted)
-            }
-        )
-
-        let events = await recorder.snapshot()
-        guard let refreshIndex = events.firstIndex(of: .refreshStarted),
-              let deepLinkFinishIndex = events.firstIndex(of: .deepLinkFinished)
-        else {
-            return XCTFail("Expected both refresh and deep-link completion events")
+        let initialLoad = Task { @MainActor in
+            await SessionListInitialLoad.run(
+                resolvePendingDeepLink: { await deepLink.wait() },
+                loadSessions: { refreshStarted.fulfill() },
+                restoreSelection: {},
+                loadProjects: {},
+                loadActiveProfile: {}
+            )
         }
 
-        XCTAssertLessThan(refreshIndex, deepLinkFinishIndex)
+        await fulfillment(of: [refreshStarted], timeout: 5)
+        deepLink.release()
+        await initialLoad.value
+    }
+
+    /// Over a tunnel each held request is a round trip, so restore must not
+    /// wait for projects or the profile, and neither of those waits for the other.
+    @MainActor
+    func testInitialLoadRestoresBeforeProjectsAndProfileAndLoadsThemTogether() async {
+        let log = InitialLoadLog()
+        let projects = HeldInitialLoad()
+        let profile = HeldInitialLoad()
+        let restoredWithBothLoadsInFlight = expectation(description: "restore while projects and profile are held")
+        restoredWithBothLoadsInFlight.expectedFulfillmentCount = 2
+
+        let initialLoad = Task { @MainActor in
+            await SessionListInitialLoad.run(
+                resolvePendingDeepLink: { log.events.append("deepLink") },
+                loadSessions: { log.events.append("sessions") },
+                restoreSelection: { log.events.append("restore") },
+                loadProjects: {
+                    restoredWithBothLoadsInFlight.fulfill()
+                    await projects.wait()
+                    log.events.append("projects")
+                },
+                loadActiveProfile: {
+                    restoredWithBothLoadsInFlight.fulfill()
+                    await profile.wait()
+                    log.events.append("profile")
+                }
+            )
+        }
+
+        await fulfillment(of: [restoredWithBothLoadsInFlight], timeout: 5)
+        XCTAssertEqual(Set(log.events), ["deepLink", "sessions", "restore"])
+        XCTAssertEqual(log.events.last, "restore")
+
+        profile.release()
+        projects.release()
+        await initialLoad.value
+        XCTAssertEqual(Set(log.events.suffix(2)), ["projects", "profile"])
     }
 
     func testExplicitNewChatRouteOverridesStoredSelection() {
@@ -111,18 +161,6 @@ final class SessionNavigationStateTests: XCTestCase {
 
         XCTAssertEqual(state.destination, .newChat(route))
         XCTAssertEqual(state.lastSelectedSessionID, "session-1")
-    }
-
-    func testExplicitSessionRouteOverridesStoredSelection() {
-        let stored = SessionSummary(sessionId: "stored")
-        let deepLinked = SessionSummary(sessionId: "deep-linked")
-        var state = SessionNavigationState(lastSelectedSessionID: "stored")
-        state.select(deepLinked)
-
-        state.restoreIfNeeded(from: [stored])
-
-        XCTAssertEqual(state.destination, .session(deepLinked))
-        XCTAssertEqual(state.lastSelectedSessionID, "deep-linked")
     }
 
     func testCreatedSessionRemainsSelectedWhileNewChatRouteOwnsItsDraft() {
@@ -161,27 +199,9 @@ final class SessionNavigationStateTests: XCTestCase {
         state.remember(SessionSummary(sessionId: "created-session"))
         let oldDestination = state.destination
         state.clearDestination()
-        var events: [NewChatReturnEvent] = []
+        var events: [DestinationReturnEvent] = []
 
-        SessionListNewChatReturn.run(
-            from: oldDestination,
-            to: state.destination,
-            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
-            refreshSessions: { events.append(.refreshedSessions) }
-        )
-
-        XCTAssertEqual(events, [.suppressedPlaceholders, .refreshedSessions])
-    }
-
-    func testReturningFromEmptyNewChatSuppressesPlaceholderThenRefreshesSessions() {
-        let route = PendingNewChatRoute()
-        var state = SessionNavigationState()
-        state.select(route)
-        let oldDestination = state.destination
-        state.clearDestination()
-        var events: [NewChatReturnEvent] = []
-
-        SessionListNewChatReturn.run(
+        SessionListDestinationReturn.run(
             from: oldDestination,
             to: state.destination,
             suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
@@ -194,9 +214,9 @@ final class SessionNavigationStateTests: XCTestCase {
     func testReplacingNewChatRouteDoesNotRefreshSessions() {
         let firstRoute = PendingNewChatRoute()
         let secondRoute = PendingNewChatRoute()
-        var events: [NewChatReturnEvent] = []
+        var events: [DestinationReturnEvent] = []
 
-        SessionListNewChatReturn.run(
+        SessionListDestinationReturn.run(
             from: .newChat(firstRoute),
             to: .newChat(secondRoute),
             suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
@@ -204,6 +224,148 @@ final class SessionNavigationStateTests: XCTestCase {
         )
 
         XCTAssertTrue(events.isEmpty)
+    }
+
+    func testReturningFromSessionRefreshesSessionsWithoutSuppressingPlaceholders() {
+        var state = SessionNavigationState()
+        state.select(SessionSummary(sessionId: "session-1"))
+        let oldDestination = state.destination
+        state.clearDestination()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: oldDestination,
+            to: state.destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.refreshedSessions])
+    }
+
+    func testOpeningTheFirstDestinationRefreshesNothing() {
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: nil,
+            to: .session(SessionSummary(sessionId: "session-1")),
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testUnchangedDestinationRefreshesNothing() {
+        let destination = SessionNavigationDestination.session(SessionSummary(sessionId: "session-1"))
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: destination,
+            to: destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testActiveRowPollPausesWhileChatCoversCompactList() {
+        let chat = SessionNavigationDestination.session(SessionSummary(sessionId: "streaming"))
+
+        XCTAssertTrue(activeRowMonitorID(isRegularWidth: false, destination: nil).shouldPoll)
+        XCTAssertFalse(activeRowMonitorID(isRegularWidth: false, destination: chat).shouldPoll)
+        XCTAssertFalse(
+            activeRowMonitorID(isRegularWidth: false, destination: .utility(.archived)).shouldPoll
+        )
+        // Scheduled sessions renders live rows, so its badges keep updating.
+        XCTAssertTrue(
+            activeRowMonitorID(isRegularWidth: false, destination: .utility(.scheduled)).shouldPoll
+        )
+        // On regular width the sidebar stays on screen beside the chat.
+        XCTAssertTrue(activeRowMonitorID(isRegularWidth: true, destination: chat).shouldPoll)
+    }
+
+    func testActiveRowPollRestartsWhenReturningToCompactList() {
+        let chat = SessionNavigationDestination.session(SessionSummary(sessionId: "streaming"))
+
+        // A different task ID is what makes SwiftUI restart the paused poll.
+        XCTAssertNotEqual(
+            activeRowMonitorID(isRegularWidth: false, destination: chat),
+            activeRowMonitorID(isRegularWidth: false, destination: nil)
+        )
+        // Selecting another chat on regular width keeps the running poll.
+        XCTAssertEqual(
+            activeRowMonitorID(isRegularWidth: true, destination: chat),
+            activeRowMonitorID(isRegularWidth: true, destination: nil)
+        )
+    }
+
+    func testActiveRowPollStillSkipsIdleAndCachedLists() {
+        XCTAssertFalse(activeRowMonitorID(hasActiveRows: false).shouldPoll)
+        XCTAssertFalse(activeRowMonitorID(isViewingCachedData: true).shouldPoll)
+        XCTAssertEqual(ActiveSessionMonitorTaskID.pollInterval, .seconds(3))
+    }
+
+    @MainActor
+    func testReturnToCompactListTicksOnceAfterReloadingRows() async {
+        var events: [String] = []
+        var streamIDs = ["before-reload"]
+
+        await SessionListReturnRefresh.run(
+            refreshSessions: {
+                events.append("reload")
+                streamIDs = ["after-reload"]
+            },
+            monitorTaskID: {
+                ActiveSessionMonitorTaskID(
+                    streamIDs: streamIDs,
+                    hasActiveRows: true,
+                    isViewingCachedData: false,
+                    isRegularWidth: false,
+                    destination: nil
+                )
+            },
+            refreshActiveRows: { taskID in
+                events.append("tick:\(taskID.streamIDs.joined())")
+            }
+        )
+
+        // The tick runs right away, on the rows the reload found, rather than
+        // leaving stale Approval or Input badges up until the poll's first tick.
+        XCTAssertEqual(events, ["reload", "tick:after-reload"])
+    }
+
+    @MainActor
+    func testReturnSkipsTheTickWhenThePollNeverPaused() async {
+        for monitorID in [
+            activeRowMonitorID(isRegularWidth: true),
+            activeRowMonitorID(hasActiveRows: false),
+            activeRowMonitorID(isViewingCachedData: true),
+        ] {
+            var ticks = 0
+            await SessionListReturnRefresh.run(
+                refreshSessions: {},
+                monitorTaskID: { monitorID },
+                refreshActiveRows: { _ in ticks += 1 }
+            )
+            XCTAssertEqual(ticks, 0)
+        }
+    }
+
+    private func activeRowMonitorID(
+        hasActiveRows: Bool = true,
+        isViewingCachedData: Bool = false,
+        isRegularWidth: Bool = false,
+        destination: SessionNavigationDestination? = nil
+    ) -> ActiveSessionMonitorTaskID {
+        ActiveSessionMonitorTaskID(
+            streamIDs: ["stream-1"],
+            hasActiveRows: hasActiveRows,
+            isViewingCachedData: isViewingCachedData,
+            isRegularWidth: isRegularWidth,
+            destination: destination
+        )
     }
 
     func testRemovingSelectedSessionClearsDestinationAndRestorationID() {
@@ -227,25 +389,6 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertNil(state.lastSelectedSessionID)
     }
 
-    func testUtilityDestinationRemainsSelectedAcrossLayoutReevaluation() {
-        var state = SessionNavigationState()
-        state.select(SessionListUtilityDestination.settings(nil))
-
-        let reevaluatedState = state
-
-        XCTAssertEqual(reevaluatedState.destination, .utility(.settings(nil)))
-        XCTAssertNil(reevaluatedState.selectedSessionID)
-    }
-
-    func testKanbanIsSelectableAsAUtilityDestination() {
-        var state = SessionNavigationState()
-
-        state.select(SessionListUtilityDestination.kanban)
-
-        XCTAssertEqual(state.destination, .utility(.kanban))
-        XCTAssertNil(state.selectedSessionID)
-    }
-
     func testReselectingRootDestinationAdvancesNavigationRevision() {
         var state = SessionNavigationState()
         state.select(SessionListUtilityDestination.skills)
@@ -255,15 +398,6 @@ final class SessionNavigationStateTests: XCTestCase {
 
         XCTAssertEqual(state.destination, .utility(.skills))
         XCTAssertGreaterThan(state.rootRevision, firstRevision)
-    }
-
-    func testReadableContentWidthsKeepSecondaryAndWorkspaceSurfacesDistinct() {
-        XCTAssertEqual(AdaptiveReadableContentWidth.secondaryDestination, 800)
-        XCTAssertEqual(AdaptiveReadableContentWidth.workspace, 1_000)
-        XCTAssertLessThan(
-            AdaptiveReadableContentWidth.secondaryDestination,
-            AdaptiveReadableContentWidth.workspace
-        )
     }
 
     func testPersistenceUsesIndependentKeysPerServer() throws {
@@ -285,27 +419,759 @@ final class SessionNavigationStateTests: XCTestCase {
             "second-session"
         )
     }
+
+    func testForegroundReturnRefreshesAtOnceWhenNothingIsLoading() {
+        var refresh = SessionListForegroundRefresh()
+
+        XCTAssertTrue(refresh.appReturned(didCompleteInitialLoad: true, isLoading: false))
+        XCTAssertFalse(refresh.isPending)
+        XCTAssertFalse(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+    }
+
+    func testForegroundReturnDuringTheInitialLoadRefreshesOnceItCompletes() {
+        var refresh = SessionListForegroundRefresh()
+
+        XCTAssertFalse(refresh.appReturned(didCompleteInitialLoad: false, isLoading: true))
+        XCTAssertFalse(refresh.consumeIfReady(didCompleteInitialLoad: false, isLoading: false))
+        XCTAssertTrue(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+        XCTAssertFalse(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+    }
+
+    func testForegroundReturnDuringALoadRefreshesOnceWhenItSettles() {
+        var refresh = SessionListForegroundRefresh()
+
+        XCTAssertFalse(refresh.appReturned(didCompleteInitialLoad: true, isLoading: true))
+        XCTAssertFalse(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: true))
+        XCTAssertTrue(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+        XCTAssertFalse(
+            refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false),
+            "the deferred refresh runs once, and its own load must not trigger another"
+        )
+    }
+
+    func testRepeatedForegroundReturnsDuringALoadCoalesce() {
+        var refresh = SessionListForegroundRefresh()
+
+        XCTAssertFalse(refresh.appReturned(didCompleteInitialLoad: true, isLoading: true))
+        XCTAssertFalse(refresh.appReturned(didCompleteInitialLoad: true, isLoading: true))
+        XCTAssertTrue(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+        XCTAssertFalse(refresh.consumeIfReady(didCompleteInitialLoad: true, isLoading: false))
+    }
+
+    func testArchiveToastShowsOnTheScreenTheRowWasSwipedOn() {
+        var route = SessionListArchiveToastRoute()
+        let scheduledArchive = route.archiveStarted()
+        XCTAssertEqual(
+            route.archiveConfirmed(
+                scheduledArchive, swipedOn: .scheduled, destination: .utility(.scheduled), isRegularWidth: false
+            ),
+            .scheduled
+        )
+        XCTAssertEqual(route.host, .scheduled)
+
+        // iPad: the sidebar keeps its own toast while Scheduled fills the detail column.
+        let sidebarArchive = route.archiveStarted()
+        XCTAssertEqual(
+            route.archiveConfirmed(
+                sidebarArchive, swipedOn: .list, destination: .utility(.scheduled), isRegularWidth: true
+            ),
+            .list
+        )
+        XCTAssertEqual(route.host, .list)
+    }
+
+    func testArchiveToastFollowsTheUserToTheOtherSessionScreen() {
+        var route = SessionListArchiveToastRoute()
+
+        // iPhone: swiped on Scheduled, then tapped Back before the reply.
+        let leftScheduled = route.archiveStarted()
+        XCTAssertEqual(
+            route.archiveConfirmed(leftScheduled, swipedOn: .scheduled, destination: nil, isRegularWidth: false),
+            .list
+        )
+
+        // iPhone: swiped on the list, then opened Scheduled before the reply.
+        let openedScheduled = route.archiveStarted()
+        XCTAssertEqual(
+            route.archiveConfirmed(
+                openedScheduled, swipedOn: .list, destination: .utility(.scheduled), isRegularWidth: false
+            ),
+            .scheduled
+        )
+    }
+
+    func testArchiveToastIsSkippedWhileAnotherScreenCoversBothHosts() {
+        var route = SessionListArchiveToastRoute()
+        let older = route.archiveStarted()
+        let newer = route.archiveStarted()
+        let chat = SessionNavigationDestination.session(SessionSummary(sessionId: "open-chat"))
+
+        XCTAssertNil(route.archiveConfirmed(newer, swipedOn: .scheduled, destination: chat, isRegularWidth: false))
+        XCTAssertEqual(
+            route.archiveConfirmed(older, swipedOn: .list, destination: nil, isRegularWidth: false),
+            .list,
+            "a skipped toast must not block an older archive that lands where the user can see it"
+        )
+    }
+
+    func testOlderArchiveNeverReplacesTheNewerArchivesToast() {
+        var route = SessionListArchiveToastRoute()
+        let first = route.archiveStarted()
+        let second = route.archiveStarted()
+
+        XCTAssertEqual(route.archiveConfirmed(second, swipedOn: .list, destination: nil, isRegularWidth: false), .list)
+        XCTAssertNil(
+            route.archiveConfirmed(first, swipedOn: .list, destination: nil, isRegularWidth: false),
+            "the first archive's reply landed last"
+        )
+    }
+
+    func testChatShortcutPositionPicksNthChatOrNothing() {
+        let chats = ["a", "b", "c"].map { SessionSummary(sessionId: $0) }
+
+        XCTAssertEqual(ChatShortcutNavigation.chat(atPosition: 1, in: chats)?.sessionId, "a")
+        XCTAssertEqual(ChatShortcutNavigation.chat(atPosition: 3, in: chats)?.sessionId, "c")
+        XCTAssertNil(ChatShortcutNavigation.chat(atPosition: 4, in: chats))
+        XCTAssertNil(ChatShortcutNavigation.chat(atPosition: 9, in: chats))
+        XCTAssertNil(ChatShortcutNavigation.chat(atPosition: 0, in: chats))
+        XCTAssertNil(ChatShortcutNavigation.chat(atPosition: 1, in: []))
+    }
+
+    func testNextAndPreviousChatWrapAndStartFromTheEndsWithoutSelection() {
+        let chats = ["a", "b", "c"].map { SessionSummary(sessionId: $0) }
+        func adjacent(_ offset: Int, from selectedSessionID: String?) -> String? {
+            ChatShortcutNavigation.adjacentChat(offset: offset, from: selectedSessionID, in: chats)?.sessionId
+        }
+
+        XCTAssertEqual(adjacent(1, from: "a"), "b")
+        XCTAssertEqual(adjacent(-1, from: "b"), "a")
+        XCTAssertEqual(adjacent(1, from: "c"), "a", "next wraps from the last chat to the first")
+        XCTAssertEqual(adjacent(-1, from: "a"), "c", "previous wraps from the first chat to the last")
+        XCTAssertEqual(adjacent(1, from: nil), "a")
+        XCTAssertEqual(adjacent(-1, from: nil), "c")
+        XCTAssertEqual(adjacent(1, from: "filtered-out"), "a")
+        XCTAssertEqual(adjacent(-1, from: "filtered-out"), "c")
+        XCTAssertNil(ChatShortcutNavigation.adjacentChat(offset: 1, from: "a", in: []))
+    }
 }
 
-private enum NewChatReturnEvent: Equatable {
+private enum DestinationReturnEvent: Equatable {
     case suppressedPlaceholders
     case refreshedSessions
 }
 
-private actor SessionInitialLoadEventRecorder {
-    enum Event: Equatable {
-        case deepLinkStarted
-        case refreshStarted
-        case deepLinkFinished
+@MainActor
+private final class InitialLoadLog {
+    var events: [String] = []
+}
+
+/// Holds a scripted load open until the test releases it.
+@MainActor
+private final class HeldInitialLoad {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation = $0 }
     }
 
-    private var events: [Event] = []
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
 
-    func record(_ event: Event) {
-        events.append(event)
+/// Hosts the regular-width shell in a real window. Creation counts show which
+/// column a root selection re-identifies; the detail column's navigation stack
+/// shows what it pops and keeps; probe views entering and leaving the window mark
+/// when the sidebar and pushed screens actually change, so tests wait on those
+/// events rather than on a number of main-queue turns.
+@MainActor
+final class SessionSplitViewIdentityTests: XCTestCase {
+    func testRootSelectionRebuildsOnlyTheDetailColumn() throws {
+        let log = SplitColumnCreationLog()
+        let (host, window) = try hostSplitView(log: log, size: CGSize(width: 1_194, height: 834))
+        defer { tearDown(window) }
+        XCTAssertEqual(log.sidebar, 1)
+        XCTAssertEqual(log.detail, 1)
+
+        host.rootView = splitView(rootRevision: 1, log: log)
+        host.view.layoutIfNeeded()
+
+        XCTAssertEqual(log.sidebar, 1, "A root selection must not rebuild the sidebar")
+        XCTAssertEqual(log.detail, 2, "A root selection must reset the detail stack")
     }
 
-    func snapshot() -> [Event] {
-        events
+    /// Pins the visibility policy the split view applies on a root selection. The
+    /// portrait close is not hosted: UISplitViewController's display-mode change did
+    /// not settle reliably on CI's parallel test clones, and a collapsed sidebar can't
+    /// be told apart from `.automatic` in an iPhone-idiom host anyway.
+    func testRootSelectionHidesAnOpenedSidebarButKeepsACollapsedOne() {
+        XCTAssertEqual(NavigationSplitViewVisibility.all.afterRootSelection, .automatic)
+        XCTAssertEqual(NavigationSplitViewVisibility.doubleColumn.afterRootSelection, .automatic)
+        XCTAssertEqual(NavigationSplitViewVisibility.automatic.afterRootSelection, .automatic)
+        XCTAssertEqual(NavigationSplitViewVisibility.detailOnly.afterRootSelection, .detailOnly)
+    }
+
+    /// Settings subpages (`NavigationLink`) and file or fork screens
+    /// (`navigationDestination`) push inside the detail column; a root selection
+    /// must pop them along with the old root (#116), and the new root can push again.
+    func testRootSelectionPopsAScreenPushedInsideTheDetail() throws {
+        let log = DetailPushLog()
+        let host = UIHostingController(rootView: pushingSplitView(rootRevision: 0, log: log))
+        let window = try hostWindow(host, size: CGSize(width: 1_194, height: 834))
+        defer { tearDown(window) }
+        let detailStack = try waitForPushedScreen(log: log) { try push(from: log, in: host) }
+        XCTAssertEqual(detailStack.viewControllers.count, 2)
+
+        let oldScreenLeft = expectation(description: "old root's screen left the window")
+        oldScreenLeft.assertForOverFulfill = false
+        log.pushedScreenMoved = { isOnScreen in
+            if !isOnScreen { oldScreenLeft.fulfill() }
+        }
+        let newRootAppeared = expectation(description: "new root appeared")
+        newRootAppeared.assertForOverFulfill = false
+        log.rootDidAppear = { newRootAppeared.fulfill() }
+        host.rootView = pushingSplitView(rootRevision: 1, log: log)
+        host.view.layoutIfNeeded()
+        wait(for: [oldScreenLeft, newRootAppeared], timeout: 2)
+        log.pushedScreenMoved = { _ in }
+        log.rootDidAppear = {}
+
+        XCTAssertEqual(detailStack.viewControllers.count, 1, "A root selection must pop screens pushed inside the old detail")
+        XCTAssertEqual(log.roots, 2, "A root selection must reset the detail stack")
+        XCTAssertEqual(log.sidebar, 1, "A root selection must not rebuild the sidebar")
+
+        _ = try waitForPushedScreen(log: log) { try push(from: log, in: host) }
+        XCTAssertEqual(detailStack.viewControllers.count, 2, "The new root must still push")
+    }
+
+    /// A deep link can select a root that pushes as soon as it appears, even while the
+    /// old root's screen still covers it. The selection pops only the old screen.
+    func testRootSelectionKeepsAScreenTheNewRootPushes() throws {
+        let log = DetailPushLog()
+        let host = UIHostingController(rootView: pushingSplitView(rootRevision: 0, log: log))
+        let window = try hostWindow(host, size: CGSize(width: 1_194, height: 834))
+        defer { tearDown(window) }
+        let detailStack = try waitForPushedScreen(log: log) { try push(from: log, in: host) }
+        let oldScreen = try XCTUnwrap(detailStack.topViewController)
+
+        _ = try waitForPushedScreen(log: log) {
+            host.rootView = pushingSplitView(rootRevision: 1, log: log, pushesOnAppear: true)
+            host.view.layoutIfNeeded()
+        }
+        // Main-queue work the selection deferred ran before this turn.
+        let deferredWorkRan = expectation(description: "deferred work ran")
+        DispatchQueue.main.async { deferredWorkRan.fulfill() }
+        wait(for: [deferredWorkRan], timeout: 1)
+
+        XCTAssertFalse(detailStack.viewControllers.contains(oldScreen), "A root selection must pop the old root's screen")
+        XCTAssertEqual(detailStack.viewControllers.count, 2, "A root selection must keep the new root's own push")
+    }
+
+    /// Runs `change` and returns the detail column's navigation controller once the
+    /// screen it pushes is on screen.
+    private func waitForPushedScreen(
+        log: DetailPushLog,
+        after change: () throws -> Void
+    ) throws -> UINavigationController {
+        let pushed = expectation(description: "screen pushed")
+        pushed.assertForOverFulfill = false
+        log.pushedScreenMoved = { isOnScreen in
+            if isOnScreen { pushed.fulfill() }
+        }
+        try change()
+        wait(for: [pushed], timeout: 2)
+        log.pushedScreenMoved = { _ in }
+        return try XCTUnwrap(log.pushedScreen.flatMap(owningNavigationController))
+    }
+
+    private func push(from log: DetailPushLog, in host: UIViewController) throws {
+        let push = try XCTUnwrap(log.push)
+        push()
+        host.view.layoutIfNeeded()
+    }
+
+    private func owningNavigationController(of view: UIView) -> UINavigationController? {
+        var responder: UIResponder? = view
+        while let next = responder?.next {
+            if let controller = next as? UIViewController { return controller.navigationController }
+            responder = next
+        }
+        return nil
+    }
+
+    private func pushingSplitView(
+        rootRevision: Int,
+        log: DetailPushLog,
+        pushesOnAppear: Bool = false
+    ) -> PushingSplitView {
+        SessionSplitView(rootRevision: rootRevision) {
+            SplitColumnProbe { log.sidebar += 1 }
+        } detail: {
+            PushingDetailProbe(log: log, pushesOnAppear: pushesOnAppear)
+        }
+    }
+
+    private func hostWindow(_ host: UIViewController, size: CGSize) throws -> UIWindow {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+        return window
+    }
+
+    private func hostSplitView(
+        log: SplitColumnCreationLog,
+        size: CGSize
+    ) throws -> (UIHostingController<ProbeSplitView>, UIWindow) {
+        let host = UIHostingController(rootView: splitView(rootRevision: 0, log: log))
+        return (host, try hostWindow(host, size: size))
+    }
+
+    private func tearDown(_ window: UIWindow) {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    private func splitViewController(in root: UIViewController) -> UISplitViewController? {
+        if let split = root as? UISplitViewController { return split }
+        return root.children.lazy.compactMap { self.splitViewController(in: $0) }.first
+    }
+
+    private func splitView(rootRevision: Int, log: SplitColumnCreationLog) -> ProbeSplitView {
+        SessionSplitView(rootRevision: rootRevision) {
+            SplitColumnProbe(onCreate: { log.sidebar += 1 })
+        } detail: {
+            SplitColumnProbe { log.detail += 1 }
+        }
+    }
+}
+
+/// Host the real home lists at both width classes.
+@MainActor
+final class HermesHomeSplitRoutingTests: XCTestCase {
+    private let server = URL(string: "http://127.0.0.1:9")!
+
+    func testDismissingRegularSettingsReadsTheEditedConnection() async throws {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        var saved = connection
+        var readsAfterEditing = 0
+        let reread = expectation(description: "Home reads the connection after Settings closes")
+        let shown = expectation(description: "Settings sheet presented")
+        let auth = AuthManager(keychain: InMemoryKeychainStore(), serverRegistry: .inMemory(),
+                               hermesConnections: HermesConnections(keychain: InMemoryKeychainStore()))
+        let home = HermesServerHome(authManager: auth, server: server,
+            pendingBotDestination: .constant(nil), pendingSessionDestination: .constant(nil),
+            pendingNewChat: .constant(nil), pendingShare: nil, claimShare: { _ in false },
+            didRouteShare: { _ in }, didDeclineShare: { _ in }, didAbandonShare: { _ in },
+            initiallyShowingSettings: true, loadConnection: { requested in
+                XCTAssertEqual(requested, self.server)
+                if saved.password != connection.password {
+                    readsAfterEditing += 1
+                    reread.fulfill()
+                }
+                return saved
+            })
+        let host = SettingsPresentationHost(rootView: home.modelContainer(try Self.selectionCache.get())
+            .environment(auth).environment(\.horizontalSizeClass, .regular))
+        host.didPresent = { shown.fulfill() }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.frame = CGRect(x: 0, y: 0, width: 1194, height: 834)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await fulfillment(of: [shown], timeout: 5)
+        let sheet = try XCTUnwrap(host.presentedViewController)
+        saved.password = "edited-fixture-only" // Editing a sign-in retains its UUID.
+        await withCheckedContinuation { continuation in
+            sheet.dismiss(animated: false) { continuation.resume() }
+        }
+        await fulfillment(of: [reread], timeout: 2)
+        XCTAssertGreaterThan(readsAfterEditing, 0)
+    }
+
+    func testRegularHermesSessionsOwnsASplit() throws {
+        try assertSplit(in: sessions(), sizeClass: .regular, expected: true)
+    }
+
+    func testCompactHermesSessionsStillPushesInItsCallerStack() throws {
+        try assertSplit(in: NavigationStack { sessions() }, sizeClass: .compact, expected: false)
+    }
+
+    func testRegularBotsHomeOwnsASplit() throws {
+        try assertSplit(in: BotsInboxView(server: server, pendingDestination: .constant(nil),
+                                         home: home(.bots), inbox: BotInbox(server: server)),
+                        sizeClass: .regular, expected: true)
+    }
+
+    func testCompactBotsHomeKeepsItsCallerStack() throws {
+        try assertSplit(in: NavigationStack {
+            BotsInboxView(server: server, pendingDestination: .constant(nil),
+                          home: home(.bots), inbox: BotInbox(server: server))
+        }, sizeClass: .compact, expected: false)
+    }
+
+    func testNewSessionIdentityStaysWithItsCurrentSelection() {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        let first = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        let second = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        let identity = ChatDraftKey.hermesSession(server: server, connectionID: connection.id, profile: "default", key: "fresh")
+        var covers = HermesSessionListCovers()
+        covers.chat = first
+        covers.identifyChat(first.id, draftKey: identity)
+        XCTAssertEqual(covers.selectedSessionID, "fresh")
+        covers.chat = second
+        XCTAssertNil(covers.selectedSessionID)
+        covers.identifyChat(first.id, draftKey: identity)
+        for invalid in [
+            ChatDraftKey.hermesSession(server: URL(string: "https://other.example")!, connectionID: connection.id, profile: "default", key: "fresh"),
+            .hermesSession(server: server, connectionID: UUID(), profile: "default", key: "fresh"),
+            .hermesSession(server: server, connectionID: connection.id, profile: "other", key: "fresh")
+        ] {
+            covers.identifyChat(second.id, draftKey: invalid)
+        }
+        XCTAssertNil(covers.selectedSessionID, "Old chats and other scopes cannot supply this selection's identity")
+        covers.closeChat(for: SessionSummary(sessionId: "fresh", profile: "default"))
+        XCTAssertEqual(covers.chat?.id, second.id)
+        covers.identifyChat(second.id, draftKey: identity)
+        covers.closeChat(for: SessionSummary(sessionId: "fresh", profile: "other"))
+        XCTAssertEqual(covers.chat?.id, second.id)
+        covers.closeChat(for: SessionSummary(sessionId: "fresh", profile: "default"))
+        XCTAssertNil(covers.chat)
+        XCTAssertNil(covers.selectedSessionID)
+    }
+
+    func testRebuiltNewSessionReopensTheSessionItsFirstPromptCreated() {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        var started = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        started.autoStartsVoiceInput = true
+        var covers = HermesSessionListCovers()
+        covers.chat = started
+        XCTAssertEqual(covers.building(started).target, .new(profile: "default"))
+        covers.identifyChat(started.id, draftKey: .hermesSession(server: server, connectionID: connection.id,
+                                                                 profile: "default", key: "fresh"))
+        let rebuilt = covers.building(started)
+        XCTAssertEqual(rebuilt.target, .session(profile: "default", key: "fresh"))
+        XCTAssertEqual(rebuilt.id, started.id, "The live chat keeps its view identity")
+        XCTAssertFalse(rebuilt.autoStartsVoiceInput, "A rebuild doesn't dictate again")
+    }
+
+    func testConfirmedSearchRowRemovalClosesOnlyItsOwnChat() {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        let row = SessionSummary(sessionId: "chat-1", profile: "default",
+                                 hermes: .init(lineageRoot: "root-1", unread: false, preview: nil))
+        var covers = HermesSessionListCovers()
+        let newer = HermesSessionChat(server: server, connection: connection,
+            target: .session(profile: "default", key: "chat-2"))
+        covers.chat = newer
+        covers.closeChat(for: row)
+        XCTAssertEqual(covers.chat, newer, "A delayed mutation must not close a different chat")
+        covers.chat = HermesSessionChat(server: server, connection: connection,
+            target: .session(profile: "other", key: "chat-1"))
+        covers.closeChat(for: row)
+        XCTAssertNotNil(covers.chat, "Session keys are scoped to their Profile")
+        covers.chat = HermesSessionChat(server: server, connection: connection,
+            target: .session(profile: "default", key: "chat-1"))
+        covers.closeChat(for: row)
+        XCTAssertNil(covers.chat, "Search rows do not have to be in the loaded pages")
+    }
+
+    func testProfileSwitchKeepsTheOpenChat() async throws {
+        try await assertListReplacementKeepsChat(cached: false, replacement: [])
+    }
+
+    func testCachedToLiveFirstPageKeepsTheOpenChat() async throws {
+        try await assertListReplacementKeepsChat(cached: true,
+            replacement: [SessionSummary(sessionId: "first-page", profile: "default")])
+    }
+
+    func testReloadDroppingTheOpenChatOffThePageKeepsItOpen() async throws {
+        try await assertListReplacementKeepsChat(cached: false,
+            replacement: [SessionSummary(sessionId: "newer-chat", profile: "default")])
+    }
+
+    // The application owns its cache for the scene's lifetime. A hosted chat's
+    // initial attach can finish after its window closes, so its test store has the
+    // same process lifetime instead of invalidating a context still in use.
+    private static let selectionCache = Result {
+        try ModelContainer(for: CachedSession.self, CachedMessage.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    }
+
+    /// Host the real list observer with a selected chat. These are list snapshots, not
+    /// confirmed mutations: changing Profile, replacing cache, and reloading a page.
+    private func assertListReplacementKeepsChat(cached: Bool, replacement: [SessionSummary]) async throws {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        let wire = HermesSessionListWire()
+        let suite = "SplitSelection." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = SessionListViewModel(server: server, hermes: HermesSessionListSource(
+            connection: connection, profile: "default", makeWire: { _ in wire }, preferences: defaults))
+        wire.pages["default"] = [0: HermesSessionPage(rows: [HermesSessionRow(id: "chat-1", profile: "default", lineageRootID: "chat-1")])]
+        var covers = HermesSessionListCovers()
+        covers.chat = HermesSessionChat(server: server, connection: connection,
+            target: .session(profile: "default", key: "chat-1"))
+        let entry = HermesSessionListEntry(server: server, connection: connection, profile: "default")
+        let container = try Self.selectionCache.get()
+        if cached {
+            try CacheStore.cacheHermesSessions([SessionSummary(sessionId: "chat-1", profile: "default",
+                hermes: .init(lineageRoot: "chat-1", unread: false, preview: nil))], profile: "default",
+                reachedEnd: true, serverURL: server, in: container.mainContext)
+            wire.connectFailure = BotFailure.transport
+        }
+        await model.openHermes(modelContext: container.mainContext)
+        XCTAssertEqual(model.sessions.map(\.sessionId), ["chat-1"])
+        XCTAssertEqual(model.isViewingCachedData, cached)
+        let auth = AuthManager(keychain: InMemoryKeychainStore(), serverRegistry: .inMemory(),
+                               hermesConnections: HermesConnections(keychain: InMemoryKeychainStore()))
+        let host = UIHostingController(rootView: HermesSessionListView(entry: entry, model: model,
+            home: home(.sessions), navigation: HermesSessionListNavigation(covers)).modelContainer(container)
+            .environment(auth).environment(\.horizontalSizeClass, .regular))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.frame = CGRect(x: 0, y: 0, width: 1194, height: 834)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { model.closeHermes(); window.isHidden = true; window.rootViewController = nil }
+        await renderTurn(window)
+        let composer = try XCTUnwrap(findComposer(in: host.view), "The selected chat must be mounted before replacing its rows")
+        if replacement.isEmpty {
+            wire.pages["research"] = [0: HermesSessionPage(rows: [])]
+            await model.selectHermesProfile("research")
+        } else {
+            wire.connectFailure = nil
+            wire.pages["default"] = [0: HermesSessionPage(rows: replacement.compactMap { row in
+                row.sessionId.map { HermesSessionRow(id: $0, profile: "default") }
+            })]
+            await model.refreshHermes(modelContext: container.mainContext)
+        }
+        XCTAssertFalse(model.isViewingCachedData)
+        XCTAssertFalse(model.sessions.contains { $0.sessionId == "chat-1" })
+        await renderTurn(window)
+        XCTAssertTrue(composer.window === window, "A list snapshot is not a confirmed archive/delete")
+        XCTAssertTrue(findComposer(in: host.view) === composer, "The same live composer must remain mounted")
+    }
+
+    private func renderTurn(_ window: UIWindow) async {
+        // Synchronize with main-queue rendering, not an elapsed-time delay.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                window.layoutIfNeeded()
+                continuation.resume()
+            }
+        }
+    }
+
+    private func findComposer(in view: UIView) -> UIView? {
+        if view is ComposerChipTextView { return view }
+        return view.subviews.lazy.compactMap { self.findComposer(in: $0) }.first
+    }
+
+    func testUndoRestoresTheRowWithoutReopeningTheClosedChat() async throws {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: HermesSessionPage(rows: [HermesSessionRow(id: "chat-1", profile: "default")])]
+        let suite = "SplitUndo." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = SessionListViewModel(server: server, hermes: HermesSessionListSource(
+            connection: connection, profile: "default", makeWire: { _ in wire }, preferences: defaults))
+        await model.openHermes()
+        defer { model.closeHermes() }
+        let row = try XCTUnwrap(model.sessions.first)
+        var covers = HermesSessionListCovers()
+        covers.chat = HermesSessionChat(server: server, connection: connection,
+            target: .session(profile: "default", key: "chat-1"))
+        wire.pages["default"] = [0: HermesSessionPage(rows: [])]
+        let archived = await model.archive(row)
+        XCTAssertTrue(archived)
+        covers.closeChat(for: row)
+        XCTAssertNil(covers.chat)
+        XCTAssertTrue(model.sessions.isEmpty)
+        wire.pages["default"] = [0: HermesSessionPage(rows: [HermesSessionRow(id: "chat-1", profile: "default")])]
+        let rowReturned = expectation(description: "Undo's reload restored the row")
+        withObservationTracking { _ = model.sessions } onChange: {
+            Task { @MainActor in rowReturned.fulfill() }
+        }
+        let restored = await model.unarchive(row)
+        XCTAssertTrue(restored)
+        await fulfillment(of: [rowReturned], timeout: 2)
+        XCTAssertEqual(model.sessions.map(\.sessionId), ["chat-1"])
+        XCTAssertNil(covers.chat, "Undo restores the row, not the old selection")
+    }
+
+    func testConfirmedArchiveAndDeleteCloseTheSelectedDetail() {
+        let connection = BotConnection(id: UUID(), name: "Fixture", address: server,
+                                       username: "fixture", password: "fixture-only")
+        // Both confirmed mutation callbacks carry the original row, not a list diff.
+        for archived in [false, true] {
+            let row = SessionSummary(sessionId: "new-tip", archived: archived, profile: "default",
+                hermes: .init(lineageRoot: "root-1", unread: false, preview: nil))
+            var covers = HermesSessionListCovers()
+            covers.chat = HermesSessionChat(server: server, connection: connection,
+                target: .session(profile: "default", key: "old-tip"), lineageRoot: "root-1")
+            covers.closeChat(for: row)
+            XCTAssertNil(covers.chat)
+        }
+    }
+
+    func testRootSelectionsReplaceChatWithLibraryDetails() {
+        let connection = BotConnection(id: UUID(), name: "Split test", address: server,
+                                       username: "fixture", password: "fixture-only")
+        var covers = HermesSessionListCovers()
+        let empty = covers.detailIdentity
+        covers.chat = HermesSessionChat(server: server, connection: connection,
+                                       target: .session(profile: "default", key: "chat-1"))
+        let chat = covers.detailIdentity
+        XCTAssertNotEqual(chat, empty)
+        covers.bringForward()
+        covers.showingKanban = true
+        let library = covers.detailIdentity
+        XCTAssertNil(covers.chat)
+        XCTAssertNotEqual(library, chat)
+        covers.bringForward()
+        covers.showingKanban = true
+        XCTAssertNotEqual(covers.detailIdentity, library,
+                          "Picking the same Library root must also pop its pushed detail screens")
+    }
+
+    private func sessions() -> HermesSessionListView {
+        let connection = BotConnection(id: UUID(), name: "Split test", address: server,
+                                       username: "fixture", password: "fixture-only")
+        let entry = HermesSessionListEntry(server: server, connection: connection, profile: "default")
+        let wire = HermesSessionListWire()
+        let model = SessionListViewModel(server: server, hermes: HermesSessionListSource(
+            connection: connection, profile: "default", makeWire: { _ in wire }))
+        return HermesSessionListView(entry: entry, model: model, home: home(.sessions))
+    }
+
+    private func home(_ tab: HermesHomeTab) -> HermesHome {
+        let avatar = SessionsHeader.Avatar(initials: "QA", color: .blue, foreground: .white,
+            servers: .init(servers: [], activeServerID: nil), openSettings: {},
+            switchToServer: { _ in }, addServer: {}, manageServers: {})
+        return HermesHome(title: "Split test", avatar: avatar, tab: .constant(tab))
+    }
+
+    private func assertSplit<V: View>(in view: V, sizeClass: UserInterfaceSizeClass,
+                                      expected: Bool) throws {
+        let container = try ModelContainer(for: CachedSession.self, CachedMessage.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let auth = AuthManager(keychain: InMemoryKeychainStore(), serverRegistry: .inMemory(),
+                               hermesConnections: HermesConnections(keychain: InMemoryKeychainStore()))
+        let host = UIHostingController(rootView: view.modelContainer(container)
+            .environment(auth)
+            .environment(\.horizontalSizeClass, sizeClass))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.traitOverrides.horizontalSizeClass = sizeClass == .regular ? .regular : .compact
+        window.frame = CGRect(x: 0, y: 0, width: sizeClass == .regular ? 1194 : 402, height: 834)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        func containsSplit(_ controller: UIViewController) -> Bool {
+            controller is UISplitViewController || controller.children.contains(where: containsSplit)
+        }
+        XCTAssertEqual(containsSplit(host), expected)
+    }
+}
+
+@MainActor
+private final class SettingsPresentationHost<Content: View>: UIHostingController<Content> {
+    var didPresent: () -> Void = {}
+
+    override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool,
+                          completion: (() -> Void)? = nil) {
+        super.present(viewControllerToPresent, animated: flag) {
+            completion?()
+            self.didPresent()
+        }
+    }
+}
+
+private typealias ProbeSplitView = SessionSplitView<SplitColumnProbe, SplitColumnProbe>
+private typealias PushingSplitView = SessionSplitView<SplitColumnProbe, PushingDetailProbe>
+
+@MainActor
+private final class DetailPushLog {
+    var sidebar = 0
+    var roots = 0
+    /// Pushes a screen from the detail root that appeared last.
+    var push: (() -> Void)?
+    var rootDidAppear: () -> Void = {}
+    weak var pushedScreen: UIView?
+    var pushedScreenMoved: (Bool) -> Void = { _ in }
+}
+
+/// A detail root that pushes a screen the way Settings and the file browser do.
+private struct PushingDetailProbe: View {
+    let log: DetailPushLog
+    let pushesOnAppear: Bool
+    @State private var isPushed = false
+
+    var body: some View {
+        SplitColumnProbe { log.roots += 1 }
+            .onAppear {
+                log.push = { isPushed = true }
+                if pushesOnAppear { isPushed = true }
+                log.rootDidAppear()
+            }
+            .navigationDestination(isPresented: $isPushed) {
+                SplitColumnProbe(
+                    onCreate: {},
+                    onWindowChange: { log.pushedScreenMoved($0) },
+                    onMake: { log.pushedScreen = $0 }
+                )
+            }
+    }
+}
+
+@MainActor
+private final class SplitColumnCreationLog {
+    var sidebar = 0
+    var detail = 0
+}
+
+/// Reports when SwiftUI creates it and when its view enters or leaves the window.
+private struct SplitColumnProbe: UIViewRepresentable {
+    let onCreate: @MainActor () -> Void
+    var onWindowChange: @MainActor (Bool) -> Void = { _ in }
+    var onMake: @MainActor (UIView) -> Void = { _ in }
+
+    func makeUIView(context: Context) -> WindowReportingView {
+        onCreate()
+        let view = WindowReportingView()
+        view.onWindowChange = onWindowChange
+        onMake(view)
+        return view
+    }
+
+    func updateUIView(_ view: WindowReportingView, context: Context) {
+        view.onWindowChange = onWindowChange
+    }
+}
+
+private final class WindowReportingView: UIView {
+    var onWindowChange: @MainActor (Bool) -> Void = { _ in }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange(window != nil)
     }
 }

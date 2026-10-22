@@ -61,7 +61,9 @@ struct KanbanCreateCardRequest: Equatable, Sendable {
     let priority: Int?
     let assignee: String?
     let tenant: String?
-    let workspaceKind: String
+    /// nil leaves it to the server: on a Hermes host, Scratch, or the project's worktree on a
+    /// project Board (#1044). webui always gets one.
+    let workspaceKind: String?
     let workspacePath: String?
     let skills: [String]?
     let maxRuntimeSeconds: Int?
@@ -82,6 +84,11 @@ struct KanbanEditCardRequest: Equatable, Sendable {
     let priority: Int
     let assignee: String?
     let status: String?
+    /// Whether `assignee` differs from the server's Card the save replaces: the one the editor
+    /// opened, or the newer one a Review and Overwrite overwrites. A Hermes host reassigns on
+    /// any `assignee` it gets, and refuses a running Card's with a 409, so it gets one only
+    /// when it changed (#1044); webui always gets it.
+    var changesAssignee = true
 
     var queryItems: [URLQueryItem] {
         [URLQueryItem(name: "board", value: board)]
@@ -394,6 +401,22 @@ struct KanbanConfiguration: Decodable, Equatable, Sendable {
         renderMarkdown = container.decodeLossyBoolIfPresent(forKey: .renderMarkdown)
         readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
     }
+
+    private init(copying configuration: KanbanConfiguration, columns: [String]) {
+        self.columns = columns
+        assignees = configuration.assignees
+        defaultTenant = configuration.defaultTenant
+        laneByProfile = configuration.laneByProfile
+        includeArchivedByDefault = configuration.includeArchivedByDefault
+        renderMarkdown = configuration.renderMarkdown
+        readOnly = configuration.readOnly
+    }
+
+    /// A Hermes host's `/config` names no Columns; its Board does. This configuration with
+    /// the Columns `snapshot` lists, in the host's order.
+    func adoptingColumns(of snapshot: KanbanBoardSnapshot) -> KanbanConfiguration {
+        KanbanConfiguration(copying: self, columns: (snapshot.columns ?? []).compactMap(\.name))
+    }
 }
 
 private struct KanbanAssigneeValue: Decodable {
@@ -440,9 +463,12 @@ struct KanbanBoard: Decodable, Equatable, Sendable {
     let total: Int?
     let counts: [String: Int]?
     let readOnly: Bool?
+    /// The workspace kind a Hermes host gives a new Card on this Board: `worktree` or `dir` when
+    /// the Board has a project directory, else `scratch` (#1044). webui sends none.
+    let defaultWorkspaceKind: String?
 
     enum CodingKeys: String, CodingKey {
-        case slug, name, description, icon, color, isCurrent, total, counts, readOnly
+        case slug, name, description, icon, color, isCurrent, total, counts, readOnly, defaultWorkspaceKind
     }
 
     init(from decoder: Decoder) throws {
@@ -456,6 +482,7 @@ struct KanbanBoard: Decodable, Equatable, Sendable {
         total = container.decodeLossyIntIfPresent(forKey: .total)
         counts = try? container.decodeIfPresent([String: Int].self, forKey: .counts)
         readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+        defaultWorkspaceKind = container.decodeLossyStringIfPresent(forKey: .defaultWorkspaceKind)
     }
 }
 
@@ -551,7 +578,7 @@ struct KanbanCard: Decodable, Equatable, Sendable {
     let priority: Int?
     let commentCount: Int?
     let linkCounts: KanbanLinkCounts?
-    let ageSeconds: Double?
+    let age: KanbanCardAge?
     let createdAt: String?
     let updatedAt: String?
     let workspaceKind: String?
@@ -565,7 +592,7 @@ struct KanbanCard: Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case cardID = "id"
-        case title, body, tenant, priority, commentCount, linkCounts, ageSeconds
+        case title, body, tenant, priority, commentCount, linkCounts, age, ageSeconds
         case status
         case assignee
         case createdAt, updatedAt, workspaceKind, workspacePath, skills, maxRuntimeSeconds
@@ -584,7 +611,7 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         priority: Int?,
         commentCount: Int?,
         linkCounts: KanbanLinkCounts?,
-        ageSeconds: Double?,
+        age: KanbanCardAge?,
         createdAt: String?,
         updatedAt: String?,
         workspaceKind: String?,
@@ -605,7 +632,7 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         self.priority = priority
         self.commentCount = commentCount
         self.linkCounts = linkCounts
-        self.ageSeconds = ageSeconds
+        self.age = age
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.workspaceKind = workspaceKind
@@ -629,7 +656,9 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         priority = container.decodeLossyIntIfPresent(forKey: .priority)
         commentCount = container.decodeLossyIntIfPresent(forKey: .commentCount)
         linkCounts = try? container.decodeIfPresent(KanbanLinkCounts.self, forKey: .linkCounts)
-        ageSeconds = container.decodeLossyDoubleIfPresent(forKey: .ageSeconds)
+        // A Hermes host sends `age`; webui forwards the same dict as `age_seconds` too.
+        age = KanbanCardAge.decode(from: container, forKey: .age)
+            ?? KanbanCardAge.decode(from: container, forKey: .ageSeconds)
         createdAt = container.decodeLossyStringIfPresent(forKey: .createdAt)
         updatedAt = container.decodeLossyStringIfPresent(forKey: .updatedAt)
         workspaceKind = container.decodeLossyStringIfPresent(forKey: .workspaceKind)
@@ -640,6 +669,13 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         claimLock = container.decodeLossyStringIfPresent(forKey: .claimLock)
         claimExpires = container.decodeLossyStringIfPresent(forKey: .claimExpires)
         workerID = container.decodeLossyStringIfPresent(forKey: .workerID)
+    }
+
+    /// How long the Card has been in its current stretch of work: since it started for a
+    /// running Card, since it was created otherwise. The Card row shows it and
+    /// `staleness` reads it.
+    var ageSeconds: Double? {
+        status?.rawValue == "running" ? age?.startedSeconds : age?.createdSeconds
     }
 
     var staleness: KanbanStaleness {
@@ -667,7 +703,7 @@ struct KanbanCard: Decodable, Equatable, Sendable {
             priority: priority,
             commentCount: commentCount,
             linkCounts: linkCounts,
-            ageSeconds: ageSeconds,
+            age: age,
             createdAt: createdAt,
             updatedAt: updatedAt,
             workspaceKind: workspaceKind,
@@ -679,6 +715,34 @@ struct KanbanCard: Decodable, Equatable, Sendable {
             claimExpires: status == "running" ? claimExpires : nil,
             workerID: status == "running" ? workerID : nil
         )
+    }
+}
+
+/// A Card's age in seconds, from `{created_age_seconds, started_age_seconds, …}`. An older
+/// webui bridge sent one plain number, which stands for both.
+struct KanbanCardAge: Equatable, Sendable {
+    let createdSeconds: Double?
+    let startedSeconds: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case createdSeconds = "createdAgeSeconds"
+        case startedSeconds = "startedAgeSeconds"
+    }
+
+    static func decode<Key: CodingKey>(
+        from container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) -> KanbanCardAge? {
+        if let values = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: key) {
+            let age = KanbanCardAge(
+                createdSeconds: values.decodeLossyDoubleIfPresent(forKey: .createdSeconds),
+                startedSeconds: values.decodeLossyDoubleIfPresent(forKey: .startedSeconds)
+            )
+            return age.createdSeconds == nil && age.startedSeconds == nil ? nil : age
+        }
+        return container.decodeLossyDoubleIfPresent(forKey: key).map {
+            KanbanCardAge(createdSeconds: $0, startedSeconds: $0)
+        }
     }
 }
 
@@ -709,16 +773,20 @@ struct KanbanCardDetailEnvelope: Decodable, Equatable, Sendable {
 struct KanbanCardMutationEnvelope: Decodable, Equatable, Sendable {
     let card: KanbanCard?
     let readOnly: Bool?
+    /// A Hermes host's note on a created Card, such as a Ready, assigned Card with no
+    /// dispatcher running to pick it up (#1044). Shown as a notice, never as a failure.
+    let warning: String?
 
     enum CodingKeys: String, CodingKey {
         case card = "task"
-        case readOnly
+        case readOnly, warning
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         card = try? container.decodeIfPresent(KanbanCard.self, forKey: .card)
         readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+        warning = container.decodeLossyStringIfPresent(forKey: .warning)
     }
 }
 
@@ -823,7 +891,11 @@ struct KanbanDetailEvent: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case eventID = "id"
         case cardID = "taskId"
-        case runID, kind, createdAt, payload
+        // `runID` without a raw value spells the key "runID", but the decoder
+        // runs `.convertFromSnakeCase`, which turns the server's `run_id` into
+        // "runId" — so this never matched and `runID` was always nil.
+        case runID = "runId"
+        case kind, createdAt, payload
     }
 
     init(from decoder: Decoder) throws {
@@ -1042,6 +1114,7 @@ enum KanbanStaleness: Equatable, Sendable {
 
 /// Retains an unknown server Status rather than turning it into a decoding
 /// failure. Future mutation slices can use `isSupported` to keep it read-only.
+/// Scheduled and Review are Hermes-only Columns; webui never sends them.
 struct KanbanStatus: Equatable, Hashable, Sendable {
     let rawValue: String
 
@@ -1050,7 +1123,8 @@ struct KanbanStatus: Equatable, Hashable, Sendable {
     }
 
     var isSupported: Bool {
-        ["triage", "todo", "blocked", "ready", "running", "done", "archived"].contains(rawValue.lowercased())
+        ["triage", "todo", "scheduled", "blocked", "ready", "running", "review", "done", "archived"]
+            .contains(rawValue.lowercased())
     }
 }
 
@@ -1081,6 +1155,89 @@ enum KanbanContractViolation: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+/// The server has no Kanban to read: a Hermes host whose Kanban plugin is disabled or absent
+/// answers 404 on `/config` (#1043). Kanban shows as unavailable there, not as an error.
+enum KanbanCapabilityError: Error, Equatable, Sendable {
+    case kanbanUnavailable
+}
+
+/// A write the server refused and said why: a Hermes host's 400 or 409 `{detail}`, such as a
+/// move blocked by an open prerequisite (#1044). The message shows where the failure shows.
+struct KanbanWriteRefusal: Error, Equatable, LocalizedError, Sendable {
+    let status: Int
+    let message: String
+
+    var errorDescription: String? { message }
+
+    /// The server's own words for a refused write, or nil for any other failure.
+    static func message(for error: Error) -> String? {
+        (error as? KanbanWriteRefusal)?.message
+    }
+}
+
+/// Where a Card can go on each server (#1044). A Hermes host promotes a To Do Card whose
+/// prerequisites are all done to Ready on its next dispatcher tick, so To Do never sticks
+/// there: a Card goes to Triage or Ready, and the host itself puts it in To Do while a
+/// prerequisite is open. Scheduled and Review are the host's own states, moved out of but
+/// never into. webui keeps today's Triage, To Do and Ready.
+extension KanbanBackend {
+    /// The Statuses a new Card starts in, which are also the ordinary Move destinations.
+    var createStatuses: [String] {
+        self == .hermes ? ["triage", "ready"] : ["triage", "todo", "ready"]
+    }
+
+    /// Statuses never offered as a destination, in a Move, a Bulk Action or the editor.
+    var unofferedStatuses: Set<String> {
+        self == .hermes ? ["running", "todo", "scheduled", "review"] : ["running"]
+    }
+
+    /// Whether a Card in `status` offers Block. A Hermes host blocks only a Ready or Running
+    /// Card and refuses the rest with a 409.
+    func offersBlock(from status: String?) -> Bool {
+        switch self {
+        case .webui: status != "blocked" && status != "archived"
+        case .hermes: status == "ready" || status == "running"
+        }
+    }
+
+    /// Whether a Card in `status` offers Complete. A Hermes host completes a Card without a
+    /// result, which Hermex never sends, only out of Review, and refuses the rest with a 400.
+    func offersComplete(from status: String?) -> Bool {
+        switch self {
+        case .webui: status != "done" && status != "archived"
+        case .hermes: status == "review"
+        }
+    }
+
+    /// Whether a Card the server now reports in `landed` shows that a write asking for
+    /// `requested` from `previous` took effect. webui lands a Card where it was asked. A Hermes
+    /// host can land a blocked Card in Triage (a repeat block), and a Card asked into Ready
+    /// (an unblock or a reopened review) in To Do while a prerequisite is open or back in Review.
+    func accepts(_ landed: String?, requested: String, from previous: String?) -> Bool {
+        guard let landed else { return false }
+        if landed == requested { return true }
+        guard self == .hermes, landed != previous else { return false }
+        switch requested {
+        case "blocked": return landed == "triage"
+        case "ready": return landed == "todo" || landed == "review"
+        default: return false
+        }
+    }
+
+    /// The Status Undo Archive returns a Card archived from `previous` to, or nil when Undo
+    /// can't. A Hermes host restores only to an ordinary destination, so everything but Triage
+    /// goes to Ready, except Done: the host refuses Done from Archived, and Ready would hand
+    /// finished work back to the dispatcher. Such a Card is restored from the Archived filter.
+    func restoreStatus(after previous: String) -> String? {
+        guard self == .hermes else { return previous }
+        switch previous {
+        case "triage": return "triage"
+        case "done": return nil
+        default: return "ready"
+        }
+    }
+}
+
 enum KanbanResponseError: Error, Equatable, LocalizedError, Sendable {
     case nonJSONContentType
 
@@ -1089,18 +1246,24 @@ enum KanbanResponseError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+/// Checks the handshake before any Kanban data shows. A webui Board must be a `changed`
+/// envelope whose Columns `/config` names. A Hermes host's `/config` names no Columns and
+/// its Board has no `changed`, so there the Board's own Columns are the configured ones.
+/// Either way a Card Status outside them flags as unsupported.
 enum KanbanCompatibilityValidator {
     static func validate(
         configuration: KanbanConfiguration,
         boardsResponse: KanbanBoardsResponse,
-        snapshot: KanbanBoardSnapshot
+        snapshot: KanbanBoardSnapshot,
+        backend: KanbanBackend = .webui
     ) throws -> KanbanCompatibilityReport {
         let currentBoardSlug = try nonEmpty(boardsResponse.current, missing: .missingCurrentBoard)
         return try validate(
             configuration: configuration,
             boardsResponse: boardsResponse,
             boardSlug: currentBoardSlug,
-            snapshot: snapshot
+            snapshot: snapshot,
+            backend: backend
         )
     }
 
@@ -1108,15 +1271,20 @@ enum KanbanCompatibilityValidator {
         configuration: KanbanConfiguration,
         boardsResponse: KanbanBoardsResponse,
         boardSlug: String,
-        snapshot: KanbanBoardSnapshot
+        snapshot: KanbanBoardSnapshot,
+        backend: KanbanBackend = .webui
     ) throws -> KanbanCompatibilityReport {
-        let configuredStatuses = try nonEmptyValues(configuration.columns, missing: .missingConfigurationColumns)
+        let configuredStatuses = try nonEmptyValues(
+            backend == .hermes ? snapshot.columns?.compactMap(\.name) : configuration.columns,
+            missing: backend == .hermes ? .missingBoardSnapshot : .missingConfigurationColumns
+        )
         let selectedBoardSlug = try nonEmpty(boardSlug, missing: .missingBoardIdentity)
         let boards = boardsResponse.boards ?? []
         guard let board = boards.first(where: { normalized($0.slug) == selectedBoardSlug }) else {
             throw KanbanContractViolation.missingBoardIdentity
         }
-        guard snapshot.changed == true, let columns = snapshot.columns, !columns.isEmpty else {
+        guard backend == .hermes || snapshot.changed == true,
+              let columns = snapshot.columns, !columns.isEmpty else {
             throw KanbanContractViolation.missingBoardSnapshot
         }
 

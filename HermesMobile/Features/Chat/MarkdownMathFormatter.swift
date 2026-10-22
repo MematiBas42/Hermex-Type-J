@@ -2,6 +2,25 @@ import Foundation
 
 struct MarkdownMathFormatter {
     static func replacingInlineMath(in markdown: String) -> String {
+        replacingInlineMath(in: markdown) { renderedText(for: $0) }
+    }
+
+    /// Image destinations carry only expression source; font and appearance belong
+    /// to the view, so streaming and settled segmentation produce identical output.
+    static func inlineMathImages(in markdown: String) -> String {
+        replacingInlineMath(in: markdown) { latex in
+            guard latex.utf8.count <= 512 else { return nil }
+            let encoded = Data(latex.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+            // A nonempty alt keeps Foundation from dropping an image inside a link.
+            return "![\u{FFFC}](hermex-math:///" + encoded + ")"
+        }
+    }
+
+    private static func replacingInlineMath(in markdown: String, render: (String) -> String?) -> String {
+        // Neither supported opener ($ or \() can occur without these ASCII bytes.
+        guard markdown.utf8.contains(0x24) || markdown.utf8.contains(0x5C) else { return markdown }
         let characters = Array(markdown)
         guard characters.count >= 3 else { return markdown }
 
@@ -25,7 +44,7 @@ struct MarkdownMathFormatter {
 
             let latex = String(characters[(index + delimiter.openLength)..<closeIndex])
             if looksLikeMath(latex) {
-                result += renderedText(for: latex)
+                result += render(latex) ?? String(characters[index..<(closeIndex + delimiter.closeLength)])
                 index = closeIndex + delimiter.closeLength
             } else {
                 result.append(characters[index])
@@ -159,8 +178,51 @@ struct MarkdownMathFormatter {
         if trimmed.range(of: #"^[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?$"#, options: .regularExpression) != nil {
             return true
         }
+        if looksLikeAssignment(trimmed) { return true }
+        // Bare numeric tuples are mathematical; bare prices and ordinary prose are not.
+        if trimmed.first == "(", trimmed.last == ")",
+           trimmed.range(of: #"^\(\s*[+-]?\d+(?:\.\d+)?(?:\s*,\s*[+-]?\d+(?:\.\d+)?)+\s*\)$"#,
+                         options: .regularExpression) != nil { return true }
         if trimmed.contains("\\") || trimmed.contains("^") || trimmed.contains("_") { return true }
         return trimmed.range(of: #"[A-Za-z0-9]\s*[=<>+\-*/|]\s*[A-Za-z0-9]"#, options: .regularExpression) != nil
+    }
+
+    /// Recognizes assignment forms whose grouped right-hand side prevented the
+    /// general operator rule from seeing an alphanumeric value after `=`.
+    private static func looksLikeAssignment(_ value: String) -> Bool {
+        let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+
+        let lhs = parts[0].trimmingCharacters(in: .whitespaces)
+        guard lhs.range(
+            of: #"^[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?$"#,
+            options: .regularExpression
+        ) != nil else {
+            return false
+        }
+
+        let rhs = parts[1].trimmingCharacters(in: .whitespaces)
+        guard !rhs.isEmpty else { return false }
+
+        let allowedSymbols = CharacterSet(charactersIn: #"\_^,+-*/.=<>|[](){}"#)
+            .union(.alphanumerics)
+            .union(.whitespaces)
+        guard rhs.unicodeScalars.allSatisfy(allowedSymbols.contains) else { return false }
+
+        var stack: [Character] = []
+        let closingForOpening: [Character: Character] = ["[": "]", "(": ")", "{": "}"]
+        let openingsForClosing: [Character: Character] = ["]": "[", ")": "(", "}": "{"]
+
+        for character in rhs {
+            if closingForOpening[character] != nil {
+                stack.append(character)
+            } else if let opening = openingsForClosing[character] {
+                guard stack.popLast() == opening else { return false }
+            }
+        }
+
+        guard stack.isEmpty else { return false }
+        return rhs.range(of: #"[0-9\\_^,+\-*/<>|]"#, options: .regularExpression) != nil
     }
 }
 

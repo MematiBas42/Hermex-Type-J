@@ -1,5 +1,27 @@
 import Foundation
 
+/// The commands one chat's `/` panel knows: webui's built-ins, or a Hermes chat's own
+/// commands and its host's (#1036).
+struct SlashCommandScope: Equatable, Sendable {
+    /// The app's commands, listed first; their arguments come from the app.
+    var builtins: [SlashCommand]
+    /// Host command names and aliases, lowercased, whose arguments the host completes.
+    var hostCommands: Set<String> = []
+    /// A Hermes chat's: the panel opens only at the start of the draft, where the host runs
+    /// a command, and an agent command's aliases find it, as the host's `canon` lists them.
+    var isHermes = false
+
+    static let webui = SlashCommandScope(builtins: SlashCommandCatalog.allCommands)
+
+    func command(named name: String) -> SlashCommand? {
+        builtins.first { $0.name.lowercased() == name.lowercased() }
+    }
+
+    func completesOnHost(_ name: String) -> Bool {
+        hostCommands.contains(name.lowercased())
+    }
+}
+
 enum SlashCommandCatalog {
     static let allCommands: [SlashCommand] = [
         SlashCommand(
@@ -10,7 +32,7 @@ enum SlashCommandCatalog {
         ),
         SlashCommand(
             name: "clear",
-            description: String(localized: "Clear the current conversation"),
+            description: String(localized: "Clear this conversation on the server"),
             noEcho: true,
             handler: .clientSide(.clear)
         ),
@@ -171,19 +193,71 @@ enum SlashCommandCatalog {
         )
     ]
 
-    static func matching(_ query: String) -> [SlashCommand] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return allCommands }
-        let lower = trimmed.lowercased()
-        return allCommands.filter {
-            $0.name.lowercased().hasPrefix(lower) ||
-            $0.description.lowercased().contains(lower)
+    /// The commands worth showing for `query`, best first. An empty query keeps
+    /// the curated order of `commands`.
+    static func matching(
+        _ query: String,
+        in commands: [SlashCommand] = allCommands,
+        limit: Int = SlashCommandRanker.resultLimit
+    ) -> [SlashCommand] {
+        SlashCommandRanker.rank(commands, matching: query, limit: limit) { command in
+            SlashRankableFields(name: command.name, description: command.description)
         }
     }
+
+    /// Every built-in command name, lowercased. Used to keep an agent command
+    /// that shadows a built-in out of the popover.
+    static let builtinNames: Set<String> = Set(allCommands.map { $0.name.lowercased() })
 
     static func command(named name: String) -> SlashCommand? {
         allCommands.first { $0.name.lowercased() == name.lowercased() }
     }
+
+    /// The commands a Hermes chat runs itself (#1036): each has a native path, so the host's
+    /// command of the same name never runs. Every other command its host lists runs there.
+    /// `/title` is `session.title` on the chat's runtime (#1048); `/retry` and `/undo` rewind
+    /// the session's history as Regenerate does (#1049); `/compress` and `/compact` are
+    /// `session.compress`, and `/clear` opens a new chat in this one's place (#1050). `/sessions`
+    /// and `/resume` open the Sessions list, or a session by its title (#1053). `/branch` and
+    /// `/fork` are `session.branch`, and open the branch on top (#1051).
+    static let hermesCommands: [SlashCommand] = ["new", "stop", "model", "reasoning", "personality", "title", "goal",
+                                                 "btw", "background", "bg", "retry", "undo", "compress",
+                                                 "compact", "branch", "fork"].compactMap(command(named:)) + [
+        SlashCommand(
+            name: "clear",
+            description: String(localized: "Start a new chat with the same model and folder"),
+            noEcho: true,
+            handler: .clientSide(.clear)
+        ),
+        SlashCommand(
+            name: "sessions",
+            description: String(localized: "Show this Profile’s sessions"),
+            noEcho: true,
+            handler: .clientSide(.sessions)
+        ),
+        SlashCommand(
+            name: "resume",
+            description: String(localized: "Open a session by its title"),
+            argHint: String(localized: "name"),
+            noEcho: true,
+            handler: .clientSide(.resume)
+        ),
+        SlashCommand(
+            name: "yolo",
+            description: String(localized: "Skip approvals in this chat, or ask again"),
+            noEcho: true,
+            handler: .serverSide(.yolo)
+        )
+    ]
+
+    static func hermesCommand(named name: String) -> SlashCommand? {
+        hermesCommands.first { $0.name.lowercased() == name.lowercased() }
+    }
+
+    /// Host commands a Hermes chat holds until a later slice of #702: they rewrite history or
+    /// move between chats, so the host alone would leave the phone stale. Listed, never run.
+    /// None is held now: `/branch` and `/fork` run natively (#1051).
+    static let hermesHeldNames: Set<String> = []
 
     static let reasoningLevels = ["show", "hide", "none", "minimal", "low", "medium", "high", "xhigh"]
     static let goalActions = ["status", "pause", "resume", "clear"]
