@@ -121,7 +121,17 @@ class AppContainer(context: Context) {
         json = json,
         runtimeStore = customHeaderStore,
     )
-    val deepLinks = io.github.jcartu.hermex.core.navigation.DeepLinkRepository(context.dataStore)
+    val deepLinks = io.github.jcartu.hermex.core.navigation.DeepLinkRepository(
+        context.dataStore,
+        // Swift passes `AuthManager.normalizedServerURL(from:)` when parsing a
+        // link's `server` item, so a link written with a trailing slash still
+        // matches its configured server; unparseable items drop the link.
+        normalizeServer = { raw ->
+            runCatching {
+                io.github.jcartu.hermex.ui.feature.onboarding.AuthManager.normalizedServerUrl(raw)
+            }.getOrNull()
+        },
+    )
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
