@@ -130,8 +130,10 @@ fun HermesChatPane(
         onDispose { lifecycle.lifecycle.removeObserver(observer); model.suspendForBackground(); speaker.release(); imageLoader.shutdown() }
     }
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
-    LaunchedEffect(sharedImport?.id, model) {
-        sharedImport?.let { if (model.applySharedImport(it)) container.sharedImports.acknowledge(it.id) }
+    LaunchedEffect(sharedImport?.id, model, newChat, botId) {
+        if (newChat && botId == null) {
+            sharedImport?.let { if (model.applySharedImport(it)) container.sharedImports.acknowledge(it.id) }
+        }
     }
     LaunchedEffect(presentation.navigation) {
         when (val navigation = presentation.navigation) {
