@@ -668,7 +668,7 @@ class KanbanViewModel(
             _uiState.update { it.copy(liveUpdatesDelayed = true) }
             startFallbackPolling(board)
         }
-        val delays = liveTiming.reconnectDelaysMillis.ifEmpty { listOf(1_000) }
+        val delays = liveTiming.reconnectDelaysMillis.ifEmpty { listOf(1_000L) }
         val wait = delays[minOf(streamFailureCount - 1, delays.lastIndex)]
         reconnectJob?.cancel()
         reconnectJob = viewModelScope.launch {
