@@ -3,6 +3,7 @@ package io.github.jcartu.hermex.core.share
 import io.github.jcartu.hermex.data.ChatDraftKey
 import io.github.jcartu.hermex.data.ChatDraftShareFile
 import io.github.jcartu.hermex.di.AppContainer
+import io.github.jcartu.hermex.ui.feature.chat.hermes.HermesAttachmentPreparer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -63,22 +64,27 @@ object HermesShareImport {
         try {
             val import = sharedImports.pending.value?.takeIf { it.id == shareId }
                 ?: return false
-            val files = withContext(Dispatchers.IO) {
-                import.attachments.map { attachment ->
-                    ChatDraftShareFile(
-                        data = attachment.file.readBytes(),
-                        name = attachment.filename,
-                        mime = attachment.mimeType ?: "application/octet-stream",
-                        isImage = attachment.mimeType?.startsWith("image/") == true,
-                    )
-                }
+            val files = import.attachments.map { attachment ->
+                // Every file is prepared exactly like a composer-staged
+                // upload (`BotAttachmentUpload.prepare`): orientation-corrected
+                // images bounded to 4096px re-encoded PNG/JPEG90, documents
+                // byte-exact, 25 MiB per file. A refusal throws and keeps the
+                // inbox queued.
+                val raw = withContext(Dispatchers.IO) { attachment.file.readBytes() }
+                val prepared = HermesAttachmentPreparer.prepare(raw, attachment.filename)
+                ChatDraftShareFile(
+                    data = prepared.data,
+                    name = prepared.name,
+                    mime = prepared.mime,
+                    isImage = prepared.image,
+                )
             }
             draftStore.appendShare(
                 shareId = import.id,
                 text = import.text,
                 files = files,
                 key = ChatDraftKey.hermesSession(serverId, connectionID, profile, null),
-                maximumFileBytes = SharedImportRepository.MAX_ATTACHMENT_BYTES.toInt(),
+                maximumFileBytes = HermesAttachmentPreparer.MAXIMUM_FILE_BYTES.toInt(),
             )
             sharedImports.acknowledge(import.id)
             return true

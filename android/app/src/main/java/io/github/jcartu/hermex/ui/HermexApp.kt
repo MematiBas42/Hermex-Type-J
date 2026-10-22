@@ -45,7 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.model.ServerAccount
-import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.core.navigation.DeepLinkRouter
 import io.github.jcartu.hermex.core.navigation.HermesSessionResolution
 import io.github.jcartu.hermex.core.navigation.LinkRoutingContext
@@ -147,6 +146,9 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
     val linkAuthState by container.authManager.state.collectAsStateWithLifecycle()
     val linkServers by container.authManager.servers.collectAsStateWithLifecycle()
+    // Bot Mode opt-in (#1239, `botMode.isEnabled`): gates bot links naming a
+    // webui server; a Hermes server is Bot UI throughout and routes either way.
+    val botModeEnabled by container.botModeGate.enabled.collectAsStateWithLifecycle()
 
     /**
      * Routes one shared import (the share target's durable inbox, or the share
@@ -178,10 +180,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
             activeServerId = linkAuthState.account?.id,
             signedIn = linkAuthState is AuthState.LoggedIn,
             servers = linkServers,
-            // BotMode's `AppContainer.botModeGate` opt-in is wired by BotMode's
-            // own additive seam; off by default (#1239), so a bot link naming a
-            // webui server routes nowhere until the gate exists and is on.
-            isBotModeEnabled = false,
+            isBotModeEnabled = botModeEnabled,
             botConnectionId = { serverId -> runCatching { container.botConnectionStore.load(serverId)?.id }.getOrNull() },
             movedSessions = movedSessionLookup(container.movedSessionMap),
         )
