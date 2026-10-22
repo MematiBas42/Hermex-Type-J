@@ -104,7 +104,32 @@ fun ApprovalRequestOverlay(
     onChoice: (ApprovalChoice) -> Unit,
     onSkipAll: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
+    identity: String? = null,
+    isEnabled: Boolean = true,
+    showSkipAll: Boolean = true,
 ) {
+    val body: @Composable () -> Unit = {
+        ApprovalOverlayBody(
+            content = content,
+            isResponding = isResponding,
+            errorMessage = errorMessage,
+            onChoice = onChoice,
+            onSkipAll = onSkipAll,
+            identity = identity,
+            isEnabled = isEnabled,
+            showSkipAll = showSkipAll,
+        )
+    }
+    if (embedded) {
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = { body() },
+        )
+        return
+    }
+
     val scrimInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
@@ -131,24 +156,37 @@ fun ApprovalRequestOverlay(
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    ApprovalHeader(content.pendingCount)
-                    ApprovalDetails(content, errorMessage)
-                    ApprovalActions(content.choices, isResponding, onChoice, onSkipAll)
-                }
+                    content = { body() },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ApprovalHeader(pendingCount: Int) {
+private fun ApprovalOverlayBody(
+    content: ApprovalOverlayContent,
+    isResponding: Boolean,
+    errorMessage: String?,
+    onChoice: (ApprovalChoice) -> Unit,
+    onSkipAll: () -> Unit,
+    identity: String?,
+    isEnabled: Boolean,
+    showSkipAll: Boolean,
+) {
+    ApprovalHeader(content.pendingCount, identity)
+    ApprovalDetails(content, errorMessage)
+    ApprovalActions(content.choices, isResponding, isEnabled, showSkipAll, onChoice, onSkipAll)
+}
+
+@Composable
+private fun ApprovalHeader(pendingCount: Int, identity: String?) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(Icons.Filled.Warning, null, tint = Color(0xFFFFCC00))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Approval required", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Pending approvals: $pendingCount",
+                identity ?: "Pending approvals: $pendingCount",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -190,7 +228,7 @@ private fun ApprovalDetails(content: ApprovalOverlayContent, errorMessage: Strin
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
                 Icon(Icons.Filled.Warning, null, tint = MaterialTheme.colorScheme.error)
                 Text(
-                    "$message\nThe host did not confirm that answer. You can try again.",
+                    message,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -203,6 +241,8 @@ private fun ApprovalDetails(content: ApprovalOverlayContent, errorMessage: Strin
 private fun ApprovalActions(
     choices: List<ApprovalChoice>,
     isResponding: Boolean,
+    isEnabled: Boolean,
+    showSkipAll: Boolean,
     onChoice: (ApprovalChoice) -> Unit,
     onSkipAll: () -> Unit,
 ) {
@@ -212,7 +252,7 @@ private fun ApprovalActions(
                 row.forEach { choice ->
                     ApprovalDecisionButton(
                         choice = choice,
-                        enabled = !isResponding,
+                        enabled = isEnabled && !isResponding,
                         onClick = { onChoice(choice) },
                         modifier = Modifier.weight(1f),
                     )
@@ -220,9 +260,15 @@ private fun ApprovalActions(
                 if (row.size == 1) Box(Modifier.weight(1f))
             }
         }
-        OutlinedButton(onClick = onSkipAll, enabled = !isResponding, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Bolt, null, modifier = Modifier.padding(end = 6.dp))
-            Text("Skip all this session")
+        if (showSkipAll) {
+            OutlinedButton(
+                onClick = onSkipAll,
+                enabled = isEnabled && !isResponding,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Filled.Bolt, null, modifier = Modifier.padding(end = 6.dp))
+                Text("Skip all this session")
+            }
         }
     }
 }
@@ -266,23 +312,30 @@ private fun DecisionLabel(title: String, icon: ImageVector, prominent: Boolean) 
     Text(title, fontWeight = if (prominent) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
 }
 
-/** Exact scope sentences from `Models/Approval.swift` for legacy webui hosts. */
+/** Exact scope sentences from `Models/Approval.swift` for webui and direct-Hermes hosts. */
 object ApprovalScopeFormatter {
     private val oneTimeKeys = setOf("mcp_elicitation", "protected_instruction_file")
 
     fun webUiLine(keys: List<String>, description: String?, command: String?): String? {
         if (keys.isEmpty() || keys.any(oneTimeKeys::contains)) return null
-        val subject = subject(keys, description, command)
-        return when (subject) {
-            is Subject.Shell -> "Allow session covers every “${subject.label}” in this session; Always allow covers it on this server from now on."
-            is Subject.Plugin -> "Allow session covers every ${subject.tool} call for this reason in this session; Always allow covers it on this server from now on."
-            Subject.Python -> "Allow session covers every Python script in this session; Always allow covers every Python script on this server from now on."
-            Subject.Ssh -> "Allow session covers writes to SSH config in this session; Always allow covers them on this server from now on."
-            is Subject.Computer -> "Allow session covers computer use: ${subject.action} (${subject.mode}) in this session; Always allow covers it on this server from now on."
-            Subject.Security -> "Allow session covers this security finding in this session; Always allow covers it on this server from now on."
-            is Subject.ShellAndSecurity -> "Allow session covers “${subject.label}” and this security finding in this session; Always allow covers both on this server from now on."
-            Subject.Other -> "Allow session covers every action like this one in this session; Always allow covers it on this server from now on."
-        }
+        return serverSentence(subject(keys, description, command, toolName = null))
+    }
+
+    /**
+     * `ApprovalScope.line(..., host: .hermes)`: direct Hermes writes the Profile allowlist,
+     * while Tirith security findings remain scoped to this chat.
+     */
+    fun hermesLine(
+        keys: List<String>,
+        description: String?,
+        command: String?,
+        toolName: String?,
+        offersSession: Boolean,
+        offersAlways: Boolean,
+    ): String? {
+        if (!offersSession || keys.isEmpty() || keys.any(oneTimeKeys::contains)) return null
+        val subject = subject(keys, description, command, toolName)
+        return if (offersAlways) profileSentence(subject) else chatSentence(subject)
     }
 
     private sealed interface Subject {
@@ -296,24 +349,25 @@ object ApprovalScopeFormatter {
         data object Other : Subject
     }
 
-    private fun subject(keys: List<String>, description: String?, command: String?): Subject {
+    private fun subject(keys: List<String>, description: String?, command: String?, toolName: String?): Subject {
         val findings = keys.filter { it.startsWith("tirith:") }
         val others = keys.filterNot { it.startsWith("tirith:") }
         if (findings.size == 1 && others.isEmpty()) return Subject.Security
-        if (findings.isEmpty() && others.size == 1) return subject(others.single(), description, command)
+        if (findings.isEmpty() && others.size == 1) return subject(others.single(), description, command, toolName)
         if (findings.size == 1 && others.size == 1) {
-            val shell = subject(others.single(), description, null)
+            val shell = subject(others.single(), description, command = null, toolName = null)
             if (shell is Subject.Shell) return Subject.ShellAndSecurity(shell.label)
         }
         return Subject.Other
     }
 
-    private fun subject(key: String, description: String?, command: String?): Subject {
+    private fun subject(key: String, description: String?, command: String?, toolName: String?): Subject {
         if (key == "execute_code") return Subject.Python
         if (key == "ssh_config_write") return Subject.Ssh
         if (key.startsWith("plugin_rule:")) {
             val rule = key.removePrefix("plugin_rule:")
             val tool = Regex("^(.+):[0-9a-f]{12}$").matchEntire(rule)?.groupValues?.get(1)
+                ?: toolName?.trim()?.takeIf(String::isNotEmpty)
                 ?: Regex("^<([^<>\\s]+)>").find(command.orEmpty())?.groupValues?.get(1)
             return tool?.let(Subject::Plugin) ?: Subject.Other
         }
@@ -322,5 +376,49 @@ object ApprovalScopeFormatter {
         }
         val parts = description?.split("; ")?.map(String::trim).orEmpty()
         return if (key in parts) Subject.Shell(key) else Subject.Other
+    }
+
+    private fun profileSentence(subject: Subject): String = when (subject) {
+        is Subject.Shell ->
+            "Allow session covers every “${subject.label}” in this chat; Always allow covers it for this Profile from now on."
+        is Subject.Plugin ->
+            "Allow session covers every ${subject.tool} call for this reason in this chat; Always allow covers it for this Profile from now on."
+        Subject.Python ->
+            "Allow session covers every Python script in this chat; Always allow covers every Python script for this Profile from now on."
+        Subject.Ssh ->
+            "Allow session covers writes to SSH config in this chat; Always allow covers them for this Profile from now on."
+        is Subject.Computer ->
+            "Allow session covers computer use: ${subject.action} (${subject.mode}) in this chat; Always allow covers it for this Profile from now on."
+        is Subject.ShellAndSecurity ->
+            "Allow session covers “${subject.label}” and this security finding in this chat; Always allow covers “${subject.label}” for this Profile from now on. The security finding stays allowed for this chat only."
+        Subject.Security -> chatSentence(subject)
+        Subject.Other ->
+            "Allow session covers every action like this one in this chat; Always allow covers it for this Profile from now on."
+    }
+
+    private fun chatSentence(subject: Subject): String =
+        if (subject == Subject.Security) {
+            "Allow session covers this security finding in this chat."
+        } else {
+            "Allow session covers every action like this one in this chat."
+        }
+
+    private fun serverSentence(subject: Subject): String = when (subject) {
+        is Subject.Shell ->
+            "Allow session covers every “${subject.label}” in this session; Always allow covers it on this server from now on."
+        is Subject.Plugin ->
+            "Allow session covers every ${subject.tool} call for this reason in this session; Always allow covers it on this server from now on."
+        Subject.Python ->
+            "Allow session covers every Python script in this session; Always allow covers every Python script on this server from now on."
+        Subject.Ssh ->
+            "Allow session covers writes to SSH config in this session; Always allow covers them on this server from now on."
+        is Subject.Computer ->
+            "Allow session covers computer use: ${subject.action} (${subject.mode}) in this session; Always allow covers it on this server from now on."
+        Subject.Security ->
+            "Allow session covers this security finding in this session; Always allow covers it on this server from now on."
+        is Subject.ShellAndSecurity ->
+            "Allow session covers “${subject.label}” and this security finding in this session; Always allow covers both on this server from now on."
+        Subject.Other ->
+            "Allow session covers every action like this one in this session; Always allow covers it on this server from now on."
     }
 }
