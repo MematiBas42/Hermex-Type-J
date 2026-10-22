@@ -34,6 +34,7 @@ class MoveToHermesRunner(
     suspend fun run(): MoveRunResult {
         store.setStage(sourceServerId, MoveStage.RUNNING)
         try {
+            ensureSourceSafeToCopy()
             hermes.connect()
             settleDispatchedImports()
             copyMissing()
@@ -57,6 +58,22 @@ class MoveToHermesRunner(
     }
 
     suspend fun finishEarly(): MoveRecord = store.finish(sourceServerId, finishedEarly = true)
+
+    /** R4 from `MoveToHermesModel.runPass`: every copying pass rechecks running chats first. */
+    private suspend fun ensureSourceSafeToCopy() {
+        val record = store.recordForSource(sourceServerId) ?: error("Move record is missing.")
+        val hasCopyWork = record.items.any {
+            it.copyState == MoveCopyState.PENDING || it.copyState == MoveCopyState.DISPATCHING ||
+                it.copyState == MoveCopyState.UNREADABLE
+        }
+        if (!hasCopyWork) return
+        val running = webui.scanListing().sessions.count { it.isRunning }
+        if (running > 0) {
+            throw IllegalStateException(
+                "$running chats are still running on the webui server. Wait for them to finish so no reply is lost.",
+            )
+        }
+    }
 
     private suspend fun settleDispatchedImports() {
         val record = store.recordForSource(sourceServerId) ?: error("Move record is missing.")

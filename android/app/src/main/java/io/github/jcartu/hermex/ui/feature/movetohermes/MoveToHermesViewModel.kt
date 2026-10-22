@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.model.ServerKind
+import io.github.jcartu.hermex.net.hermes.HermesAddress
 import io.github.jcartu.hermex.ui.feature.onboarding.commitMoveToHermes
 import io.github.jcartu.hermex.ui.feature.onboarding.nextWebuiServerToMove
 import kotlinx.coroutines.CancellationException
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** Guided screens from `MoveToHermesView.swift` (#1218). */
 enum class MoveWizardStage { CHOOSE_HOST, CHECKING, REVIEW, MOVING, PAUSED, FINISHED, ERROR }
@@ -23,6 +25,7 @@ data class MoveToHermesUiState(
     val source: ServerAccount? = null,
     val destination: ServerAccount? = null,
     val hostChoices: List<ServerAccount> = emptyList(),
+    val hasSavedSourceHermesSignIn: Boolean = false,
     val checkedChats: Int = 0,
     val totalChats: Int = 0,
     val scan: MoveScanResult? = null,
@@ -77,8 +80,16 @@ class MoveToHermesViewModel(
             store.state.collectLatest {
                 val current = _uiState.value
                 val record = store.recordForSource(sourceServerId) ?: return@collectLatest
-                if (current.stage == MoveWizardStage.MOVING || current.stage == MoveWizardStage.PAUSED || current.stage == MoveWizardStage.FINISHED) {
-                    _uiState.value = current.copy(record = record)
+                if (
+                    current.stage == MoveWizardStage.MOVING || current.stage == MoveWizardStage.PAUSED ||
+                    current.stage == MoveWizardStage.FINISHED
+                ) {
+                    val stage = when (record.stage) {
+                        MoveStage.RUNNING -> MoveWizardStage.MOVING
+                        MoveStage.PAUSED -> MoveWizardStage.PAUSED
+                        MoveStage.FINISHED -> MoveWizardStage.FINISHED
+                    }
+                    _uiState.value = current.copy(record = record, stage = stage)
                 }
             }
         }
@@ -108,6 +119,29 @@ class MoveToHermesViewModel(
     }
 
     fun hostAdded(account: ServerAccount) = chooseDestination(account)
+
+    fun useSavedSourceHost() {
+        val saved = runCatching { container.botConnectionStore.load(sourceServerId) }.getOrNull() ?: return
+        work?.cancel()
+        work = viewModelScope.launch {
+            try {
+                val destinationId = HermesAddress.serverID(saved.address)
+                val existing = auth.servers.value.firstOrNull {
+                    it.id == destinationId && it.kind == ServerKind.HERMES
+                }
+                val destination = existing ?: auth.addHermesServer(
+                    saved.copy(id = UUID.randomUUID().toString()),
+                    activate = false,
+                )
+                work = null
+                chooseDestination(destination)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _uiState.value = _uiState.value.copy(stage = MoveWizardStage.ERROR, errorMessage = error.message)
+            }
+        }
+    }
 
     fun retryScan() {
         _uiState.value.destination?.let { scan(it, _uiState.value.isRepeat) }
@@ -178,6 +212,19 @@ class MoveToHermesViewModel(
     fun pause() {
         work?.cancel()
         work = null
+        val state = _uiState.value
+        if (state.stage == MoveWizardStage.CHECKING) {
+            val record = store.recordForSource(sourceServerId)
+            _uiState.value = state.copy(
+                stage = when (record?.stage) {
+                    MoveStage.FINISHED -> MoveWizardStage.FINISHED
+                    MoveStage.RUNNING, MoveStage.PAUSED -> MoveWizardStage.PAUSED
+                    null -> MoveWizardStage.CHOOSE_HOST
+                },
+                record = record,
+                errorMessage = null,
+            )
+        }
     }
 
     fun activateDestination(onDone: () -> Unit) {
@@ -322,9 +369,13 @@ class MoveToHermesViewModel(
             },
             source = sourceAtOpen,
             destination = destination,
-            hostChoices = auth.servers.value.filter { it.kind == ServerKind.HERMES },
+            hostChoices = auth.servers.value.filter {
+                it.kind == ServerKind.HERMES && runCatching { container.botConnectionStore.load(it.id) }.getOrNull() != null
+            },
             record = record,
             hasNextSource = auth.nextWebuiServerToMove(store, excluding = sourceServerId) != null,
+            hasSavedSourceHermesSignIn =
+                runCatching { container.botConnectionStore.load(sourceServerId) }.getOrNull() != null,
         )
     }
 

@@ -77,6 +77,7 @@ class MoveToHermesComposeTest {
                     MoveToHermesWizardContent(
                         state = state,
                         onChooseHost = {},
+                        onUseSavedHost = {},
                         onAddHost = {},
                         onMapProfile = { _, _, _ -> },
                         onMove = {},

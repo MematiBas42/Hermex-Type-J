@@ -374,6 +374,7 @@ private fun MoveToHermesDialog(
             MoveToHermesWizardContent(
                 state = state,
                 onChooseHost = model::chooseDestination,
+                onUseSavedHost = model::useSavedSourceHost,
                 onAddHost = { showConnect = true },
                 onMapProfile = model::setProfileDestination,
                 onMove = model::startMove,
@@ -423,6 +424,7 @@ private fun wizardTitle(state: MoveToHermesUiState): String = when (state.stage)
 fun MoveToHermesWizardContent(
     state: MoveToHermesUiState,
     onChooseHost: (ServerAccount) -> Unit,
+    onUseSavedHost: () -> Unit,
     onAddHost: () -> Unit,
     onMapProfile: (String, String?, Boolean) -> Unit,
     onMove: () -> Unit,
@@ -439,7 +441,7 @@ fun MoveToHermesWizardContent(
     val paneCount = LocalPaneCount.current.coerceIn(1, 3)
     if (paneCount == 1) {
         WizardDetails(
-            state, onChooseHost, onAddHost, onMapProfile, onMove, onRetry, onResume,
+            state, onChooseHost, onUseSavedHost, onAddHost, onMapProfile, onMove, onRetry, onResume,
             onFinishEarly, onCopyAgain, onDone, onMoveNext, onRemove, onClose,
             modifier.fillMaxSize(),
         )
@@ -449,7 +451,7 @@ fun MoveToHermesWizardContent(
                 when {
                     index == 0 -> WizardOverview(state, Modifier.fillMaxSize())
                     index == paneCount - 1 -> WizardDetails(
-                        state, onChooseHost, onAddHost, onMapProfile, onMove, onRetry, onResume,
+                        state, onChooseHost, onUseSavedHost, onAddHost, onMapProfile, onMove, onRetry, onResume,
                         onFinishEarly, onCopyAgain, onDone, onMoveNext, onRemove, onClose,
                         Modifier.fillMaxSize(),
                     )
@@ -527,6 +529,7 @@ private fun SummaryLine(label: String, value: String) {
 private fun WizardDetails(
     state: MoveToHermesUiState,
     onChooseHost: (ServerAccount) -> Unit,
+    onUseSavedHost: () -> Unit,
     onAddHost: () -> Unit,
     onMapProfile: (String, String?, Boolean) -> Unit,
     onMove: () -> Unit,
@@ -549,6 +552,13 @@ private fun WizardDetails(
             MoveWizardStage.CHOOSE_HOST -> {
                 item {
                     Text("Pick the Hermes host that should take ${state.sourceName}’s chats.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (state.hasSavedSourceHermesSignIn) {
+                    item {
+                        FilledTonalButton(onClick = onUseSavedHost, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use ${state.sourceName}’s saved Hermes sign-in")
+                        }
+                    }
                 }
                 items(state.hostChoices, key = { it.id }) { host ->
                     OutlinedButton(onClick = { onChooseHost(host) }, modifier = Modifier.fillMaxWidth()) {
