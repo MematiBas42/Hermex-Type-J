@@ -75,6 +75,13 @@ class AuthTestFixture(tmpFolder: TemporaryFolder) {
         runtimeStore = runtimeHeaders,
     )
     val cookies = RecordingCookieStore()
+    val botRecords = mutableMapOf<String, io.github.jcartu.hermex.model.hermes.BotConnection>()
+    val botConnections = object : io.github.jcartu.hermex.core.prefs.BotConnectionRecords {
+        override fun load(server: String) = botRecords[server]
+        override fun save(connection: io.github.jcartu.hermex.model.hermes.BotConnection, server: String) { botRecords[server] = connection }
+        override fun remove(server: String) { botRecords.remove(server) }
+    }
+    val discardedHermesData = mutableListOf<Pair<String, String?>>()
 
     /** The clients handed out, keyed by probed URL, so tests can stub per server. */
     val clients = HashMap<String, AuthApiClient>()
@@ -115,6 +122,8 @@ class AuthTestFixture(tmpFolder: TemporaryFolder) {
             customHeaders = customHeaders,
             cookies = cookies,
             scope = scope,
+            botConnections = botConnections,
+            discardHermesData = { server, connectionID -> discardedHermesData += server to connectionID },
             logoutTimeoutMillis = logoutTimeoutMillis,
         )
     }
