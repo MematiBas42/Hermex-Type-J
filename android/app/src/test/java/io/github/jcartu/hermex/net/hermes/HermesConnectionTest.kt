@@ -127,6 +127,18 @@ class HermesConnectionTest {
     }
 
     @Test
+    fun browserOriginHeadersAreRejectedBeforeConnecting() {
+        for (name in listOf("Origin", "rEfErEr")) {
+            try {
+                HermesHeaders.admit(listOf(io.github.jcartu.hermex.net.CustomHeader(name, "https://unrelated.example")))
+                fail("Browser origin headers must not be admitted")
+            } catch (error: HermesHeaders.Rejection.Reserved) {
+                assertEquals(name, error.name)
+            }
+        }
+    }
+
+    @Test
     fun differentHostRefusesBeforeThePasswordGoesOut() = runBlocking {
         val http = connection(installID = "install-B")
         try {

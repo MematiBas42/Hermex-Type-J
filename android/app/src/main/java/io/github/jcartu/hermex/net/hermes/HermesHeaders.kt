@@ -79,7 +79,7 @@ class HermesHeaders private constructor(val values: List<CustomHeader>) {
         private val RESERVED = setOf(
             "host", "connection", "upgrade", "content-length", "transfer-encoding", "te", "trailer",
             "keep-alive", "proxy-connection", "proxy-authorization", "cookie",
-            "origin", "x-forwarded-prefix", "x-hermes-session-token",
+            "origin", "referer", "x-forwarded-prefix", "x-hermes-session-token",
         )
 
         /** The header an open dashboard reads its page's session token from (#1314). */

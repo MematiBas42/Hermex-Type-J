@@ -141,6 +141,9 @@ class CustomHeaderStore(headers: List<CustomHeader> = emptyList()) {
     }
 }
 
+/** A redirect must never forward a credential-bearing or mutating request to another origin. */
+internal class UnsafeCrossOriginRedirect : java.net.ProtocolException("Cross-origin request redirect refused")
+
 /**
  * Port of `CrossOriginHeaderStripper` (Swift `URLSession` redirect delegate,
  * issue #277), expressed as an OkHttp *network* interceptor — network
@@ -152,8 +155,9 @@ class CustomHeaderStore(headers: List<CustomHeader> = emptyList()) {
  * `X-Api-Key`) — which may be a secret. When the hop's destination is not the
  * configured server origin, every configured custom header is removed by name
  * (case-insensitively, since HTTP field names are case-insensitive).
- * Same-origin hops keep the headers (a proxy path rewrite still needs them);
- * a request with no custom headers passes through untouched.
+ * Same-origin hops keep the headers (a proxy path rewrite still needs them).
+ * Cross-origin follow-ups are permitted only for GET/HEAD; stripping headers
+ * cannot protect passwords or other secrets carried in a redirected body.
  */
 class CrossOriginHeaderStripper(
     private val baseUrlProvider: () -> HttpUrl?,
@@ -164,6 +168,7 @@ class CrossOriginHeaderStripper(
         val request = chain.request()
         val baseUrl = baseUrlProvider() ?: return chain.proceed(request)
         if (isSameOrigin(request.url, baseUrl)) return chain.proceed(request)
+        if (request.method != "GET" && request.method != "HEAD") throw UnsafeCrossOriginRedirect()
 
         val namesToStrip = customHeaderProvider()
             .filter { it.isApplicable }

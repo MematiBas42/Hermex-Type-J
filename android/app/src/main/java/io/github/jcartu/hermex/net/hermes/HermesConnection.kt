@@ -181,6 +181,8 @@ class HermesConnection(
         val jar = HermesCookieJar()
         client = httpClient.newBuilder()
             .cookieJar(jar)
+            // A dropped reply may follow a committed mutation or consumed refresh token.
+            .retryOnConnectionFailure(false)
             .addNetworkInterceptor(headers.redirectGuard(address))
             .followRedirects(true)
             .followSslRedirects(true)
@@ -195,6 +197,9 @@ class HermesConnection(
             .callTimeout(180, TimeUnit.SECONDS)
             .build()
         socketClient = client.newBuilder()
+            // OkHttp omits network interceptors for WebSocket calls; never follow upgrades.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(0, TimeUnit.MILLISECONDS)
@@ -645,10 +650,12 @@ class HermesConnection(
     private suspend fun exchange(request: Request, client: OkHttpClient): HermesExchange {
         val result = try {
             client.exchange(request)
+        } catch (_: io.github.jcartu.hermex.net.UnsafeCrossOriginRedirect) {
+            throw BotFailure.Blocked
         } catch (error: IOException) {
             throw BotFailure.Network(error)
         }
-        if (!result.response.request.url.host.equals(request.url.host, ignoreCase = true)) throw BotFailure.Blocked
+        if (!HermesHeaders.isSameOrigin(result.response.request.url, request.url)) throw BotFailure.Blocked
         if (result.status in 300..399) throw BotFailure.Blocked
         return result
     }
@@ -721,7 +728,7 @@ class HermesConnections(
      * `AuthManager` sets it and signs that server out when it is the active Hermes server (#899).
      */
     @Volatile
-    var onSignInRejected: ((server: String, failure: BotFailure) -> Unit)? = null
+    var onSignInRejected: ((server: String, failure: BotFailure, isCurrent: () -> Boolean) -> Unit)? = null
 
     private val lock = Any()
     private var server: String? = null
@@ -739,7 +746,13 @@ class HermesConnections(
         if (live != null && this.server == server && live.adopt(saved)) return live
         retireCurrent()
         val fresh = HermesConnection(saved, httpClient())
-        fresh.onLoginRejected = { failure -> onSignInRejected?.invoke(server, failure) }
+        fresh.onLoginRejected = { failure ->
+            onSignInRejected?.invoke(server, failure) {
+                synchronized(lock) {
+                    this.server == server && current?.get() === fresh && !fresh.isRetired
+                }
+            }
+        }
         if (saved.oauth != null) keepRefreshTokens(fresh, server)
         current = WeakReference(fresh)
         this.server = server
