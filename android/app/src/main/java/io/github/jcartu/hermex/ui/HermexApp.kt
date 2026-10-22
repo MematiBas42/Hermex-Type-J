@@ -194,7 +194,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 HermexDestination.KANBAN -> {
                     val source = kanbanDataSource
                     if (source == null) {
-                        ErrorState(\"Sign in to this Hermes server to open Kanban.\")
+                        ErrorState("Sign in to this Hermes server to open Kanban.")
                     } else {
                         KanbanRoute(
                             dataSource = source,
@@ -207,7 +207,7 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 HermexDestination.TASKS -> {
                     val client = tasksClient
                     if (client == null) {
-                        ErrorState(\"Sign in to this Hermes server to open Tasks.\")
+                        ErrorState("Sign in to this Hermes server to open Tasks.")
                     } else {
                         TasksRoute(client = client)
                     }
