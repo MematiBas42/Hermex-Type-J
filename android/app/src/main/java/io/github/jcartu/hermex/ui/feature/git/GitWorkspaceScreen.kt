@@ -272,11 +272,15 @@ private fun GitStatusPane(
             IconButton(onClick = actions.refresh) { Icon(Icons.Filled.Refresh, "Refresh Git") }
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Git actions") }
             DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem({ Text("Fetch") }, { menu = false; actions.fetch() }, leadingIcon = { Icon(Icons.Filled.Refresh, null) })
-                DropdownMenuItem({ Text("Pull…") }, { menu = false; actions.pull() }, leadingIcon = { Icon(Icons.Filled.CloudDownload, null) })
+                if (state.showsCompanionSyncActions) {
+                    DropdownMenuItem({ Text("Fetch") }, { menu = false; actions.fetch() }, leadingIcon = { Icon(Icons.Filled.Refresh, null) })
+                    DropdownMenuItem({ Text("Pull…") }, { menu = false; actions.pull() }, leadingIcon = { Icon(Icons.Filled.CloudDownload, null) })
+                }
                 DropdownMenuItem({ Text("Push…") }, { menu = false; actions.push() }, leadingIcon = { Icon(Icons.Filled.CloudUpload, null) })
                 DropdownMenuItem({ Text("Checkout branch…") }, { menu = false; actions.checkout(false) }, leadingIcon = { Icon(Icons.Filled.CallMerge, null) })
-                DropdownMenuItem({ Text("Stash + checkout…") }, { menu = false; actions.checkout(true) })
+                if (!state.isHermes) {
+                    DropdownMenuItem({ Text("Stash + checkout…") }, { menu = false; actions.checkout(true) })
+                }
             }
         }
         state.errorMessage?.let { ErrorState(it, onRetry = actions.refresh) }
@@ -401,7 +405,7 @@ private fun GitReviewPane(
 }
 
 @Composable
-private fun GitCheckoutDialog(
+internal fun GitCheckoutDialog(
     state: GitWorkspaceUiState,
     stashFirst: Boolean,
     onDismiss: () -> Unit,
@@ -421,7 +425,14 @@ private fun GitCheckoutDialog(
                     items(local) { branch -> DropdownMenuItem({ Text(branch.name.orEmpty()) }, { selected = branch }) }
                     items(remote) { branch -> DropdownMenuItem({ Text(branch.name.orEmpty()) }, { selected = branch }) }
                 }
-                OutlinedTextField(newBranch, { newBranch = it }, label = { Text("New local branch (optional)") }, singleLine = true)
+                if (state.showsCompanionSyncActions) {
+                    OutlinedTextField(
+                        newBranch,
+                        { newBranch = it },
+                        label = { Text("New local branch (optional)") },
+                        singleLine = true,
+                    )
+                }
                 selected?.name?.let { Text("Selected: $it", fontWeight = FontWeight.SemiBold) }
             }
         },
@@ -445,3 +456,7 @@ private fun GitCheckoutDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+/** Fetch, Pull, and New branch are absent until Hermes companion capabilities list every route. */
+internal val GitWorkspaceUiState.showsCompanionSyncActions: Boolean
+    get() = !isHermes || supportsSync
