@@ -1,6 +1,5 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -46,6 +45,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
@@ -355,7 +355,7 @@ private fun MarkdownTableView(table: MarkdownTableSegment.Table) {
 }
 
 private fun isWebUri(value: String): Boolean {
-    val scheme = runCatching { Uri.parse(value).scheme?.lowercase(Locale.ROOT) }.getOrNull()
+    val scheme = runCatching { value.toUri().scheme?.lowercase(Locale.ROOT) }.getOrNull()
     return scheme == "http" || scheme == "https"
 }
 
@@ -369,7 +369,7 @@ private fun isWorkspaceFileUri(value: String): Boolean {
 private fun workspacePathFromUri(value: String): String {
     val trimmed = value.trim().removeSurrounding("<", ">")
     if (!trimmed.startsWith("file:", ignoreCase = true)) return trimmed
-    val uri = Uri.parse(trimmed)
+    val uri = trimmed.toUri()
     return uri.path.orEmpty() + uri.fragment?.let { "#$it" }.orEmpty()
 }
 

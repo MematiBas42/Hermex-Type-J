@@ -384,6 +384,5 @@ class MoveToHermesViewModel(
 
     override fun onCleared() {
         pause()
-        super.onCleared()
     }
 }

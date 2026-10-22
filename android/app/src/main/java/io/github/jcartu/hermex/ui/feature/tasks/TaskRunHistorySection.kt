@@ -35,6 +35,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.Locale
 
 /**
  * Task Detail's run history: every past run the server still holds, newest
@@ -64,11 +65,11 @@ fun TaskRunHistorySection(
     SectionCard(title = sectionTitle(total), modifier = modifier) {
         Column {
             if (errorMessage != null) {
-                inlineError(errorMessage, retry = retry, runsEmpty = runs.isEmpty())
+                InlineError(errorMessage, retry = retry, runsEmpty = runs.isEmpty())
             }
 
             if (runs.isEmpty()) {
-                emptyState(isLoading = isLoading, hasError = errorMessage != null)
+                HistoryEmptyState(isLoading = isLoading, hasError = errorMessage != null)
             } else {
                 runs.forEachIndexed { index, run ->
                     if (index > 0) {
@@ -114,7 +115,7 @@ private fun sectionTitle(total: Int?): String =
     if (total == null) "Run History" else "Run History · $total"
 
 @Composable
-private fun emptyState(isLoading: Boolean, hasError: Boolean) {
+private fun HistoryEmptyState(isLoading: Boolean, hasError: Boolean) {
     when {
         isLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -136,7 +137,7 @@ private fun emptyState(isLoading: Boolean, hasError: Boolean) {
 
 /** History failing is a section-local problem: it never takes the screen down with it. */
 @Composable
-private fun inlineError(message: String, retry: () -> Unit, runsEmpty: Boolean) {
+private fun InlineError(message: String, retry: () -> Unit, runsEmpty: Boolean) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -267,9 +268,9 @@ private fun dotColor(outcome: RunOutcome?): Color = when (outcome) {
 internal fun byteCountText(bytes: Int): String {
     if (bytes < 1024) return "$bytes B"
     val kb = bytes / 1024.0
-    if (kb < 1024) return "${if (kb >= 100) kb.toInt().toString() else String.format("%.1f", kb).trimEnd('0').trimEnd('.')} KB"
+    if (kb < 1024) return "${if (kb >= 100) kb.toInt().toString() else String.format(Locale.ROOT, "%.1f", kb).trimEnd('0').trimEnd('.')} KB"
     val mb = kb / 1024.0
-    return "${String.format("%.1f", mb).trimEnd('0').trimEnd('.')} MB"
+    return "${String.format(Locale.ROOT, "%.1f", mb).trimEnd('0').trimEnd('.')} MB"
 }
 
 /** Port of `Duration.seconds(duration).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow))`. */

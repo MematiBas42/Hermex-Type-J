@@ -2,6 +2,7 @@ package io.github.jcartu.hermex.ui.feature.bots
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import io.github.jcartu.hermex.model.hermes.BotJSON
 import io.github.jcartu.hermex.model.hermes.BotProfile
 import io.github.jcartu.hermex.net.hermes.HermesCall
@@ -207,7 +208,7 @@ fun interface BotAvatarDecoder {
             val scale = maxPixelSize.toDouble() / longest
             val width = (image.width * scale).toInt().coerceAtLeast(1)
             val height = (image.height * scale).toInt().coerceAtLeast(1)
-            return Bitmap.createScaledBitmap(image, width, height, true)
+            return image.scale(width, height)
         }
     }
 }

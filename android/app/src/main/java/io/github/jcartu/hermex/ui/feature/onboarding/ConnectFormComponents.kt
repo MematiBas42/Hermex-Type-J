@@ -83,8 +83,8 @@ fun ConnectionModePicker(
     selection: ConnectionMode,
     onSelect: (ConnectionMode) -> Unit,
     style: ConnectFormStyle,
-    enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Column(modifier.fillMaxWidth()) {
         ConnectionMode.entries.forEachIndexed { index, mode ->
@@ -131,8 +131,8 @@ fun CustomHeadersEditor(
     headers: List<CustomHeader>,
     onChange: (List<CustomHeader>) -> Unit,
     style: ConnectFormStyle,
-    enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (headers.isEmpty()) {

@@ -57,9 +57,9 @@ import io.github.jcartu.hermex.ui.theme.CodeTextStyle
 fun SourceViewerScreen(
     content: String,
     path: String,
+    modifier: Modifier = Modifier,
     language: String? = null,
     targetLine: Int? = null,
-    modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current

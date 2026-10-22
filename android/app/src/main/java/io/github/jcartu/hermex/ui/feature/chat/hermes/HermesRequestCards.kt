@@ -96,7 +96,6 @@ import kotlinx.coroutines.delay
 @Composable
 fun BotPendingRequestCard(
     request: BotPendingRequest,
-    subject: HermesRequestSubject = HermesRequestSubject.HERMES,
     isEnabled: Boolean,
     canStop: Boolean,
     isAnswering: Boolean,
@@ -108,6 +107,7 @@ fun BotPendingRequestCard(
     onStop: () -> Unit,
     onConnection: (BotConnectionAnswer) -> Unit,
     modifier: Modifier = Modifier,
+    subject: HermesRequestSubject = HermesRequestSubject.HERMES,
 ) {
     val identity = when (subject) {
         HermesRequestSubject.HERMES -> "Hermes"

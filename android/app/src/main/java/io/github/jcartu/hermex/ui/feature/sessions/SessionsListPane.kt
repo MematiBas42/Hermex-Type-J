@@ -59,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -277,7 +278,7 @@ private fun SessionListScreen(
     // "Session times update while the list is idle" (1.8.0): one minute-aligned
     // tick, running only while resumed (repeatOnLifecycle cancels on pause), so
     // an idle list stays current without re-rendering whole rows.
-    var nowEpochSeconds by remember { mutableStateOf(System.currentTimeMillis() / 1000) }
+    var nowEpochSeconds by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             SessionListIdleTicker.run(

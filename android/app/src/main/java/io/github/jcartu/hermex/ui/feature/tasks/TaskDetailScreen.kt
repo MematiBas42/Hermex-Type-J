@@ -241,13 +241,13 @@ fun TaskDetailRoute(
                     seeFullOutput = { state.latestRun?.let(::openRun) },
                 )
 
-                actionStatusSection(state.isMutating, state.actionErrorMessage)
+                ActionStatusSection(state.isMutating, state.actionErrorMessage)
 
-                promptCard(detailJob)
+                PromptCard(detailJob)
 
-                latestOutputCard(detailJob, state)
+                LatestOutputCard(detailJob, state)
 
-                configurationCard(detailJob)
+                ConfigurationCard(detailJob)
 
                 if (!state.isHistoryUnavailable) {
                     TaskRunHistorySection(
@@ -350,7 +350,7 @@ fun TaskDetailRoute(
 }
 
 @Composable
-private fun actionStatusSection(isMutating: Boolean, actionErrorMessage: String?) {
+private fun ActionStatusSection(isMutating: Boolean, actionErrorMessage: String?) {
     when {
         isMutating -> Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -370,7 +370,7 @@ private fun actionStatusSection(isMutating: Boolean, actionErrorMessage: String?
 }
 
 @Composable
-private fun promptCard(job: CronJob) {
+private fun PromptCard(job: CronJob) {
     val prompt = job.prompt
     if (!prompt.isNullOrEmpty()) {
         SectionCard(title = "Prompt") {
@@ -391,7 +391,7 @@ private fun promptCard(job: CronJob) {
  * this server has no history endpoint.
  */
 @Composable
-private fun latestOutputCard(job: CronJob, state: TaskDetailUiState) {
+private fun LatestOutputCard(job: CronJob, state: TaskDetailUiState) {
     val output = state.outputs.firstOrNull() ?: return
     val content = output.content
     if (content.isNullOrEmpty()) return
@@ -411,7 +411,7 @@ private fun latestOutputCard(job: CronJob, state: TaskDetailUiState) {
 
 /** Everything the list row deliberately stopped showing. */
 @Composable
-private fun configurationCard(job: CronJob) {
+private fun ConfigurationCard(job: CronJob) {
     val fields = TaskConfigurationField.fields(job)
     SectionCard(title = "Configuration") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -1,5 +1,6 @@
 package io.github.jcartu.hermex.ui.feature.chat.hermes
 
+import android.app.Application
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -59,7 +60,7 @@ data class HermesChatPresentation(
  * no webui request participates in this ViewModel.
  */
 class HermesChatViewModel(
-    private val context: Context,
+    private val application: Application,
     private val container: AppContainer,
     val account: ServerAccount,
     val http: HermesConnection,
@@ -100,7 +101,7 @@ class HermesChatViewModel(
     private var initialization: Job
     private val publicMedia = OkHttpClient.Builder().cookieJar(CookieJar.NO_COOKIES)
         .followRedirects(false).followSslRedirects(false).build()
-    private val previewDirectory = File(context.cacheDir, "hermes-chat-${UUID.randomUUID()}")
+    private val previewDirectory = File(application.cacheDir, "hermes-chat-${UUID.randomUUID()}")
     private val previewFiles = LinkedHashMap<String, File>()
 
     var mentionAnnotation: ((String) -> String)? = null
@@ -124,7 +125,7 @@ class HermesChatViewModel(
         }
         initialization = viewModelScope.launch {
             try {
-                val picked = botId ?: initialProfile ?: HermesProfilePreference.selected(context, account.id)
+                val picked = botId ?: initialProfile ?: HermesProfilePreference.selected(application, account.id)
                     ?: BotJSON.parse(http.data(HermesREST.ProfilesActive))["current"].text?.takeIf(String::isNotEmpty)
                     ?: throw BotFailure.Unsupported
                 val target = when {
@@ -549,7 +550,7 @@ class HermesChatViewModel(
     override fun switchProfile(profile: ProfileSummary, startNewSession: Boolean) = launchAction {
         if (coordinator?.policy?.picksProfile != true) return@launchAction
         val name = profile.name ?: throw BotFailure.Unsupported
-        HermesProfilePreference.save(context, account.id, name)
+        HermesProfilePreference.save(application, account.id, name)
         newChat(name)
     }
 
@@ -694,7 +695,7 @@ class HermesChatViewModel(
         viewModelScope.launch {
             initialization.join()
             val turn = coordinator
-            monitorOwner(turn)?.let { HermesRunMonitorService.stop(context, it) }
+            monitorOwner(turn)?.let { HermesRunMonitorService.stop(application, it) }
             turn?.activate()
         }
     }
@@ -740,8 +741,8 @@ class HermesChatViewModel(
         )
     }
     private fun handOffRunMonitor(target: HermesRunTarget, settings: SettingsRepository.Settings) {
-        if (HermesRunMonitorService.canStart(context, settings)) {
-            HermesRunMonitorService.start(context, target)
+        if (HermesRunMonitorService.canStart(application, settings)) {
+            HermesRunMonitorService.start(application, target)
         }
     }
     private fun parkPendingGoal() {
@@ -779,7 +780,6 @@ class HermesChatViewModel(
             withContext(Dispatchers.Main.immediate) { turn?.suspendConnection() }
             withContext(Dispatchers.IO) { previewDirectory.deleteRecursively() }
         }
-        super.onCleared()
     }
 
     companion object {
@@ -807,8 +807,21 @@ class HermesChatViewModel(
             botChatRoot: String? = null, linkedRoot: String? = null): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val saved = container.botConnectionStore.load(account.id) ?: throw BotFailure.SignInExpired
-                HermesChatViewModel(context.applicationContext, container, account, container.hermesConnections.connection(saved, account.id),
-                    sessionKey, newChat, profile, botId, parentKey, lineageRoot, botChatRoot, linkedRoot)
+                val application = context.applicationContext as Application
+                HermesChatViewModel(
+                    application = application,
+                    container = container,
+                    account = account,
+                    http = container.hermesConnections.connection(saved, account.id),
+                    initialSessionKey = sessionKey,
+                    initialNewChat = newChat,
+                    initialProfile = profile,
+                    botId = botId,
+                    parentKey = parentKey,
+                    lineageRoot = lineageRoot,
+                    botChatRoot = botChatRoot,
+                    linkedRoot = linkedRoot,
+                )
             }
         }
     }

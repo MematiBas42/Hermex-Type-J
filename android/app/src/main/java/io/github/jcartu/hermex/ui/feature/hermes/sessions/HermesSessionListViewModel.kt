@@ -136,7 +136,6 @@ class HermesSessionListViewModel(
         val old = wire; wire = null
         old?.onEvent = null; old?.onDisconnect = null
         if (old != null) CoroutineScope(HermesActor.dispatcher).launch { old.close() }
-        super.onCleared()
     }
 
     suspend fun selectProfile(profile: String) {

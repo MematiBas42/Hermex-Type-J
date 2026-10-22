@@ -38,8 +38,8 @@ internal fun ComposerVoiceNoteButton(
     enabled: Boolean,
     isProcessing: Boolean,
     actions: ChatComposerActions,
-    importVoiceNote: ((ByteArray, String) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    importVoiceNote: ((ByteArray, String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val recorder = remember(context) { VoiceNoteRecorder(context) }

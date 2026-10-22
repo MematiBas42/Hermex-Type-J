@@ -2,6 +2,7 @@ package io.github.jcartu.hermex.ui.feature.bots
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -28,7 +29,7 @@ interface BotLocalDefaults {
         override fun string(key: String): String? = runCatching { preferences.getString(key, null) }.getOrNull()
 
         override fun put(key: String, value: String?) {
-            preferences.edit().apply { if (value == null) remove(key) else putString(key, value) }.apply()
+            preferences.edit { if (value == null) remove(key) else putString(key, value) }
         }
 
         companion object {

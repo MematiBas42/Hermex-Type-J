@@ -222,5 +222,7 @@ class HermesConnectionViewModel(
         http = null
         _state.update { it.copy(isConnecting = false) }
     }
-    override fun onCleared() { cancel(); super.onCleared() }
+    override fun onCleared() {
+        cancel()
+    }
 }

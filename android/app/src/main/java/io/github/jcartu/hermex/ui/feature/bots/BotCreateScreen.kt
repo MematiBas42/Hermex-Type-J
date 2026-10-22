@@ -155,8 +155,8 @@ data class BotCreateContentActions(
 @Composable
 fun BotCreateContent(
     state: BotCreator.State,
-    actions: BotCreateContentActions = BotCreateContentActions(),
     modifier: Modifier = Modifier,
+    actions: BotCreateContentActions = BotCreateContentActions(),
     cue: BotFaceCue? = null,
 ) {
     val paneCount = LocalPaneCount.current.coerceIn(1, 3)

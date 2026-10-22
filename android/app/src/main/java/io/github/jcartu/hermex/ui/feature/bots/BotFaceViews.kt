@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.withRotation
 import io.github.jcartu.hermex.model.hermes.BotAvatarColors
 import io.github.jcartu.hermex.model.hermes.BotAvatarExpression
 import io.github.jcartu.hermex.model.hermes.BotAvatarShape
@@ -70,11 +72,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun BotAvatarView(
     profile: BotProfile,
+    modifier: Modifier = Modifier,
     avatar: Bitmap? = null,
     size: Dp = 44.dp,
     motion: BotFaceMotion = BotFaceMotion.Idle,
     expression: BotAvatarExpression? = null,
-    modifier: Modifier = Modifier,
 ) {
     if (avatar != null) {
         val image = remember(avatar) { avatar.asImageBitmap() }
@@ -110,8 +112,8 @@ fun BotAnimatedFaceView(
     name: String,
     appearance: BotProfileAppearance,
     size: Dp,
-    motion: BotFaceMotion = BotFaceMotion.Idle,
     modifier: Modifier = Modifier,
+    motion: BotFaceMotion = BotFaceMotion.Idle,
 ) {
     val active = rememberFaceActive()
     val reduceMotion = rememberReduceMotion()
@@ -134,8 +136,8 @@ fun BotAvatarMarkView(
     name: String,
     appearance: BotProfileAppearance,
     size: Dp,
-    pose: BotFacePose = BotFacePose.Rest,
     modifier: Modifier = Modifier,
+    pose: BotFacePose = BotFacePose.Rest,
 ) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val renderer = remember(name, appearance, dark) { BotAvatarRenderer(name, appearance, dark) }
@@ -169,9 +171,9 @@ fun BotAvatarMarkView(
 fun BotInteractiveFaceView(
     name: String,
     appearance: BotProfileAppearance,
+    modifier: Modifier = Modifier,
     size: Dp = 120.dp,
     cue: BotFaceCue? = null,
-    modifier: Modifier = Modifier,
 ) {
     val active = rememberFaceActive()
     val reduceMotion = rememberReduceMotion()
@@ -319,7 +321,13 @@ fun BotInteractiveFaceView(
         val x = gazeX.value.toDouble()
         val y = gazeY.value.toDouble()
         val bitPose = if (x == 0.0 && y == 0.0) basePose else basePose.withGaze(x, y)
-        BotAvatarMarkView(name, shown, size, bitPose, gestureModifier)
+        BotAvatarMarkView(
+            name = name,
+            appearance = shown,
+            size = size,
+            modifier = gestureModifier,
+            pose = bitPose,
+        )
     } else {
         AnimatedFace(
             name = name,
@@ -343,11 +351,11 @@ fun BotInteractiveFaceView(
 @Composable
 fun BotChatTitlePill(
     profile: BotProfile,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
     avatar: Bitmap? = null,
     face: BotTitleFace = BotTitleFace.RESTING,
     turn: BotTurnState = BotTurnState.IDLE,
-    onOpen: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val active = rememberFaceActive()
     val reduceMotion = rememberReduceMotion()
@@ -415,7 +423,7 @@ fun renderBotAvatar(
     dark: Boolean = true,
 ): Bitmap {
     require(sizePixels > 0) { "sizePixels must be positive" }
-    val bitmap = Bitmap.createBitmap(sizePixels, sizePixels, Bitmap.Config.ARGB_8888)
+    val bitmap = createBitmap(sizePixels, sizePixels)
     BotAvatarRenderer(profile.id, BotProfileAppearance.of(profile), dark).draw(
         canvas = AndroidCanvas(bitmap),
         width = sizePixels.toFloat(),
@@ -476,7 +484,13 @@ private fun AnimatedFace(
     } else {
         pose.withGaze(gazeX, gazeY)
     }
-    BotAvatarMarkView(name, appearance, size, shownPose, modifier)
+    BotAvatarMarkView(
+        name = name,
+        appearance = appearance,
+        size = size,
+        modifier = modifier,
+        pose = shownPose,
+    )
 }
 
 @Composable
@@ -690,18 +704,17 @@ private class BotAvatarRenderer(
         degrees: Float,
     ) {
         val radius = min(width, height) / 2f
-        canvas.save()
-        canvas.rotate(degrees, centerX, centerY)
-        canvas.drawRoundRect(
-            centerX - width / 2f,
-            centerY - height / 2f,
-            centerX + width / 2f,
-            centerY + height / 2f,
-            radius,
-            radius,
-            eyePaint,
-        )
-        canvas.restore()
+        canvas.withRotation(degrees, centerX, centerY) {
+            drawRoundRect(
+                centerX - width / 2f,
+                centerY - height / 2f,
+                centerX + width / 2f,
+                centerY + height / 2f,
+                radius,
+                radius,
+                eyePaint,
+            )
+        }
     }
 }
 

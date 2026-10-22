@@ -241,8 +241,8 @@ data class BotProfileEditorContentActions(
 fun BotProfileEditorContent(
     state: BotProfileEditor.State,
     connection: io.github.jcartu.hermex.model.hermes.BotConnection,
-    actions: BotProfileEditorContentActions = BotProfileEditorContentActions(),
     modifier: Modifier = Modifier,
+    actions: BotProfileEditorContentActions = BotProfileEditorContentActions(),
     cue: BotFaceCue? = null,
 ) {
     val paneCount = LocalPaneCount.current.coerceIn(1, 3)

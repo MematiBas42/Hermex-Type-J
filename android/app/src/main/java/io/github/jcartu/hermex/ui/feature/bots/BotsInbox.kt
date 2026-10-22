@@ -374,7 +374,13 @@ private fun BotCanonicalChat(
                     HermesTitleFace.WAITING -> BotTurnState.NEEDS_ATTENTION
                     HermesTitleFace.RESTING, HermesTitleFace.FAILED -> BotTurnState.IDLE
                 }
-                BotChatTitlePill(profile, container.botAvatars.image(connection.id, profile.id), titleFace, turn, onOpen = { onEdit(profile) })
+                BotChatTitlePill(
+                    profile = profile,
+                    onOpen = { onEdit(profile) },
+                    avatar = container.botAvatars.image(connection.id, profile.id),
+                    face = titleFace,
+                    turn = turn,
+                )
             },
             mentionAnnotation = mentions::annotation,
             loadMentionSuggestions = { query -> mentions.suggestions(query, avatars) },

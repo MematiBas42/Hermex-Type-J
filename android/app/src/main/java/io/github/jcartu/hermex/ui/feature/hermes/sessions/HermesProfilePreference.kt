@@ -2,6 +2,7 @@ package io.github.jcartu.hermex.ui.feature.hermes.sessions
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -15,16 +16,16 @@ object HermesProfilePreference {
     @Synchronized fun observe(context: Context, serverId: String): StateFlow<String?> =
         observed.getOrPut(serverId) { MutableStateFlow(selected(context, serverId)) }
     @Synchronized fun save(context: Context, serverId: String, profile: String?) {
-        prefs(context).edit().putString(key(serverId), profile).apply()
+        prefs(context).edit { putString(key(serverId), profile) }
         observed[serverId]?.value = profile
     }
     fun showsAllProfiles(context: Context, serverId: String): Boolean = prefs(context).getBoolean("hermes.sessionsShowAllProfiles|$serverId", false)
     fun saveShowsAllProfiles(context: Context, serverId: String, all: Boolean) {
-        prefs(context).edit().putBoolean("hermes.sessionsShowAllProfiles|$serverId", all).apply()
+        prefs(context).edit { putBoolean("hermes.sessionsShowAllProfiles|$serverId", all) }
     }
     fun lastListed(context: Context, serverId: String): String? = prefs(context).getString("hermes.lastListedProfile|$serverId", null)
     fun saveLastListed(context: Context, serverId: String, profile: String?) {
-        prefs(context).edit().putString("hermes.lastListedProfile|$serverId", profile).apply()
+        prefs(context).edit { putString("hermes.lastListedProfile|$serverId", profile) }
     }
     fun resolve(context: Context, serverId: String, listed: List<String>, current: String): String {
         val saved = selected(context, serverId) ?: return current

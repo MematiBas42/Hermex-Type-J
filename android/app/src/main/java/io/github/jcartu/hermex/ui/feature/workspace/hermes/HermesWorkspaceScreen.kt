@@ -133,10 +133,10 @@ data class HermesWorkspaceActions(
 @Composable
 fun HermesWorkspaceScreen(
     state: HermesWorkspaceUiState,
+    modifier: Modifier = Modifier,
     paneCount: Int = LocalPaneCount.current,
     actions: HermesWorkspaceActions = HermesWorkspaceActions(),
     showFileIcons: Boolean = true,
-    modifier: Modifier = Modifier,
 ) {
     val workspaceActions = WorkspaceActions(
         refreshTree = actions.refresh,
@@ -220,7 +220,11 @@ private fun HermesFileTreePane(
                     },
                 )
 
-            else -> WorkspaceTreeRenderSurface(state.workspace, actions, showFileIcons = showFileIcons)
+            else -> WorkspaceTreeRenderSurface(
+                state = state.workspace,
+                actions = actions,
+                showFileIcons = showFileIcons,
+            )
         }
     }
 }
