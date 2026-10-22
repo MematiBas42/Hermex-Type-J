@@ -17,6 +17,7 @@ import io.github.jcartu.hermex.net.hermes.HermesCall
 import io.github.jcartu.hermex.net.hermes.HermesREST
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -114,6 +115,8 @@ class BotInbox(
         val sectionOrder: List<String> = emptyList(),
         val avatars: Map<String, Bitmap> = emptyMap(),
         val link: Link = Link.IDLE,
+        /** An open has completed; a missing connection is now an answer, not an unstarted load. */
+        val hasSettled: Boolean = false,
         val errorMessage: String? = null,
         /** True after the host refused the saved username or password (`Rejected(401)`): Update sign-in replaces Reconnect. */
         val needsSignIn: Boolean = false,
@@ -338,6 +341,8 @@ class BotInbox(
             val saved = store.load(server)
             val previous = current.connection
             if (previous?.id != saved?.id) {
+                uncertainDeletions.clear()
+                returnedFrom = null
                 update {
                     it.copy(
                         selection = BotInboxSelection(), profiles = emptyList(), avatars = emptyMap(), seen = emptyMap(),
@@ -409,6 +414,8 @@ class BotInbox(
                     )
                 }
             }
+        } finally {
+            update { it.copy(hasSettled = true) }
         }
     }
 
@@ -465,7 +472,7 @@ class BotInbox(
         statusPollJob?.cancel(); statusPollJob = null
         val client = wire
         wire = null
-        if (client != null) scope.launch { client.close() }
+        if (client != null) scope.launch(NonCancellable) { client.close() }
         update { it.copy(link = Link.IDLE, editing = emptySet()) }
     }
 
@@ -873,7 +880,7 @@ class BotInbox(
         reloadJob?.cancel(); reloadJob = null; reloadWanted = false
         statusPollJob?.cancel(); statusPollJob = null
         setLiveStatuses(emptyMap())
-        scope.launch { client.close() }
+        scope.launch(NonCancellable) { client.close() }
         wire = null
         update { it.copy(link = Link.DISCONNECTED, editing = emptySet()) }
         val address = current.connection?.address
@@ -934,10 +941,35 @@ class BotInbox(
             for (section in sections) byID.putIfAbsent(section.id, section)
             val used = HashSet<String>()
             val front = placed.mapNotNull { id -> if (used.add(id)) byID[id] else null }
-            val rest = sections.filter { it.id !in used }.sortedWith(
-                compareBy<SectionName, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }.thenBy { it.id },
-            )
+            val collator = java.text.Collator.getInstance().apply { strength = java.text.Collator.PRIMARY }
+            val rest = sections.filter { it.id !in used }.sortedWith { left, right ->
+                val compared = compareSectionNames(left.name, right.name, collator)
+                if (compared != 0) compared else left.id.compareTo(right.id)
+            }
             return front + rest
+        }
+
+        /** Numeric-aware locale comparison, as `localizedStandardCompare` orders Desktop labels. */
+        private fun compareSectionNames(left: String, right: String, collator: java.text.Collator): Int {
+            var l = 0
+            var r = 0
+            while (l < left.length && r < right.length) {
+                if (left[l] in '0'..'9' && right[r] in '0'..'9') {
+                    val ls = l
+                    val rs = r
+                    while (l < left.length && left[l] in '0'..'9') l++
+                    while (r < right.length && right[r] in '0'..'9') r++
+                    val a = left.substring(ls, l).trimStart('0')
+                    val b = right.substring(rs, r).trimStart('0')
+                    val compared = if (a.length != b.length) a.length.compareTo(b.length) else a.compareTo(b)
+                    if (compared != 0) return compared
+                } else {
+                    val compared = collator.compare(left[l].toString(), right[r].toString())
+                    if (compared != 0) return compared
+                    l++; r++
+                }
+            }
+            return (left.length - l).compareTo(right.length - r)
         }
 
         /** Desktop's section id format: `sec-<epoch ms, base 36>-<5 base-36 chars>`. */

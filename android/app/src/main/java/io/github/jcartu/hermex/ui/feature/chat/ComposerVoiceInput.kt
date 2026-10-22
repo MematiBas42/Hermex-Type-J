@@ -44,6 +44,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.jcartu.hermex.core.navigation.VoiceDictationRequest
 import java.util.Locale
 
 private enum class ComposerVoicePhase { IDLE, LISTENING }
@@ -210,6 +212,25 @@ internal fun ComposerVoiceInput(
         context,
         Manifest.permission.RECORD_AUDIO,
     ) == PackageManager.PERMISSION_GRANTED
+
+    // "New Chat with Voice" (#338, `PendingNewChatView`): a voice link's
+    // auto-start request begins dictation once the composer is on screen,
+    // through the same path as a tap — the system prompt when permission is
+    // undetermined; when it was denied before, the control's hidden state is
+    // the clear error rather than another prompt.
+    val autoStartRequested by VoiceDictationRequest.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(autoStartRequested, enabled, hasRecordPermission) {
+        if (!autoStartRequested || !enabled) return@LaunchedEffect
+        VoiceDictationRequest.consume()
+        if (hasRecordPermission) {
+            pendingBaselineDraft = draft
+            startRecognition(draft, 0)
+        } else if (!permissionDenied) {
+            pendingBaselineDraft = draft
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     if (permissionDenied && !hasRecordPermission) return
 
     val pulseScale = if (isListening) {

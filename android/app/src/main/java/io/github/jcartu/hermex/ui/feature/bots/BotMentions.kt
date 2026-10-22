@@ -76,7 +76,7 @@ class BotMentions(roster: List<BotProfile>, excluding: String) {
 
     companion object {
         private val reserved = setOf("all", "everyone", "user", "default", "hermes")
-        private val tokens = Regex("(^|\\s)@([a-z0-9][a-z0-9_-]*+)(?![/\\\\]|\\.[a-z0-9_-])", RegexOption.IGNORE_CASE)
+        private val tokens = Regex("(^|[\\p{Z}\\t\\n\\u000B\\f\\r])@([a-z0-9][a-z0-9_-]*+)(?![/\\\\]|\\.[a-z0-9_-])", RegexOption.IGNORE_CASE)
         private val fences = Regex("```[\\s\\S]*?```")
         private val inlineCode = Regex("`[^`\\n]*`")
         private val nameCharacters = Regex("[^a-z0-9_-]+")
@@ -138,7 +138,7 @@ data class BotMentionTrigger(val range: IntRange, val query: String) {
     }
 
     companion object {
-        private val token = Regex("(^|\\s)@([a-z0-9_-]*)$", RegexOption.IGNORE_CASE)
+        private val token = Regex("(^|[\\p{Z}\\t\\n\\u000B\\f\\r])@([a-z0-9_-]*)$", RegexOption.IGNORE_CASE)
         fun detect(text: String, selection: TextRange): BotMentionTrigger? {
             if (!selection.collapsed || selection.start !in 0..text.length) return null
             val match = token.find(text.substring(0, selection.start)) ?: return null

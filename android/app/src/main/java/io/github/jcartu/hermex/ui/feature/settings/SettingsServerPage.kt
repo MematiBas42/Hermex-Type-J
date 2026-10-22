@@ -45,6 +45,7 @@ internal fun SettingsServerPageContent(
     settingsViewModel: SettingsViewModel,
     settingsState: SettingsUiState,
     onOpenArchived: () -> Unit,
+    botModeSetting: (@Composable () -> Unit)? = null,
 ) {
     val account = state.account ?: return
 
@@ -69,6 +70,7 @@ internal fun SettingsServerPageContent(
     if (account.kind == ServerKind.WEBUI) {
         SettingsCard(title = "Sessions") {
             SettingsAccessoryRow(title = "Archived Sessions", icon = Icons.Filled.Archive, onClick = onOpenArchived)
+            botModeSetting?.let { SettingsDivider(); it() }
             SettingsDivider()
             SettingsToggleRow(
                 title = "Row States",
