@@ -461,7 +461,8 @@ class AuthManager(
         }
         val account = registry.activate(server, ServerKind.HERMES, connection.hermesVersion)
         refreshServers()
-        enterActiveServer(account)
+        // The synchronous record save committed this operation; finishing its projection is not cancellable.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { enterActiveServer(account) }
         return account
     }
 
@@ -480,12 +481,12 @@ class AuthManager(
             _lastErrorMessage.value = ALREADY_CONFIGURED_MESSAGE
             throw ServerAlreadyConfigured()
         }
-        // No suspension between the removal's last step and the add, so no screen ever
-        // shows the server the removal falls back to.
-        removeServer(webui)
-        val added = addHermesServer(connection)
-        updateServerIdentity(added, webui.displayName, webui.initials, webui.headerLogoColorHex)
-        return _servers.value.firstOrNull { it.id == added.id } ?: added
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            removeServer(webui)
+            val added = addHermesServer(connection)
+            updateServerIdentity(added, webui.displayName, webui.initials, webui.headerLogoColorHex)
+            _servers.value.firstOrNull { it.id == added.id } ?: added
+        }
     }
 
     /**

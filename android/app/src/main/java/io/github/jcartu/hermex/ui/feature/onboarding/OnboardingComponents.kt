@@ -43,30 +43,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/*
- * Port of `Features/Onboarding/OnboardingComponents.swift`. Onboarding is
- * always dark (the iOS flow forces `.preferredColorScheme(.dark)` over black),
- * so these components use the same fixed palette instead of theme colors.
- */
-
-internal val OnboardingAccent = Color(0xFFFFBD1A) // Color(red: 1.0, green: 0.74, blue: 0.10)
-internal val OnboardingSuccess = Color(0xFF73EB8F) // Color(red: 0.45, green: 0.92, blue: 0.56)
-internal val OnboardingError = Color(0xFFFF7857) // Color(red: 1.0, green: 0.47, blue: 0.34)
+/** Port of `OnboardingComponents.swift`, adapted to the user's palette and light/dark theme. */
+internal val OnboardingAccent: Color @Composable get() = MaterialTheme.colorScheme.primary
+internal val OnboardingSuccess: Color @Composable get() = MaterialTheme.colorScheme.tertiary
+internal val OnboardingError: Color @Composable get() = MaterialTheme.colorScheme.error
 
 @Composable
 internal fun HeroBadge(icon: ImageVector, title: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .background(Color.White.copy(alpha = 0.06f), CircleShape)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f), CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f), CircleShape)
             .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.68f), modifier = Modifier.size(14.dp))
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f), modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(6.dp))
         Text(
             title,
-            color = Color.White.copy(alpha = 0.68f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
             style = MaterialTheme.typography.labelMedium,
         )
     }
@@ -84,10 +79,10 @@ internal fun OnboardingStepHeader(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(80.dp)
-                .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(22.dp))
+                .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f), RoundedCornerShape(22.dp))
                 .border(1.dp, OnboardingAccent.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
         ) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(30.dp))
         }
 
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -100,14 +95,14 @@ internal fun OnboardingStepHeader(
             )
             Text(
                 title,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
             Text(
                 description,
-                color = Color.White.copy(alpha = 0.45f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
@@ -137,7 +132,7 @@ internal fun OnboardingStatusBanner(
         }
         Text(
             text,
-            color = Color.White.copy(alpha = 0.76f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.76f),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
         )
@@ -155,15 +150,15 @@ internal fun OnboardingField(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.24f), RoundedCornerShape(8.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f), RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
             .padding(horizontal = 13.dp, vertical = 12.dp),
     ) {
         Icon(icon, contentDescription = null, tint = OnboardingAccent, modifier = Modifier.size(20.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
             Text(
                 title,
-                color = Color.White.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                 style = MaterialTheme.typography.labelMedium,
             )
             content()
@@ -181,7 +176,7 @@ internal fun OnboardingPageIndicator(pageCount: Int, currentPage: Int) {
                     .width(if (selected) 24.dp else 8.dp)
                     .height(8.dp)
                     .background(
-                        if (selected) Color.White else Color.White.copy(alpha = 0.18f),
+                        MaterialTheme.colorScheme.onBackground.copy(alpha = if (selected) 1f else 0.18f),
                         CircleShape,
                     ),
             )
@@ -203,9 +198,9 @@ internal fun OnboardingPrimaryButton(
         shape = RoundedCornerShape(8.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = OnboardingAccent,
-            contentColor = Color.Black,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
             disabledContainerColor = OnboardingAccent.copy(alpha = 0.4f),
-            disabledContentColor = Color.Black.copy(alpha = 0.6f),
+            disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f),
         ),
         modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
@@ -230,10 +225,10 @@ internal fun OnboardingSecondaryButton(
         enabled = enabled,
         shape = RoundedCornerShape(8.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = Color.White.copy(alpha = 0.065f),
-            contentColor = Color.White.copy(alpha = 0.84f),
-            disabledContainerColor = Color.White.copy(alpha = 0.04f),
-            disabledContentColor = Color.White.copy(alpha = 0.35f),
+            containerColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.065f),
+            contentColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.84f),
+            disabledContainerColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.04f),
+            disabledContentColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
         ),
         modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
@@ -264,13 +259,13 @@ internal fun OnboardingFeatureRow(
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 subtitle,
-                color = Color.White.copy(alpha = 0.4f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -284,11 +279,11 @@ internal fun OnboardingNumberedStep(number: String, text: String) {
             contentAlignment = Alignment.Center,
             modifier = Modifier.size(23.dp).background(OnboardingAccent, CircleShape),
         ) {
-            Text(number, color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(number, color = MaterialTheme.colorScheme.onPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
         Text(
             text,
-            color = Color.White.copy(alpha = 0.72f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
             style = MaterialTheme.typography.bodyMedium,
         )
     }
@@ -307,14 +302,14 @@ internal fun OnboardingAgentPromptCard(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.055f), RoundedCornerShape(12.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.055f), RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
             .padding(16.dp),
     ) {
         Box(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
             Text(
                 prompt,
-                color = Color.White.copy(alpha = 0.82f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,

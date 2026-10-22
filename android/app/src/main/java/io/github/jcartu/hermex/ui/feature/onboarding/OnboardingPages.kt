@@ -85,7 +85,7 @@ internal fun OnboardingWelcomePage(modifier: Modifier = Modifier) {
                         Brush.radialGradient(
                             colors = listOf(
                                 OnboardingAccent.copy(alpha = 0.35f),
-                                Color(0xFFFF9E14).copy(alpha = 0.12f),
+                                OnboardingAccent.copy(alpha = 0.12f),
                                 Color.Transparent,
                             ),
                         ),
@@ -99,7 +99,7 @@ internal fun OnboardingWelcomePage(modifier: Modifier = Modifier) {
                         .border(
                             1.dp,
                             Brush.linearGradient(
-                                listOf(Color.White.copy(alpha = 0.25f), Color.White.copy(alpha = 0.04f)),
+                                listOf(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f), MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.04f)),
                             ),
                             RoundedCornerShape(27.dp),
                         ),
@@ -107,7 +107,7 @@ internal fun OnboardingWelcomePage(modifier: Modifier = Modifier) {
                     Icon(
                         Icons.Filled.Bolt,
                         contentDescription = "Hermex-Type-J",
-                        tint = Color.Black,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(64.dp),
                     )
                 }
@@ -119,14 +119,14 @@ internal fun OnboardingWelcomePage(modifier: Modifier = Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "Control your Hermes agent from your phone or tablet.",
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 31.sp,
                 lineHeight = 37.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Connect to your self-hosted Web UI over Tailscale.",
-                color = Color.White.copy(alpha = 0.58f),
+                "Connect directly to your Hermes host over your network. Existing webui servers keep working too.",
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.58f),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,10 +152,10 @@ internal fun OnboardingFeaturesPage(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("What you get", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text("What you get", color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text(
                 "Your Hermes agent, reachable from your phone over Tailscale.",
-                color = Color.White.copy(alpha = 0.45f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
@@ -177,27 +177,27 @@ internal fun OnboardingFeatureList() {
     )
     OnboardingFeatureRow(
         Icons.Filled.Checklist,
-        Color(0xFF34C759),
+        MaterialTheme.colorScheme.tertiary,
         "Manage sessions, tasks, and files remotely",
         "Browse workspaces and stay on top of agent work.",
     )
     OnboardingFeatureRow(
         Icons.Filled.Mic,
-        Color(0xFFAF52DE),
+        MaterialTheme.colorScheme.tertiary,
         "Voice input and mobile-friendly composer controls",
         "Compose naturally with touch-first controls.",
     )
     OnboardingFeatureRow(
         Icons.Filled.VerifiedUser,
-        Color(0xFF32ADE6),
+        MaterialTheme.colorScheme.secondary,
         "Review approvals and clarifications inline",
         "Respond to agent prompts without switching apps.",
     )
     OnboardingFeatureRow(
         Icons.Filled.Dns,
-        Color(0xFFFF9500),
+        MaterialTheme.colorScheme.primary,
         "Self-hosted: your machine, your tailnet",
-        "Your Hermes Web UI stays on hardware you control.",
+        "Your Hermes host stays on hardware you control.",
     )
 }
 
@@ -239,7 +239,7 @@ internal fun OnboardingAgentPromptPage(
 
             Text(
                 shownPrompt.switchTitle,
-                color = Color.White.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
@@ -280,8 +280,8 @@ internal fun OnboardingTailscalePage(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
                     .clickable { openTailscaleInPlayStore(context) }
                     .padding(horizontal = 14.dp, vertical = 13.dp),
             ) {
@@ -329,6 +329,9 @@ internal fun OnboardingConnectPage(
     onConnectionModeChange: (ConnectionMode) -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    onUsernameChange: (String) -> Unit = {},
+    onUseSavedSignIn: (AuthManager.SavedHermesSignIn) -> Unit = {},
+    onReplaceWebui: () -> Unit = {},
 ) {
     var isShowingAdvanced by rememberSaveable { mutableStateOf(false) }
     // The Access rows Cloudflare Tunnel adds sit in Advanced, so they open with it.
@@ -346,7 +349,7 @@ internal fun OnboardingConnectPage(
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Connect", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Connect", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
             ConnectionModePicker(
                 selection = uiState.connectionMode,
@@ -354,14 +357,14 @@ internal fun OnboardingConnectPage(
                 style = ConnectFormStyle.ONBOARDING,
                 enabled = !locked,
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.24f), RoundedCornerShape(8.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f), RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 13.dp),
             )
 
             Text(
                 uiState.connectionMode.help,
-                color = Color.White.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -388,7 +391,7 @@ internal fun OnboardingConnectPage(
             uiState.addressPreview?.let { preview ->
                 Text(
                     "Will connect to $preview\u200E",
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -397,7 +400,7 @@ internal fun OnboardingConnectPage(
                 OnboardingStatusBanner(
                     text = "Checking server...",
                     icon = Icons.Filled.Lan,
-                    tint = Color.White.copy(alpha = 0.7f),
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     showsProgress = true,
                 )
             }
@@ -408,6 +411,13 @@ internal fun OnboardingConnectPage(
 
             uiState.errorMessage?.let { message ->
                 OnboardingStatusBanner(text = message, icon = Icons.Filled.Warning, tint = OnboardingError)
+            }
+            HermesConnectMethodFields(uiState, ConnectFormStyle.ONBOARDING, onUsernameChange, onUseSavedSignIn)
+            uiState.headerRejection?.let { message ->
+                OnboardingStatusBanner(message, Icons.Filled.Warning, OnboardingError)
+            }
+            if (uiState.offersWebuiReplace) androidx.compose.material3.TextButton(onClick = onReplaceWebui) {
+                Text("Replace webui server", color = MaterialTheme.colorScheme.error)
             }
 
             if (uiState.showsPasswordField) {
@@ -439,19 +449,19 @@ internal fun OnboardingConnectPage(
                 Icon(
                     Icons.Filled.Tune,
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.85f),
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                     modifier = Modifier.size(18.dp),
                 )
                 Text(
                     "Advanced",
-                    color = Color.White.copy(alpha = 0.85f),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Icon(
                     if (isShowingAdvanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (isShowingAdvanced) "Collapse" else "Expand",
-                    tint = Color.White.copy(alpha = 0.6f),
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -459,7 +469,7 @@ internal fun OnboardingConnectPage(
                 if (uiState.connectionMode == ConnectionMode.CLOUDFLARE_TUNNEL) {
                     Text(
                         "Cloudflare Access: paste your service token’s Client ID and Client Secret as the values. Leave both empty if Access is off.",
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
