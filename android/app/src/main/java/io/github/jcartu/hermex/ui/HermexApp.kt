@@ -280,7 +280,9 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
     ) {
         val destinationContent: @Composable (HermexDestination) -> Unit = { destination ->
             when (destination) {
-                HermexDestination.CHATS -> ChatsArea(navigation)
+                HermexDestination.CHATS -> if (account.kind == ServerKind.HERMES) {
+                    io.github.jcartu.hermex.ui.feature.hermes.home.HermesHome(account, container, navigation::openSettings)
+                } else ChatsArea(navigation)
                 HermexDestination.KANBAN -> {
                     val source = kanbanDataSource
                     if (source == null) {

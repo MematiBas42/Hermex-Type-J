@@ -140,7 +140,7 @@ class HermesCacheStore(private val directory: File, private val json: Json) {
         persist()
     }
 
-    fun hermesCacheEpoch(serverId: String): Int = synchronized(lock) { epochs[serverId] ?: 0 }
+    fun hermesCacheEpoch(serverId: String): Int = synchronized(lock) { epochs.getOrPut(serverId) { 0 } }
     fun revokeHermesWriters(serverId: String): Unit = synchronized(lock) { epochs[serverId] = (epochs[serverId] ?: 0) + 1 }
     fun clearCache(serverId: String) = synchronized(lock) {
         revokeHermesWriters(serverId)
