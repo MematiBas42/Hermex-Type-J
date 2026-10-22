@@ -97,11 +97,11 @@ class HermesTranscriptHistory private constructor(
     }
 
     /**
-     * Drops row [id] and every row after it, as the host's rewind did (#1049). The rows the
+     * Drops row [before] and every row after it, as the host's rewind did (#1049). The rows the
      * host saved since are unknown, so the next older page waits for a newest read.
      */
-    fun cutting(before id: Int): HermesTranscriptHistory {
-        val index = rows.indexOfFirst { id(it) == id }
+    fun cutting(before: Int): HermesTranscriptHistory {
+        val index = rows.indexOfFirst { id(it) == before }
         if (index < 0) return this
         val kept = rows.subList(0, index)
         return HermesTranscriptHistory(kept, hasOlder, kept.mapNotNull(::id).toSet(), newer, true, newestCoverage)
