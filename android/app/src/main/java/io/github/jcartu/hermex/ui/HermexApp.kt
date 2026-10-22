@@ -42,7 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.jcartu.hermex.core.prefs.ServerConfig
+import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.FirstPaneSplitRow
@@ -93,8 +93,8 @@ fun HermexApp(container: AppContainer) {
     val authState: AuthState by authManager.state.collectAsStateWithLifecycle()
     when (val state = authState) {
         AuthState.Unconfigured -> OnboardingRoute(container, savedServer = null)
-        is AuthState.LoggedOut -> OnboardingRoute(container, savedServer = state.saved)
-        is AuthState.LoggedIn -> MainShell(container)
+        is AuthState.LoggedOut -> OnboardingRoute(container, savedServer = state.account)
+        is AuthState.LoggedIn -> ServerScopedViewModels(serverId = state.account.id) { MainShell(container) }
     }
 }
 
@@ -104,7 +104,10 @@ private fun MainShell(container: AppContainer) {
     val destinationStateHolder = rememberSaveableStateHolder()
     val windowWidthDp: Int = rememberWindowWidthDp()
     val paneCount: Int = fold.value.trifoldPaneCount(windowWidthDp)
-    val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        viewModelStoreOwner = LocalHostViewModelStoreOwner.current
+            ?: checkNotNull(androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current),
+    )
     val selected = navigation.selectedDestination
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
     val pendingDeepLink by container.deepLinks.pending.collectAsStateWithLifecycle()
@@ -130,6 +133,7 @@ private fun MainShell(container: AppContainer) {
             navigation.startNewChat()
         }
     }
+    io.github.jcartu.hermex.ui.feature.settings.NotificationOfferHost(container)
     CompositionLocalProvider(
         LocalFoldState provides fold.value,
         LocalPaneCount provides paneCount,
@@ -324,4 +328,55 @@ private fun MoreMenu(
             )
         }
     }
+}
+
+/** The Activity's ViewModel store, kept for [AppNavigationViewModel] (its SavedStateHandle) across server switches. */
+private val LocalHostViewModelStoreOwner =
+    androidx.compose.runtime.staticCompositionLocalOf<androidx.lifecycle.ViewModelStoreOwner?> { null }
+
+/**
+ * Port of ContentView's `.id(server)` (`docs/agents/multi-server-state-isolation.md`):
+ * the signed-in subtree is rebuilt per active server, and every ViewModel
+ * created under it (sessions, chat, settings, …) lives in a store that is
+ * cleared when the active server changes, so no screen state carries between
+ * servers. The navigation ViewModel stays with the Activity and is returned to
+ * the session list on a switch, as a rebuilt iOS tree would be.
+ */
+@Composable
+private fun ServerScopedViewModels(serverId: String, content: @Composable () -> Unit) {
+    val host = checkNotNull(androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current)
+    val owner = remember(serverId) { ServerViewModelStoreOwner(host) }
+    androidx.compose.runtime.DisposableEffect(owner) {
+        onDispose { owner.viewModelStore.clear() }
+    }
+    val navigation: AppNavigationViewModel = androidx.lifecycle.viewmodel.compose.viewModel(viewModelStoreOwner = host)
+    var previousServerId by rememberSaveable { mutableStateOf(serverId) }
+    LaunchedEffect(serverId) {
+        if (previousServerId != serverId) {
+            previousServerId = serverId
+            navigation.selectDestination(HermexDestination.CHATS)
+            navigation.showSessionList()
+        }
+    }
+    androidx.compose.runtime.key(serverId) {
+        CompositionLocalProvider(
+            LocalHostViewModelStoreOwner provides host,
+            androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides owner,
+            content = content,
+        )
+    }
+}
+
+private class ServerViewModelStoreOwner(
+    private val host: androidx.lifecycle.ViewModelStoreOwner,
+) : androidx.lifecycle.ViewModelStoreOwner, androidx.lifecycle.HasDefaultViewModelProviderFactory {
+    override val viewModelStore = androidx.lifecycle.ViewModelStore()
+
+    override val defaultViewModelProviderFactory: androidx.lifecycle.ViewModelProvider.Factory
+        get() = (host as? androidx.lifecycle.HasDefaultViewModelProviderFactory)?.defaultViewModelProviderFactory
+            ?: androidx.lifecycle.ViewModelProvider.NewInstanceFactory.instance
+
+    override val defaultViewModelCreationExtras: androidx.lifecycle.viewmodel.CreationExtras
+        get() = (host as? androidx.lifecycle.HasDefaultViewModelProviderFactory)?.defaultViewModelCreationExtras
+            ?: androidx.lifecycle.viewmodel.CreationExtras.Empty
 }

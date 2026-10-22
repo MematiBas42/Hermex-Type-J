@@ -20,12 +20,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import okhttp3.CookieJar
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 private val Context.dataStore by preferencesDataStore(name = "hermex_prefs")
+
+/** The section-visibility toggles' own file (pre-dates `SettingsRepository` absorbing them; kept for in-place upgrades). */
+private val Context.visibilityDataStore by preferencesDataStore(name = "hermex_section_visibility")
 
 /**
  * Manual dependency container. One instance per process, owned by [io.github.jcartu.hermex.HermexApplication].
@@ -52,7 +57,44 @@ class AppContainer(context: Context) {
         cipher = cipher,
     )
 
-    val settings: SettingsRepository = SettingsRepository(context.dataStore)
+    val settings: SettingsRepository = SettingsRepository(
+        dataStore = context.dataStore,
+        visibilityDataStore = context.visibilityDataStore,
+    )
+
+    /** Per-server encrypted webui passwords, keyed by registry id (Contract C). */
+    val serverCredentials: io.github.jcartu.hermex.core.prefs.ServerCredentialStore =
+        io.github.jcartu.hermex.core.prefs.ServerCredentialStore(context.dataStore, cipher)
+
+    /** The global identity defaults the registry seeds from and mirrors the active server into. */
+    val identityDefaults: io.github.jcartu.hermex.core.prefs.SettingsIdentityDefaults =
+        io.github.jcartu.hermex.core.prefs.SettingsIdentityDefaults(settings, appScope)
+
+    /** Every configured server and which one is active; `AuthManager` owns all writes. */
+    val serverRegistry: io.github.jcartu.hermex.model.ServerRegistry by lazy {
+        io.github.jcartu.hermex.model.ServerRegistry(
+            keychain = io.github.jcartu.hermex.core.prefs.EncryptedPreferencesKeychain(
+                preferences = appContext.getSharedPreferences(
+                    io.github.jcartu.hermex.core.prefs.EncryptedPreferencesKeychain.PREFERENCES_NAME,
+                    Context.MODE_PRIVATE,
+                ),
+                cipher = cipher,
+            ),
+            identityDefaults = identityDefaults,
+        )
+    }
+
+    /** The optional app lock (#885); `MainActivity` attaches the device authenticator and lifecycle. */
+    val appLock: io.github.jcartu.hermex.core.security.AppLock by lazy {
+        io.github.jcartu.hermex.core.security.AppLock(settings = settings, scope = appScope)
+    }
+
+    val notificationOffer: io.github.jcartu.hermex.core.prefs.NotificationOffer by lazy {
+        io.github.jcartu.hermex.core.prefs.NotificationOffer(
+            settings = settings,
+            authorization = { io.github.jcartu.hermex.ui.feature.settings.NotificationPermissions.authorization(appContext, settings.settings.first().hasRequestedNotificationPermission) },
+        )
+    }
 
     val cookieStore: CookieSerializer = CookieSerializer(context.dataStore)
 
@@ -75,7 +117,9 @@ class AppContainer(context: Context) {
     init {
         appScope.launch {
             deepLinks.load()
+            identityDefaults.load()
             customHeaders.load(serverConfig.current().baseUrl)
+            appLock.restore()
             _isReady.value = true
             serverConfig.config.collect { customHeaders.activate(it.baseUrl) }
         }
@@ -93,12 +137,33 @@ class AppContainer(context: Context) {
     /** Single auth state machine shared by shell, onboarding, and settings. */
     val authManager: io.github.jcartu.hermex.ui.feature.onboarding.AuthManager by lazy {
         io.github.jcartu.hermex.ui.feature.onboarding.AuthManager(
-            api = api,
-            serverConfig = serverConfig,
-            sessionResetter = {
-                (cookieJar as? PersistentCookieJar)?.clearAll()
-                appScope.launch { serverConfig.clear() }
+            // A probed server gets its own client, bound to its URL and the headers
+            // being tried, so probing never touches the active server's client.
+            clientFactory = { baseUrl, headers ->
+                io.github.jcartu.hermex.ui.feature.onboarding.HermesAuthClient(
+                    io.github.jcartu.hermex.net.HermesApi(
+                        httpClient = okHttpClient,
+                        json = json,
+                        configProvider = { ServerConfig(baseUrl, "") },
+                        customHeaderProvider = { headers },
+                    ),
+                )
             },
+            serverConfig = serverConfig,
+            registry = serverRegistry,
+            credentials = serverCredentials,
+            customHeaders = customHeaders,
+            cookies = object : io.github.jcartu.hermex.ui.feature.onboarding.SessionCookieStore {
+                override fun clear(serverUrl: String) {
+                    val url = serverUrl.toHttpUrlOrNull() ?: return
+                    (cookieJar as? PersistentCookieJar)?.clearFor(url)
+                }
+
+                override fun clearAll() {
+                    (cookieJar as? PersistentCookieJar)?.clearAll()
+                }
+            },
+            scope = appScope,
         )
     }
 

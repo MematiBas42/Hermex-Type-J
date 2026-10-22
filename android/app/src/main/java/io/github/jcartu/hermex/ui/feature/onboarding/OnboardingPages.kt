@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +29,8 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Link
@@ -37,26 +38,30 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jcartu.hermex.net.CustomHeader
 
 /*
  * Port of the five onboarding pages (`OnboardingWelcomePage`,
@@ -196,9 +201,16 @@ internal fun OnboardingFeatureList() {
     )
 }
 
+/**
+ * Onboarding step 1 (`OnboardingAgentPromptPage.swift`, #1183): shows one setup
+ * prompt to copy for the agent, with a link that swaps to the other one. Copies
+ * are tracked per prompt so the copy reminder follows the one shown.
+ */
 @Composable
 internal fun OnboardingAgentPromptPage(
-    onPromptCopied: () -> Unit,
+    shownPrompt: OnboardingSetupPrompt,
+    onPromptCopied: (OnboardingSetupPrompt) -> Unit,
+    onSwitchPrompt: (OnboardingSetupPrompt) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -212,14 +224,30 @@ internal fun OnboardingAgentPromptPage(
         OnboardingStepHeader(
             stepNumber = 1,
             icon = Icons.Filled.Terminal,
-            title = "Set up Hermes Web UI",
-            description = "Send this prompt to your Hermes Agent. It audits existing state, keeps Hermes Web UI on localhost, and configures private HTTPS with Tailscale Serve.",
+            title = shownPrompt.title,
+            description = shownPrompt.description,
         )
 
-        OnboardingAgentPromptCard(
-            prompt = OnboardingFlowPolicy.agentSetupPrompt,
-            onCopied = onPromptCopied,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Keyed per prompt so the card's "Copied" state belongs to the prompt shown.
+            androidx.compose.runtime.key(shownPrompt) {
+                OnboardingAgentPromptCard(
+                    prompt = shownPrompt.text,
+                    onCopied = { onPromptCopied(shownPrompt) },
+                )
+            }
+
+            Text(
+                shownPrompt.switchTitle,
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clickable { onSwitchPrompt(shownPrompt.alternative) }
+                    .padding(8.dp),
+            )
+        }
     }
 }
 
@@ -286,14 +314,29 @@ private fun openTailscaleInPlayStore(context: android.content.Context) {
     }
 }
 
+/**
+ * Port of `OnboardingConnectPage.swift` (#900): the connection mode, the
+ * address with its "Will connect to" preview, the password when the server
+ * needs one, status banners, and an Advanced disclosure holding the custom
+ * header rows (Cloudflare Tunnel opens two empty `CF-Access-Client-*` rows there).
+ */
 @Composable
 internal fun OnboardingConnectPage(
     uiState: OnboardingUiState,
     onServerUrlChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onHeadersChange: (List<CustomHeader>) -> Unit,
+    onConnectionModeChange: (ConnectionMode) -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var isShowingAdvanced by rememberSaveable { mutableStateOf(false) }
+    // The Access rows Cloudflare Tunnel adds sit in Advanced, so they open with it.
+    LaunchedEffect(uiState.connectionMode) {
+        if (uiState.connectionMode == ConnectionMode.CLOUDFLARE_TUNNEL) isShowingAdvanced = true
+    }
+    val locked = uiState.isConnectionLocked
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -302,10 +345,22 @@ internal fun OnboardingConnectPage(
             .padding(top = 24.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Connect", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+
+            ConnectionModePicker(
+                selection = uiState.connectionMode,
+                onSelect = onConnectionModeChange,
+                style = ConnectFormStyle.ONBOARDING,
+                enabled = !locked,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.24f), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 13.dp),
+            )
+
             Text(
-                "Enter the exact HTTPS Tailscale Serve URL your agent returned, for example https://server.tailnet-name.ts.net.",
+                uiState.connectionMode.help,
                 color = Color.White.copy(alpha = 0.5f),
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -313,83 +368,108 @@ internal fun OnboardingConnectPage(
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OnboardingField(icon = Icons.Filled.Link, title = "Server URL") {
-                OnboardingTextField(
+                ConnectTextField(
                     value = uiState.serverUrl,
                     onValueChange = onServerUrlChange,
-                    placeholder = "https://server.tailnet-name.ts.net",
-                    keyboardType = KeyboardType.Uri,
-                    onSubmit = onSubmit,
+                    placeholder = uiState.connectionMode.placeholder,
+                    style = ConnectFormStyle.ONBOARDING,
+                    enabled = !locked,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Go,
+                        autoCorrectEnabled = false,
+                    ),
+                    keyboardActions = KeyboardActions(onGo = { onSubmit() }),
                 )
             }
 
-            if (uiState.isPasswordRequired) {
+            // The trailing mark keeps a URL ending in a neutral character, such as an
+            // IPv6 literal's "]", in one left-to-right run inside right-to-left text.
+            uiState.addressPreview?.let { preview ->
+                Text(
+                    "Will connect to $preview\u200E",
+                    color = Color.White.copy(alpha = 0.5f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            if (uiState.isWorking) {
+                OnboardingStatusBanner(
+                    text = "Checking server...",
+                    icon = Icons.Filled.Lan,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    showsProgress = true,
+                )
+            }
+
+            uiState.connectionMessage?.let { message ->
+                OnboardingStatusBanner(text = message, icon = Icons.Filled.CheckCircle, tint = OnboardingSuccess)
+            }
+
+            uiState.errorMessage?.let { message ->
+                OnboardingStatusBanner(text = message, icon = Icons.Filled.Warning, tint = OnboardingError)
+            }
+
+            if (uiState.showsPasswordField) {
                 OnboardingField(icon = Icons.Filled.Key, title = "Password") {
-                    OnboardingTextField(
+                    ConnectTextField(
                         value = uiState.password,
                         onValueChange = onPasswordChange,
                         placeholder = "Server password",
-                        keyboardType = KeyboardType.Password,
+                        style = ConnectFormStyle.ONBOARDING,
+                        enabled = !locked,
                         secure = true,
-                        onSubmit = onSubmit,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Go,
+                            autoCorrectEnabled = false,
+                        ),
+                        keyboardActions = KeyboardActions(onGo = { onSubmit() }),
                     )
                 }
             }
         }
 
-        if (uiState.isWorking) {
-            OnboardingStatusBanner(
-                text = "Checking server...",
-                icon = Icons.Filled.Lan,
-                tint = Color.White.copy(alpha = 0.7f),
-                showsProgress = true,
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.clickable { isShowingAdvanced = !isShowingAdvanced }.padding(vertical = 4.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Tune,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    "Advanced",
+                    color = Color.White.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Icon(
+                    if (isShowingAdvanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (isShowingAdvanced) "Collapse" else "Expand",
+                    tint = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (isShowingAdvanced) {
+                if (uiState.connectionMode == ConnectionMode.CLOUDFLARE_TUNNEL) {
+                    Text(
+                        "Cloudflare Access: paste your service token’s Client ID and Client Secret as the values. Leave both empty if Access is off.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                CustomHeadersEditor(
+                    headers = uiState.customHeaders,
+                    onChange = onHeadersChange,
+                    style = ConnectFormStyle.ONBOARDING,
+                    enabled = !locked,
+                )
+            }
         }
-
-        uiState.connectionMessage?.let { message ->
-            OnboardingStatusBanner(text = message, icon = Icons.Filled.CheckCircle, tint = OnboardingSuccess)
-        }
-
-        uiState.errorMessage?.let { message ->
-            OnboardingStatusBanner(text = message, icon = Icons.Filled.Warning, tint = OnboardingError)
-        }
-    }
-}
-
-@Composable
-private fun OnboardingTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    keyboardType: KeyboardType,
-    secure: Boolean = false,
-    onSubmit: () -> Unit,
-) {
-    Box {
-        if (value.isEmpty()) {
-            Text(
-                placeholder,
-                color = Color.White.copy(alpha = 0.38f),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-            ),
-            cursorBrush = SolidColor(OnboardingAccent),
-            visualTransformation = if (secure) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = keyboardType,
-                imeAction = ImeAction.Go,
-                autoCorrectEnabled = false,
-            ),
-            keyboardActions = KeyboardActions(onGo = { onSubmit() }),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }

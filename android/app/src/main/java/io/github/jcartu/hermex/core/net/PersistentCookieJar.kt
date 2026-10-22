@@ -79,6 +79,19 @@ class PersistentCookieJar(
         scope.launch { store.clear() }
     }
 
+    /**
+     * Deletes only the cookies that would be sent to [url] — port of
+     * `AuthManager.clearSessionCookies(for:)` (#16) — so signing out of or
+     * expiring one server leaves other servers' cookies intact. Two servers
+     * sharing a host but differing by port still share cookies (cookies are
+     * not port-scoped), the documented #16 limitation.
+     */
+    fun clearFor(url: HttpUrl) {
+        loaded
+        synchronized(lock) { cookies.removeAll { it.matches(url) } }
+        scope.launch { store.save(serialize()) }
+    }
+
     private fun serialize(): String = synchronized(lock) {
         cookies.joinToString("\n") { cookie ->
             val url = "https://${cookie.domain}${cookie.path}".toHttpUrl()

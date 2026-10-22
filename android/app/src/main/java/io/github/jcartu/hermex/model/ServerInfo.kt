@@ -32,7 +32,25 @@ data class AuthStatusResponse(
     @SerialName("password_auth_enabled") val passwordAuthEnabled: Boolean? = null,
     @SerialName("passkeys_enabled") val passkeysEnabled: Boolean? = null,
     @SerialName("passwordless_enabled") val passwordlessEnabled: Boolean? = null,
-)
+    /**
+     * Set when the server signs in through OpenID Connect; password auth off
+     * on its own never meant passkeys (#3).
+     */
+    @SerialName("oidc_enabled") val oidcEnabled: Boolean? = null,
+    /**
+     * Set when an identity proxy in front of the server authenticates the
+     * request (Cloudflare Access, Authentik). Present only when that mode is
+     * on, so null means "not that kind of server".
+     */
+    @SerialName("trusted_auth_enabled") val trustedAuthEnabled: Boolean? = null,
+) {
+    /**
+     * The server already considers this client signed in. Trusted-header
+     * deployments authenticate at the proxy, so there is no credential for the
+     * app to send and no login step to perform.
+     */
+    val isAlreadySignedIn: Boolean get() = loggedIn == true
+}
 
 /** `POST /auth/login` payload. */
 @Serializable

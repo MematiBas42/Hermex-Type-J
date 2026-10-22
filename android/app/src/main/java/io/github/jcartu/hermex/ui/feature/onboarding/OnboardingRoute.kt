@@ -38,7 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import io.github.jcartu.hermex.core.prefs.ServerConfig
+import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.di.AppContainer
 import io.github.jcartu.hermex.ui.adaptive.HingeAwarePaneRow
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
@@ -51,13 +51,17 @@ import kotlinx.coroutines.launch
  * so no interactive control ever straddles the fold.
  */
 @Composable
-fun OnboardingRoute(container: AppContainer, savedServer: ServerConfig?) {
+fun OnboardingRoute(container: AppContainer, savedServer: ServerAccount?) {
     val viewModel: OnboardingViewModel = viewModel(
+        // A different saved server (a switch to a signed-out one) gets its own form.
+        key = "onboarding:${savedServer?.id.orEmpty()}",
         factory = viewModelFactory {
             initializer {
                 OnboardingViewModel(
                     authManager = container.authManager,
                     savedServer = savedServer,
+                    savedHeaders = savedServer?.let(container.authManager::savedCustomHeaders).orEmpty(),
+                    initialErrorMessage = container.authManager.lastErrorMessage.value,
                 )
             }
         },
@@ -83,11 +87,7 @@ fun OnboardingRoute(container: AppContainer, savedServer: ServerConfig?) {
         AlertDialog(
             onDismissRequest = viewModel::dismissCopyReminder,
             title = { Text("Copy the setup prompt first") },
-            text = {
-                Text(
-                    "Copy the agent setup prompt on your desktop before continuing so Hermes Web UI and Tailscale are configured correctly.",
-                )
-            },
+            text = { Text(uiState.shownPrompt.copyReminderMessage) },
             confirmButton = {
                 TextButton(onClick = viewModel::bypassCopyReminderAndAdvance) {
                     Text("Continue Anyway")
@@ -138,13 +138,19 @@ private fun OnboardingPagerColumn(
                 when (page) {
                     0 -> OnboardingWelcomePage()
                     1 -> OnboardingFeaturesPage()
-                    2 -> OnboardingAgentPromptPage(onPromptCopied = viewModel::onAgentPromptCopied)
+                    2 -> OnboardingAgentPromptPage(
+                        shownPrompt = uiState.shownPrompt,
+                        onPromptCopied = viewModel::onPromptCopied,
+                        onSwitchPrompt = viewModel::setShownPrompt,
+                    )
                     3 -> OnboardingTailscalePage()
                     else -> OnboardingConnectPage(
                         uiState = uiState,
                         onServerUrlChange = viewModel::onServerUrlChange,
                         onPasswordChange = viewModel::onPasswordChange,
-                        onSubmit = { if (uiState.canSubmitConnection) viewModel.connect() },
+                        onHeadersChange = viewModel::onCustomHeadersChange,
+                        onConnectionModeChange = viewModel::setConnectionMode,
+                        onSubmit = { if (uiState.canSubmit && !uiState.isConnectionLocked) viewModel.connect() },
                     )
                 }
             }
@@ -174,14 +180,14 @@ private fun OnboardingBottomBar(viewModel: OnboardingViewModel, uiState: Onboard
                 OnboardingSecondaryButton(
                     text = "Test Connection",
                     icon = Icons.Filled.Lan,
-                    enabled = !uiState.isWorking && uiState.canSubmitConnection,
+                    enabled = !uiState.isWorking && !uiState.isConnectionLocked && uiState.canSubmit,
                     modifier = Modifier.weight(1f),
                     onClick = viewModel::testConnection,
                 )
                 OnboardingPrimaryButton(
                     text = "Connect",
                     icon = Icons.Filled.CheckCircle,
-                    enabled = !uiState.isWorking && uiState.canSubmitConnection,
+                    enabled = !uiState.isWorking && !uiState.isConnectionLocked && uiState.canSubmit,
                     modifier = Modifier.weight(1f),
                     onClick = viewModel::connect,
                 )
@@ -217,7 +223,7 @@ private fun OnboardingGuidePane(uiState: OnboardingUiState, modifier: Modifier =
     val steps = listOf(
         "Welcome to Hermex",
         "What you get",
-        "Set up Hermes Web UI",
+        uiState.shownPrompt.title,
         "Install Tailscale",
         "Connect to your server",
     )
@@ -284,7 +290,7 @@ private fun OnboardingGuidePane(uiState: OnboardingUiState, modifier: Modifier =
             )
             else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OnboardingStatusBanner(
-                    text = "Use the exact HTTPS Tailscale Serve URL your agent returned, for example https://server.tailnet-name.ts.net.",
+                    text = uiState.connectionMode.help,
                     icon = Icons.Filled.Lan,
                     tint = Color.White.copy(alpha = 0.7f),
                 )
