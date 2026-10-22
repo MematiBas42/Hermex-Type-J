@@ -29,6 +29,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -109,6 +110,50 @@ class HermesCronDataClientTest {
 
         assertTrue(failure is HermesCronRefusal)
         assertEquals("The server rejected the request: already paused", failure?.message)
+    }
+
+    @Test
+    fun `editor sources and create use the selected Profile and preserve scheduler warning`() = runTest(dispatcher) {
+        val delivery = io.github.jcartu.hermex.model.CronDeliveryOptionsResponse(
+            platforms = listOf(io.github.jcartu.hermex.model.CronDeliveryOption("local", "Local")),
+        )
+        coEvery { transport.cronDeliveryOptions("inbox") } returns delivery
+        coEvery { transport.cronModelGroups("inbox") } returns emptyList()
+        coEvery { transport.cronProfiles() } returns emptyList()
+        coEvery { transport.cronSkills("inbox") } returns emptyList()
+        coEvery {
+            transport.createCron(
+                prompt = "Review",
+                schedule = "0 9 * * *",
+                name = "Daily",
+                deliver = "local",
+                skills = emptyList(),
+                model = null,
+                provider = null,
+                profile = "inbox",
+            )
+        } returns HermesCronClient.CreateResult(
+            response = CronMutationResponse(ok = true),
+            warning = "The scheduler could not register this Task.",
+        )
+        val client = HermesCronDataClient(transport, profile = "inbox")
+
+        assertSame(delivery, client.cronDeliveryOptions(profile = null))
+        assertTrue(client.cronModelGroups(profile = null).isEmpty())
+        assertTrue(client.cronProfiles().isEmpty())
+        assertTrue(client.cronSkills(profile = null).isEmpty())
+        val created = client.createCron(
+            prompt = "Review",
+            schedule = "0 9 * * *",
+            name = "Daily",
+            deliver = "local",
+            skills = emptyList(),
+            model = null,
+            provider = null,
+            profile = null,
+            toastNotifications = true,
+        )
+        assertEquals("The scheduler could not register this Task.", created.warning)
     }
 
     @Test
