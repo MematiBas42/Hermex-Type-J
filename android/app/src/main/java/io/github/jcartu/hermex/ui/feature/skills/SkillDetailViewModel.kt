@@ -2,7 +2,6 @@ package io.github.jcartu.hermex.ui.feature.skills
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.jcartu.hermex.net.HermesApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,10 +24,13 @@ data class SkillDetailUiState(
     val selectedFile: String? = null,
     val fileContent: String? = null,
     val isLoadingFile: Boolean = false,
+    val fileIsBinary: Boolean = false,
+    val fileIsTruncated: Boolean = false,
+    val hasLinkedFiles: Boolean = false,
 )
 
 class SkillDetailViewModel(
-    private val api: HermesApi,
+    private val client: SkillsDataClient,
     private val skillName: String,
 ) : ViewModel() {
 
@@ -47,11 +49,12 @@ class SkillDetailViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             try {
-                val response = api.skillContent(skillName)
+                val response = client.skillContent(skillName)
                 _uiState.update {
                     it.copy(
                         content = response.content,
-                        linkedFiles = response.linkedFiles ?: emptyList(),
+                        linkedFiles = response.linkedFiles,
+                        hasLinkedFiles = client.hasLinkedFiles,
                         isLoading = false,
                     )
                 }
@@ -76,18 +79,33 @@ class SkillDetailViewModel(
         if (skillName.isEmpty()) return
 
         _uiState.update {
-            it.copy(selectedFile = fileName, fileContent = null, isLoadingFile = true)
+            it.copy(
+                selectedFile = fileName,
+                fileContent = null,
+                fileIsBinary = false,
+                fileIsTruncated = false,
+                isLoadingFile = true,
+            )
         }
         viewModelScope.launch {
             try {
-                val response = api.skillContent(skillName, fileName)
-                _uiState.update { it.copy(fileContent = response.content, isLoadingFile = false) }
+                val response = client.skillContent(skillName, fileName)
+                _uiState.update {
+                    it.copy(
+                        fileContent = response.content,
+                        fileIsBinary = response.isBinary,
+                        fileIsTruncated = response.isTruncated,
+                        isLoadingFile = false,
+                    )
+                }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {
                 _uiState.update {
                     it.copy(
                         fileContent = "Could not load file: ${error.message}",
+                        fileIsBinary = false,
+                        fileIsTruncated = false,
                         isLoadingFile = false,
                     )
                 }
@@ -96,6 +114,14 @@ class SkillDetailViewModel(
     }
 
     fun closeFile() {
-        _uiState.update { it.copy(selectedFile = null, fileContent = null, isLoadingFile = false) }
+        _uiState.update {
+            it.copy(
+                selectedFile = null,
+                fileContent = null,
+                fileIsBinary = false,
+                fileIsTruncated = false,
+                isLoadingFile = false,
+            )
+        }
     }
 }

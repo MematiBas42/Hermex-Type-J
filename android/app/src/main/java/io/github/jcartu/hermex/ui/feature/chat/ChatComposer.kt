@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import io.github.jcartu.hermex.model.PendingAttachment
+import io.github.jcartu.hermex.ui.feature.chat.hermes.HermesSlashCompletion
 import kotlinx.coroutines.launch
 
 /**
@@ -78,6 +80,22 @@ fun ChatComposer(
     hapticsEnabled: Boolean = true,
     attachmentCacheNamespace: String? = null,
     uploadAttachmentWithPreview: ((ByteArray, String, ByteArray?) -> Unit)? = null,
+    /** Direct Hermes supplies a Profile-bound host-STT importer; webui keeps [ChatComposerActions.importVoiceNote]. */
+    importVoiceNote: ((ByteArray, String) -> Unit)? = null,
+    loadMentionSuggestions: (suspend (String) -> List<ComposerMentionSuggestion>)? = null,
+    mentionReferences: Map<String, ComposerMentionSuggestion> = emptyMap(),
+    slashScope: SlashCommandScope = SlashCommandScope.WEBUI,
+    hostSlashCompletion: HermesSlashCompletion? = null,
+    onCompleteHostSlashArgument: (suspend (String?) -> Unit)? = null,
+    reasoningLevels: List<String>? = null,
+    allowedSendModes: Set<ComposerSendModeChoice>? = null,
+    profileSelectionEnabled: Boolean = true,
+    onOpenFolder: (() -> Unit)? = null,
+    onSelectFolder: ((String) -> Unit)? = null,
+    configurationTrailingContent: (@Composable (Boolean) -> Unit)? = null,
+    goalControl: (@Composable (Boolean) -> Unit)? = null,
+    autoStartsVoiceInput: Boolean = false,
+    maximumAttachmentBytes: Int = PendingAttachment.maximumUploadBytes,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -94,26 +112,46 @@ fun ChatComposer(
     val knownSkills = remember(state.skillSuggestions) {
         state.skillSuggestions.associate { it.slashName to it.name }
     }
-    val effectiveTokens = remember(state.draft, draftTokens, knownSkills) {
+    // A non-null empty map is significant in Bot Chat: with a settled empty
+    // roster, an unknown @word remains plain instead of becoming a file chip.
+    val knownBots = remember(mentionReferences, loadMentionSuggestions) {
+        mentionReferences.takeIf { loadMentionSuggestions != null }
+    }
+    val effectiveTokens = remember(state.draft, draftTokens, knownSkills, knownBots) {
         draftTokens?.takeIf { it.toServerText() == state.draft }
-            ?: parseComposerTokens(state.draft, knownSkills = knownSkills)
+            ?: parseComposerTokens(state.draft, knownSkills = knownSkills, knownBots = knownBots)
     }
     val fileController = remember(state.sessionId, state.selectedWorkspacePath, attachmentCacheNamespace) {
         ComposerFileAutocompleteController()
     }
-    val trigger = remember(state.draft, selection) {
+    val mentionController = remember(state.sessionId, attachmentCacheNamespace) {
+        ComposerMentionAutocompleteController()
+    }
+    val trigger = remember(state.draft, selection, slashScope) {
         detectComposerCaretTrigger(
             draft = state.draft,
             selectionStart = selection.start,
             selectionEnd = selection.end,
+            slashScope = slashScope,
         )
     }
+    val hostSlashArgumentText = remember(trigger, slashScope) {
+        trigger?.takeIf { candidate ->
+            candidate.kind == ComposerTriggerKind.SLASH &&
+                candidate.startsDraft &&
+                ParsedSlashQuery(candidate.text, slashScope).isHostArgumentMode
+        }?.text
+    }
+    val currentCompleteHostSlash by rememberUpdatedState(onCompleteHostSlashArgument)
 
     LaunchedEffect(state.sendErrorMessage) {
         if (state.sendErrorMessage == null) dismissedSendError = null
     }
     LaunchedEffect(state.composerConfigurationErrorMessage) {
         if (state.composerConfigurationErrorMessage == null) dismissedConfigurationError = null
+    }
+    LaunchedEffect(state.sessionId, hostSlashArgumentText, onCompleteHostSlashArgument != null) {
+        currentCompleteHostSlash?.invoke(hostSlashArgumentText)
     }
 
     fun moveCaret(caret: Int) {
@@ -128,7 +166,15 @@ fun ChatComposer(
         } else {
             val paths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
                 .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
-            onDraftTokensChange(parseComposerTokens(text, knownPaths = paths, knownSkills = knownSkills))
+            onDraftTokensChange(
+                parseComposerTokens(
+                    text,
+                    knownPaths = paths,
+                    knownSkills = knownSkills,
+                    knownBots = knownBots,
+                    preservingTrailing = effectiveTokens,
+                ),
+            )
         }
     }
 
@@ -147,6 +193,8 @@ fun ChatComposer(
             text = completion.draft,
             knownPaths = knownPaths,
             knownSkills = completionSkills,
+            knownBots = knownBots,
+            preservingTrailing = effectiveTokens,
         )
         if (onDraftTokensChange != null) onDraftTokensChange(tokens) else actions.updateDraft(completion.draft)
         moveCaret(completion.caret)
@@ -167,11 +215,25 @@ fun ChatComposer(
         val replacement = if (match.isDirectory) "@${match.path.trimEnd('/')}/" else "@${match.path} "
         val completion = activeTrigger.applying(replacement, state.draft)
         if (match.isDirectory) {
-            actions.updateDraft(completion.draft)
+            publishDraft(completion.draft)
             moveCaret(completion.caret)
         } else {
             publishTokenCompletion(completion, ComposerToken.PathChip(match.path))
         }
+    }
+
+    fun applyMentionSelection(match: ComposerMentionSuggestion) {
+        val activeTrigger = trigger?.takeIf { it.kind == ComposerTriggerKind.FILE } ?: return
+        val completion = activeTrigger.applying("@${match.tag} ", state.draft)
+        publishTokenCompletion(
+            completion,
+            ComposerToken.BotChip(
+                tag = match.tag,
+                displayName = match.displayName,
+                profile = match.profile,
+                avatar = match.avatar,
+            ),
+        )
     }
 
     val uploadPreparedAttachment: (PreparedAttachmentResult) -> Unit = { result ->
@@ -185,7 +247,7 @@ fun ChatComposer(
                 }
             }
             is PreparedAttachmentResult.TooLarge -> actions.setUploadAttachmentError(
-                PendingAttachment.uploadTooLargeMessage(result.filename),
+                attachmentTooLargeMessage(result),
             )
             is PreparedAttachmentResult.Failure -> actions.setUploadAttachmentError(result.message)
         }
@@ -197,13 +259,17 @@ fun ChatComposer(
     fun processPickedUris(uris: List<Uri>) {
         scope.launch {
             for (uri in uris) {
-                uploadPreparedAttachment(preparePickedAttachment(context, uri, cacheNamespace))
+                uploadPreparedAttachment(
+                    preparePickedAttachment(context, uri, cacheNamespace, maximumAttachmentBytes),
+                )
             }
         }
     }
 
     fun processCameraBitmap(bitmap: Bitmap) {
-        scope.launch { uploadPreparedAttachment(prepareCameraAttachment(bitmap)) }
+        scope.launch {
+            uploadPreparedAttachment(prepareCameraAttachment(bitmap, maximumAttachmentBytes))
+        }
     }
 
     val isOfflineReadOnly = state.isReadOnly || state.isViewingCachedData
@@ -265,10 +331,16 @@ fun ChatComposer(
             actions = actions,
             trigger = trigger,
             fileController = fileController,
+            mentionController = mentionController,
             loadFileSuggestions = loadFileSuggestions,
+            loadMentionSuggestions = loadMentionSuggestions,
+            slashScope = slashScope,
+            hostSlashCompletion = hostSlashCompletion,
+            reasoningLevels = reasoningLevels,
             hapticsEnabled = hapticsEnabled,
             onSelectSlash = ::applySlashSelection,
             onSelectFile = ::applyFileSelection,
+            onSelectMention = ::applyMentionSelection,
             modifier = Modifier.padding(horizontal = 12.dp),
         )
 
@@ -294,13 +366,23 @@ fun ChatComposer(
                 ChatComposerSelectorChips(
                     state = state,
                     enabled = configurationControlsEnabled,
+                    profileSelectionEnabled = profileSelectionEnabled,
                     onOpenModel = { activeSheet = ChatComposerSelectorSheet.MODEL },
-                    onOpenProfile = { activeSheet = ChatComposerSelectorSheet.PROFILE },
-                    onOpenWorkspace = { activeSheet = ChatComposerSelectorSheet.WORKSPACE },
+                    onOpenProfile = {
+                        if (profileSelectionEnabled) activeSheet = ChatComposerSelectorSheet.PROFILE
+                    },
+                    onOpenWorkspace = {
+                        if (onOpenFolder != null) onOpenFolder() else activeSheet = ChatComposerSelectorSheet.WORKSPACE
+                    },
                     onSelectReasoningEffort = actions::selectReasoningEffort,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     trailingContent = {
-                        GoalControl(enabled = configurationControlsEnabled, actions = actions)
+                        configurationTrailingContent?.invoke(configurationControlsEnabled)
+                        if (goalControl != null) {
+                            goalControl(configurationControlsEnabled)
+                        } else {
+                            GoalControl(enabled = configurationControlsEnabled, actions = actions)
+                        }
                     },
                 )
 
@@ -322,11 +404,13 @@ fun ChatComposer(
                         draft = state.draft,
                         enabled = voiceInputEnabled,
                         actions = actions,
+                        autoStart = autoStartsVoiceInput,
                     )
                     ComposerVoiceNoteButton(
                         enabled = voiceInputEnabled,
                         isProcessing = state.isProcessingVoiceNote,
                         actions = actions,
+                        importVoiceNote = importVoiceNote,
                     )
 
                     ChatComposerTextInput(
@@ -350,6 +434,7 @@ fun ChatComposer(
                         enabled = actionButtonEnabled,
                         hapticsEnabled = hapticsEnabled,
                         supportsSendModes = onSendMode != null,
+                        allowedSendModes = allowedSendModes,
                         onSend = { actions.send() },
                         onStop = actions::stopStream,
                         onSendMode = { mode -> onSendMode?.invoke(mode) },
@@ -372,7 +457,21 @@ fun ChatComposer(
         actions = actions,
         activeSheet = activeSheet,
         onDismiss = { activeSheet = null },
+        onSelectWorkspace = onSelectFolder,
     )
+}
+
+private fun attachmentTooLargeMessage(result: PreparedAttachmentResult.TooLarge): String {
+    if (result.maximumBytes == PendingAttachment.maximumUploadBytes) {
+        return PendingAttachment.uploadTooLargeMessage(result.filename)
+    }
+    val mebibyte = 1_024 * 1_024
+    val maximum = if (result.maximumBytes % mebibyte == 0) {
+        "${result.maximumBytes / mebibyte} MB"
+    } else {
+        "${result.maximumBytes} bytes"
+    }
+    return "${result.filename} is too large. Attachments must be $maximum or smaller."
 }
 
 private enum class ComposerSendButtonVisual { SEND, STOP, BUSY }
@@ -387,13 +486,18 @@ private fun ComposerSendButton(
     enabled: Boolean,
     hapticsEnabled: Boolean,
     supportsSendModes: Boolean,
+    allowedSendModes: Set<ComposerSendModeChoice>?,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onSendMode: (ComposerSendModeChoice) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val view = LocalView.current
-    val choices = composerSendModeChoices(isRunActive = isRunActive, hasPayload = hasPayload)
+    val choices = composerSendModeChoices(
+        isRunActive = isRunActive,
+        hasPayload = hasPayload,
+        allowedChoices = allowedSendModes,
+    )
     val mayOpenMenu = enabled && supportsSendModes && choices.isNotEmpty()
     LaunchedEffect(mayOpenMenu) {
         if (!mayOpenMenu) menuOpen = false

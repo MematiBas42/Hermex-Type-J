@@ -62,6 +62,7 @@ internal fun ComposerVoiceInput(
     enabled: Boolean,
     actions: ChatComposerActions,
     modifier: Modifier = Modifier,
+    autoStart: Boolean = false,
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
@@ -189,6 +190,18 @@ internal fun ComposerVoiceInput(
         if (!enabled && phase == ComposerVoicePhase.LISTENING) {
             runCatching { recognizer.stopListening() }
             phase = ComposerVoicePhase.IDLE
+        }
+    }
+    var autoStartConsumed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(autoStart, enabled) {
+        if (autoStart && enabled && !autoStartConsumed) {
+            autoStartConsumed = true
+            pendingBaselineDraft = draft
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                startRecognition(draft, 0)
+            } else {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
     }
 

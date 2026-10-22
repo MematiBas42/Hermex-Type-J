@@ -50,8 +50,13 @@ private const val MAX_CONTENT_WIDTH_DP = 840
  * Port of `Features/Insights/InsightsView.swift` + its cards.
  */
 @Composable
-fun InsightsRoute(client: InsightsDataClient, modifier: Modifier = Modifier) {
+fun InsightsRoute(
+    client: InsightsDataClient,
+    modifier: Modifier = Modifier,
+    profile: String? = null,
+) {
     val viewModel: InsightsViewModel = viewModel(
+        key = "insights:${profile.orEmpty()}",
         factory = viewModelFactory { initializer { InsightsViewModel(client) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -75,7 +80,7 @@ fun InsightsRoute(client: InsightsDataClient, modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Usage",
+                    if (profile == null) "Usage" else "Usage · $profile",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )

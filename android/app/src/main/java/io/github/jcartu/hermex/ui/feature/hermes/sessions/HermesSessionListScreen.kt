@@ -100,10 +100,13 @@ fun HermesSessionListScreen(
     LaunchedEffect(viewModel, lifecycle) {
         lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.open()
-            try { kotlinx.coroutines.awaitCancellation() } finally { viewModel.pause() }
+            try { kotlinx.coroutines.awaitCancellation() } finally {
+                viewModel.pause()
+                if (!lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) viewModel.closeAsync()
+            }
         }
     }
-    DisposableEffect(viewModel) { onDispose { viewModel.pause() } }
+    DisposableEffect(viewModel) { onDispose { if (viewModel.uiState.value.archived) viewModel.closeAsync() else viewModel.pause() } }
     LaunchedEffect(lifecycle) { lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         SessionListIdleTicker.run({ System.currentTimeMillis() / 1000 }, { now = it })
     } }
@@ -111,7 +114,7 @@ fun HermesSessionListScreen(
     LaunchedEffect(appSettings.showsProjectsEntry, state.projects) {
         if (!appSettings.showsProjectsEntry || (lane != null && state.projects.none { it.projectId == lane })) lane = null
     }
-    LaunchedEffect(lane, state.isLive, state.sessions.size) { lane?.let { viewModel.fillLane(it) } }
+    LaunchedEffect(lane, state.isLive, state.query) { lane?.let { viewModel.fillLane(it) } }
     val rows = state.visibleSessions(lane)
     val scheduledRows = rows.filter { it.summary().isCronSession && it.row.archived != true }
     val ordinary = if (state.archived) rows else rows.filter { !it.summary().isCronSession }
@@ -155,6 +158,9 @@ fun HermesSessionListScreen(
                 }
                 if (state.showsOfflineCache) item("offline") { OfflineCacheBanner() }
                 if (state.searchErrorMessage != null) item("search-error") { Text(state.searchErrorMessage.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(24.dp)) }
+                if (state.errorMessage != null && state.sessions.isNotEmpty() && !state.showsOfflineCache) item("page-error") {
+                    Text(state.errorMessage.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+                }
                 if (!state.archived && !searchExpanded) {
                     val utilities = listOfNotNull(
                         HermesHomeUtility.TASKS.takeIf { appSettings.showsTasksEntry }, HermesHomeUtility.KANBAN.takeIf { appSettings.showsKanbanEntry },
@@ -189,6 +195,7 @@ fun HermesSessionListScreen(
                 when {
                     state.isLoading && state.sessions.isEmpty() -> item("loading") { LoadingState(Modifier.height(200.dp), "Loading sessions") }
                     state.errorMessage != null && state.sessions.isEmpty() -> item("error") { ErrorState(state.errorMessage.orEmpty(), Modifier.heightIn(max = 260.dp), onRetry = viewModel::refresh) }
+                    ordinary.isEmpty() && scheduledRows.isEmpty() && state.hasMore && searchText.isBlank() -> item("paging-empty") { LoadingState(Modifier.height(180.dp), "Loading sessions") }
                     ordinary.isEmpty() && scheduledRows.isEmpty() -> item("empty") { EmptyState(
                         if (searchText.isNotBlank()) "No matching sessions" else if (state.archived) "No archived sessions" else if (lane != null) "No sessions in this project" else "No sessions yet",
                         Modifier.height(180.dp), if (searchText.isNotBlank()) "Try another search or project filter." else null) }
@@ -200,7 +207,9 @@ fun HermesSessionListScreen(
                     }
                 }
                 if (state.hasMore && searchText.isBlank() && (lane == null || viewModel.laneIsShort(lane!!))) item("more") {
-                    LaunchedEffect(state.sessions.size, lane) { if (lane == null) viewModel.loadMore() }
+                    LaunchedEffect(state.pageOffset, state.isLoadingMore, lane) {
+                        if (lane == null && !state.isLoadingMore && state.errorMessage == null) viewModel.loadMoreAsync()
+                    }
                     TextButton(onClick = { scope.launch { if (lane == null) viewModel.loadMore() else viewModel.fillLane(lane!!) } }, enabled = !state.isLoadingMore, modifier = Modifier.fillMaxWidth()) { Text("Load more") }
                 }
                 if (!state.archived && !state.isViewingCachedData && !state.showsAllProfiles) item("archived") {

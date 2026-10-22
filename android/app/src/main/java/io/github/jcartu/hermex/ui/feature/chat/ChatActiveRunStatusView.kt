@@ -36,6 +36,7 @@ fun ChatActiveRunStatusRow(
     state: ChatUiState,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
+    waitingForInput: Boolean = false,
 ) {
     val visible = state.isStreaming ||
         state.recoveryState != ActiveStreamRecoveryState.IDLE ||
@@ -49,6 +50,7 @@ fun ChatActiveRunStatusRow(
         state.isStartingChat -> "Starting response"
         state.recoveryState == ActiveStreamRecoveryState.CHECKING -> "Checking stream"
         state.recoveryState == ActiveStreamRecoveryState.RECONNECTING -> "Reconnecting stream"
+        waitingForInput -> "Waiting for you"
         runningToolName != null -> "Running $runningToolName"
         state.liveReasoningText.isNotBlank() && state.streamingAssistantMessageId == null -> "Thinking…"
         else -> "Hermes is working"

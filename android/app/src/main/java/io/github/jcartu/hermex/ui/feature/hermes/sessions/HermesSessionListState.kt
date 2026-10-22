@@ -17,6 +17,7 @@ data class HermesSessionListState(
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = false,
+    val pageOffset: Int = 0,
     val isLoadingMoreScheduled: Boolean = false,
     val hasMoreScheduled: Boolean = false,
     val scheduledTotal: Int = 0,
@@ -52,7 +53,7 @@ data class HermesSessionListState(
 
     /** Host hits follow local matches in host order; a loaded row's metadata wins by Profile + lineage. */
     fun visibleSessions(selectedProjectId: String? = null): List<HermesListedSession> {
-        val terms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val terms = query.trim().lowercase().split(Regex("[\\s\\p{Z}]+")).filter { it.isNotEmpty() }
         fun inLane(row: HermesListedSession) = selectedProjectId == null || projectOwners[row.row.id] == selectedProjectId
         val local = sessions.filter { session ->
             (archived || session.row.hidden != true) && !session.row.isRoomSession && inLane(session) &&

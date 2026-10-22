@@ -52,10 +52,12 @@ fun detectComposerCaretTrigger(
     draft: String,
     selectionStart: Int,
     selectionEnd: Int = selectionStart,
+    slashScope: SlashCommandScope = SlashCommandScope.WEBUI,
 ): ComposerCaretTrigger? {
     if (selectionStart != selectionEnd) return null
     if (selectionStart !in 0..draft.length) return null
-    return detectFileTrigger(draft, selectionStart) ?: detectSlashTrigger(draft, selectionStart)
+    return detectFileTrigger(draft, selectionStart)
+        ?: detectSlashTrigger(draft, selectionStart, slashScope)
 }
 
 private fun detectFileTrigger(draft: String, caret: Int): ComposerCaretTrigger? {
@@ -77,7 +79,7 @@ private fun detectFileTrigger(draft: String, caret: Int): ComposerCaretTrigger? 
     return null
 }
 
-private fun detectSlashTrigger(draft: String, caret: Int): ComposerCaretTrigger? {
+private fun detectSlashTrigger(draft: String, caret: Int, scope: SlashCommandScope): ComposerCaretTrigger? {
     val starts = ArrayList<Int>()
     var index = caret - 1
     while (index >= 0) {
@@ -92,7 +94,7 @@ private fun detectSlashTrigger(draft: String, caret: Int): ComposerCaretTrigger?
     for (start in starts.asReversed()) {
         val triggerText = draft.substring(start, caret)
         val startsDraft = draft.substring(0, start).all(Char::isWhitespace)
-        if (isSlashTriggerText(triggerText, startsDraft)) {
+        if (isSlashTriggerText(triggerText, startsDraft, scope)) {
             return ComposerCaretTrigger(
                 kind = ComposerTriggerKind.SLASH,
                 start = start,
@@ -105,14 +107,18 @@ private fun detectSlashTrigger(draft: String, caret: Int): ComposerCaretTrigger?
     return null
 }
 
-private fun isSlashTriggerText(text: String, startsDraft: Boolean): Boolean {
+private fun isSlashTriggerText(
+    text: String,
+    startsDraft: Boolean,
+    scope: SlashCommandScope,
+): Boolean {
     val body = text.drop(1)
     val firstWhitespace = body.indexOfFirst(Char::isWhitespace)
     if (firstWhitespace < 0) return true
     if (!startsDraft) return false
 
     val name = body.substring(0, firstWhitespace)
-    val command = SlashCommandCatalog.command(named = name) ?: return false
+    val command = scope.command(named = name) ?: return scope.completesOnHost(name)
     if (command.subArgs == SlashCommandSubArgs.NONE) return false
     if (command.subArgs.allowsSpaces) return true
 
@@ -145,12 +151,13 @@ enum class ComposerSendModeChoice { QUEUE, STEER, STOP_AND_SEND }
 fun composerSendModeChoices(
     isRunActive: Boolean,
     hasPayload: Boolean,
+    allowedChoices: Set<ComposerSendModeChoice>? = null,
 ): List<ComposerSendModeChoice> = if (isRunActive && hasPayload) {
     listOf(
         ComposerSendModeChoice.QUEUE,
         ComposerSendModeChoice.STEER,
         ComposerSendModeChoice.STOP_AND_SEND,
-    )
+    ).filter { allowedChoices == null || it in allowedChoices }
 } else {
     emptyList()
 }

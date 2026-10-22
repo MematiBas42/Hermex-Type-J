@@ -95,6 +95,10 @@ fun ChatTranscript(
     onOpenWorkspaceFile: (String) -> Unit = {},
     onAskHermex: (String) -> Unit = {},
     hapticsEnabled: Boolean = true,
+    leadingContent: (@Composable () -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
+    rowContent: (@Composable (TranscriptMessage, @Composable () -> Unit) -> Unit)? = null,
+    resolveRemoteImages: Boolean = false,
 ) {
     when {
         state.isLoading && state.messages.isEmpty() -> LoadingState(modifier, "Loading messages")
@@ -104,7 +108,7 @@ fun ChatTranscript(
             retryLabel = "Try again",
             onRetry = onRetry,
         )
-        state.messages.isEmpty() -> EmptyState(
+        state.messages.isEmpty() && leadingContent == null && trailingContent == null -> EmptyState(
             title = "No messages yet",
             message = "Send a message to start the conversation.",
             modifier = modifier,
@@ -122,6 +126,10 @@ fun ChatTranscript(
             onOpenWorkspaceFile = onOpenWorkspaceFile,
             onAskHermex = onAskHermex,
             hapticsEnabled = hapticsEnabled,
+            leadingContent = leadingContent,
+            trailingContent = trailingContent,
+            rowContent = rowContent,
+            resolveRemoteImages = resolveRemoteImages,
             modifier = modifier,
         )
     }
@@ -142,6 +150,10 @@ private fun TranscriptList(
     onAskHermex: (String) -> Unit,
     hapticsEnabled: Boolean,
     modifier: Modifier,
+    leadingContent: (@Composable () -> Unit)?,
+    trailingContent: (@Composable () -> Unit)?,
+    rowContent: (@Composable (TranscriptMessage, @Composable () -> Unit) -> Unit)?,
+    resolveRemoteImages: Boolean,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -273,6 +285,7 @@ private fun TranscriptList(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    leadingContent?.let { content -> item("leading-content") { CenteredReadingColumn { content() } } }
                     if (state.canLoadOlderMessages) {
                         item("load-older", "load-older") {
                             CenteredReadingColumn {
@@ -286,6 +299,7 @@ private fun TranscriptList(
                     items(state.transcriptMessages, { it.renderID }, { "message" }) { row ->
                         FreshTranscriptRow(row.message.timestamp, row.message.role == "user", reduceMotion) {
                             CenteredReadingColumn {
+                                val bubble: @Composable () -> Unit = {
                                 TranscriptMessageBlock(
                                     transcriptMessage = row,
                                     state = state,
@@ -307,7 +321,10 @@ private fun TranscriptList(
                                     onOpenWorkspaceFile = onOpenWorkspaceFile,
                                     onAskHermex = onAskHermex,
                                     hapticsEnabled = hapticsEnabled,
+                                    resolveRemoteImages = resolveRemoteImages,
                                 )
+                                }
+                                if (rowContent == null) bubble() else rowContent(row, bubble)
                             }
                         }
                     }
@@ -370,6 +387,7 @@ private fun TranscriptList(
                     if (state.pinnedLocalNotices.isNotEmpty()) {
                         item("notices") { CenteredReadingColumn { PinnedLocalNoticeRows(state.pinnedLocalNotices) } }
                     }
+                    trailingContent?.let { content -> item("trailing-content") { CenteredReadingColumn { content() } } }
                     item("bottom-anchor") { Spacer(Modifier.fillMaxWidth().height(1.dp)) }
                 }
             }
@@ -412,6 +430,7 @@ private fun TranscriptMessageBlock(
     onOpenWorkspaceFile: (String) -> Unit,
     onAskHermex: (String) -> Unit,
     hapticsEnabled: Boolean,
+    resolveRemoteImages: Boolean,
 ) {
     val message = transcriptMessage.message
     val anchor = transcriptMessage.anchorID
@@ -494,6 +513,7 @@ private fun TranscriptMessageBlock(
                         onOpenWorkspaceFile = onOpenWorkspaceFile,
                         onAskHermex = onAskHermex,
                         hapticsEnabled = hapticsEnabled,
+                        resolveRemoteImages = resolveRemoteImages,
                     )
                     if (!message.isSteerMessage && (!message.content.isNullOrBlank() || !message.attachments.isNullOrEmpty())) {
                         MessageMetaRow(message, streamingRow, isTerminalReply, hapticsEnabled)

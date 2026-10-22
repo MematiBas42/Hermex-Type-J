@@ -14,10 +14,18 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 
+/**
+ * Assistant Listen playback. [synthesize] is webui TTS or a Hermes Profile's
+ * `BotClient.speech`; every failure still falls back to Android TextToSpeech.
+ */
 class AssistantSpeaker(
     context: Context,
-    private val api: HermesApi,
+    private val synthesize: suspend (String) -> ByteArray?,
 ) {
+    constructor(context: Context, api: HermesApi) : this(
+        context = context,
+        synthesize = { text -> api.synthesizeSpeech(text, DEFAULT_SERVER_VOICE) },
+    )
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var player: MediaPlayer? = null
@@ -41,7 +49,7 @@ class AssistantSpeaker(
         scope.launch {
             stopPlayback()
             val serverAudio = if (text.length <= MAX_SERVER_TEXT_LENGTH) {
-                runCatching { api.synthesizeSpeech(text, DEFAULT_SERVER_VOICE) }.getOrNull()?.takeIf(ByteArray::isNotEmpty)
+                runCatching { synthesize(text) }.getOrNull()?.takeIf(ByteArray::isNotEmpty)
             } else null
             if (serverAudio == null || !playServerAudio(serverAudio)) speakOnDevice(text)
         }

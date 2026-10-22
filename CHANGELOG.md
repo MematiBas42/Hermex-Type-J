@@ -8,6 +8,10 @@ Security sections per release.
 ## [2.0.0] - 2026-08-17
 
 ### Added
+- Android direct-Hermes home now has retained Bots/Sessions sides and a floating
+  Profile/filter/new-chat bar, with hinge-aware list/chat layouts. Sessions use
+  host paging, read marks, live states, FTS snippets, folder projects and row
+  actions; Profile-scoped cached rows paint before the connection answers.
 - Android direct-Hermes connection flow: dashboard-first detection, password,
   browser PKCE and open-dashboard sign-in, encrypted per-server connection
   records and refresh-token rotation, host identity checks, and explicit
@@ -38,6 +42,9 @@ Security sections per release.
   cross-origin redirect stripping, and Keystore encryption at rest.
 - Voice notes (native AAC recorder) with server transcription, and assistant
   Listen via server TTS with Android TextToSpeech fallback.
+- Direct Hermes-host Skills, Memory/soul editing, Usage and provider limits,
+  workspace Files, Git review/writes, Profile voice playback, and host STT,
+  while legacy webui routes remain available.
 - Deterministic fuzz/property tests (hinge geometry, dynamic path encoding,
   deep-link parsing, tolerant decoding, speech normalization, stream reducers).
 
@@ -182,6 +189,8 @@ working and get fixes, and new features go to Hermes.
   session on tap. Approvals use a high-importance channel; stopped runs stay
   silent. The first accepted run claims the one-time permission offer, and
   Send Test Notification uses the production reply channel.
+- Android: deleting a bot can purge its Profile's Hermes drafts without
+  removing other bots, connections, or legacy webui drafts.
 
 [#713]: https://github.com/uzairansaruzi/hermex/issues/713
 [#1020]: https://github.com/uzairansaruzi/hermex/pull/1020
