@@ -9,6 +9,7 @@ import io.github.jcartu.hermex.model.CronOutputItem
 import io.github.jcartu.hermex.model.CronRunHistoryItem
 import io.github.jcartu.hermex.model.CronRunHistoryResponse
 import io.github.jcartu.hermex.net.ApiError
+import io.github.jcartu.hermex.model.hermes.BotFailure
 import java.io.InterruptedIOException
 import java.net.SocketException
 import java.net.SocketTimeoutException
@@ -664,6 +665,7 @@ class TaskDetailViewModel(
      * out, or the connection dropping.
      */
     private fun isUnansweredTrigger(error: Throwable): Boolean {
+        if (error is BotFailure.Rejected && (error.code == 504 || error.code == 524)) return true
         if (error is ApiError.Http && (error.statusCode == 504 || error.statusCode == 524)) return true
         if (error is ApiError.Network) {
             val underlying = error.underlying
