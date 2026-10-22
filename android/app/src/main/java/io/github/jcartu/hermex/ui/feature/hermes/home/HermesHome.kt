@@ -77,6 +77,8 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
     var detail by rememberSaveable(account.id) { mutableStateOf<String?>(null) }
     var query by rememberSaveable(account.id) { mutableStateOf("") }
     var covers by remember { mutableIntStateOf(0) }
+    var shareTransferRunning by remember { mutableStateOf(false) }
+    var shareFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
     val paneCount = LocalPaneCount.current
@@ -150,6 +152,18 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
         val request = newChat?.takeIf { it.serverId == account.id } ?: return@LaunchedEffect
         if (!state.isLive || state.isViewingCachedData) return@LaunchedEffect
         val profile = request.profile ?: state.profile ?: return@LaunchedEffect
+        val share = container.sharedImports.pending.value
+        if (share != null) {
+            shareTransferRunning = true
+            try {
+                if (!io.github.jcartu.hermex.core.share.HermesShareImport.transfer(container, account.id, saved.id, profile, share.id)) return@LaunchedEffect
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) {
+                shareFailure = share.id to (error.message ?: "The shared files couldn't be added.")
+                return@LaunchedEffect
+            } finally { shareTransferRunning = false }
+        }
+        if (HermesSessionLookup.pendingNewChat.value != request) return@LaunchedEffect
         bringForward()
         chat = HermesHomeChat(null, profile, voice = request.autoStartsVoiceInput)
         HermesSessionLookup.consumeNewChat(request)
@@ -161,7 +175,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
         }, newChat = {
             if (tab == HermesHomeTab.BOTS) botNewChat() else IconButton(
                 onClick = { state.profile?.let { detail = null; chat = HermesHomeChat(null, it) } },
-                enabled = state.isLive && !state.isViewingCachedData && state.profile != null,
+                enabled = state.isLive && !state.isViewingCachedData && state.profile != null && !shareTransferRunning,
             ) { Icon(Icons.Default.Edit, "New Session") }
         })
     }
@@ -218,6 +232,19 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 88.dp))
         }
+    }
+    shareFailure?.let { failure ->
+        fun keepQueued() {
+            shareFailure = null
+            HermesSessionLookup.pendingNewChat.value?.takeIf { it.serverId == account.id }?.let(HermesSessionLookup::consumeNewChat)
+        }
+        AlertDialog(onDismissRequest = ::keepQueued, title = { Text("Couldn't Add Shared Files") },
+            text = { Text(failure.second + "\n\nNothing was added. Discard deletes this saved share from Hermex.") },
+            confirmButton = { TextButton(onClick = { scope.launch {
+                try { container.sharedImports.acknowledge(failure.first); keepQueued() }
+                catch (error: Exception) { shareFailure = failure.first to (error.message ?: "Couldn't discard the saved share.") }
+            } }) { Text("Discard Share") } },
+            dismissButton = { TextButton(onClick = ::keepQueued) { Text("Keep Queued") } })
     }
 }
 
