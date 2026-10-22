@@ -122,7 +122,17 @@ class AppContainer(context: Context) {
         json = json,
         runtimeStore = customHeaderStore,
     )
-    val deepLinks = io.github.jcartu.hermex.core.navigation.DeepLinkRepository(context.dataStore)
+    val deepLinks = io.github.jcartu.hermex.core.navigation.DeepLinkRepository(
+        context.dataStore,
+        // Swift passes `AuthManager.normalizedServerURL(from:)` when parsing a
+        // link's `server` item, so a link written with a trailing slash still
+        // matches its configured server; unparseable items drop the link.
+        normalizeServer = { raw ->
+            runCatching {
+                io.github.jcartu.hermex.ui.feature.onboarding.AuthManager.normalizedServerUrl(raw)
+            }.getOrNull()
+        },
+    )
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
@@ -244,6 +254,21 @@ class AppContainer(context: Context) {
         )
     }
 
+    /** Durable Move to Hermes journal, ask-once flags, reports, and legacy routing records. */
+    val moveToHermesStore: io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesStore by lazy {
+        io.github.jcartu.hermex.ui.feature.movetohermes.MoveToHermesStore(
+            file = java.io.File(appContext.filesDir, "move-to-hermes/state.json"),
+            json = json,
+        )
+    }
+
+    /** Old webui links/entry points resolve here after their exact chats move to Hermes. */
+    val movedSessionMap: io.github.jcartu.hermex.ui.feature.movetohermes.MovedSessionMap by lazy {
+        io.github.jcartu.hermex.ui.feature.movetohermes.MovedSessionMap(moveToHermesStore) {
+            authManager.servers.value.associate { it.id to it.createdAt }
+        }
+    }
+
     /** Direct-Hermes rows/transcripts have Profile and lineage scopes, independent of webui sweeps. */
     val hermesCacheStore: io.github.jcartu.hermex.data.HermesCacheStore by lazy {
         io.github.jcartu.hermex.data.HermesCacheStore(java.io.File(appContext.filesDir, "offline-cache"), json)
@@ -276,7 +301,6 @@ class AppContainer(context: Context) {
                 reconnectGateway = { hermesConnections.reconnectGateway(server) },
             )
         }
-
     val sharedImports: io.github.jcartu.hermex.core.share.SharedImportRepository by lazy {
         io.github.jcartu.hermex.core.share.SharedImportRepository(appContext, json).also { repository ->
             appScope.launch { repository.refresh() }

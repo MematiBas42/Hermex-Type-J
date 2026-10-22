@@ -53,6 +53,10 @@ Entries use Added / Changed / Fixed / Security sections.
 ## [Type-J 2.0.0] - 2026-08-17
 
 ### Added
+- Android direct-Hermes home now has retained Bots/Sessions sides and a floating
+  Profile/filter/new-chat bar, with hinge-aware list/chat layouts. Sessions use
+  host paging, read marks, live states, FTS snippets, folder projects and row
+  actions; Profile-scoped cached rows paint before the connection answers.
 - Android direct-Hermes connection flow: dashboard-first detection, password,
   browser PKCE and open-dashboard sign-in, encrypted per-server connection
   records and refresh-token rotation, host identity checks, and explicit

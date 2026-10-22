@@ -15,6 +15,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -41,10 +46,9 @@ internal data class ComposerCaretRequest(val id: Long, val caret: Int)
  * Native multiline composer editor.
  *
  * Port of `ChatComposerTextInputView.swift` and `ComposerChipTextView.swift`.
- * [BasicTextField] retains platform selection/IME/gesture behavior; the visual
- * transformation never changes document length, so chip rendering has identity
- * caret mapping and manual scrolling remains native. A compact-height window
- * caps the editor at three lines for the shorter landscape composer (1.8.0).
+ * [BasicTextField] retains platform selection/IME/gesture behavior. Bot chips project their
+ * friendly labels through an explicit source-offset mapping; copy/cut retain the original
+ * tag and a partial delete removes the whole chip. Compact-height windows cap at three lines.
  */
 @Composable
 internal fun ChatComposerTextInput(
@@ -63,6 +67,7 @@ internal fun ChatComposerTextInput(
         mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
     }
     var appliedCaretRequestId by remember { mutableStateOf<Long?>(null) }
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val currentRecall by rememberUpdatedState(recallLastUserMessage)
     val currentOnDraftChange by rememberUpdatedState(onDraftChange)
     val currentOnSelectionChange by rememberUpdatedState(onSelectionChange)
@@ -108,13 +113,15 @@ internal fun ChatComposerTextInput(
 
     BasicTextField(
         value = fieldValue,
-        onValueChange = { updated ->
+        onValueChange = { proposed ->
+            val updated = applyAtomicBotChipEdit(fieldValue, proposed, draftTokens)
             val textChanged = updated.text != fieldValue.text
             val selectionChanged = updated.selection != fieldValue.selection
             fieldValue = updated
             if (textChanged) currentOnDraftChange(updated.text)
             if (selectionChanged || textChanged) currentOnSelectionChange(updated.selection)
         },
+        onTextLayout = { textLayout = it },
         modifier = modifier
             .heightIn(min = 48.dp, max = maximumHeight)
             .onPreviewKeyEvent { event ->
@@ -160,8 +167,45 @@ internal fun ChatComposerTextInput(
                         color = colors.onSurfaceVariant,
                     )
                 }
-                innerTextField()
+                Box(Modifier.drawWithContent {
+                    drawContent()
+                    val layout = textLayout
+                    if (layout != null && fieldValue.text == draftTokens.toServerText()) {
+                        var offset = 0
+                        clipRect {
+                            for (token in draftTokens) {
+                                val image = (token as? ComposerToken.BotChip)?.avatar
+                                if (image != null && offset < layout.layoutInput.text.length) {
+                                    val bounds = layout.getBoundingBox(offset)
+                                    val side = minOf(bounds.width, bounds.height).toInt().coerceAtLeast(1)
+                                    drawImage(image, dstOffset = IntOffset(bounds.left.toInt(), (bounds.top + (bounds.height - side) / 2).toInt()), dstSize = IntSize(side, side))
+                                }
+                                offset += if (token is ComposerToken.BotChip) token.displayName.length + 1 else token.serverText.length
+                            }
+                        }
+                    }
+                }) { innerTextField() }
             }
         },
     )
+}
+
+/** Port of `ComposerChipTextView`: deleting any part of an atomic bot reference deletes it whole. */
+internal fun applyAtomicBotChipEdit(previous: TextFieldValue, proposed: TextFieldValue, tokens: List<ComposerToken>): TextFieldValue {
+    if (previous.text == proposed.text || tokens.toServerText() != previous.text) return proposed
+    var start = 0
+    while (start < previous.text.length && start < proposed.text.length && previous.text[start] == proposed.text[start]) start++
+    var end = previous.text.length
+    var proposedEnd = proposed.text.length
+    while (end > start && proposedEnd > start && previous.text[end - 1] == proposed.text[proposedEnd - 1]) { end--; proposedEnd-- }
+    val affected = tokens.chipRanges().filter { range ->
+        range.token is ComposerToken.BotChip && if (start == end) start > range.start && start < range.endExclusive
+        else start < range.endExclusive && end > range.start
+    }
+    if (affected.isEmpty()) return proposed
+    val replacement = proposed.text.substring(start, proposedEnd)
+    val expandedStart = minOf(start, affected.minOf { it.start })
+    val expandedEnd = maxOf(end, affected.maxOf { it.endExclusive })
+    val text = previous.text.replaceRange(expandedStart, expandedEnd, replacement)
+    return TextFieldValue(text, TextRange(expandedStart + replacement.length))
 }

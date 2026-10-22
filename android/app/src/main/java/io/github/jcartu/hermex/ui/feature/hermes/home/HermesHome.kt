@@ -77,6 +77,8 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
     var detail by rememberSaveable(account.id) { mutableStateOf<String?>(null) }
     var query by rememberSaveable(account.id) { mutableStateOf("") }
     var covers by remember { mutableIntStateOf(0) }
+    var shareTransferRunning by remember { mutableStateOf(false) }
+    var shareFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
     val paneCount = LocalPaneCount.current
@@ -95,7 +97,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
     fun openRow(row: HermesListedSession) {
         if (row.row.isBotChat) {
             tab = HermesHomeTab.BOTS
-            BotLinkMailbox.post(BotDestination(account.id, saved.id, row.profile, null))
+            BotLinkMailbox.post(io.github.jcartu.hermex.ui.feature.bots.BotDestination(account.id, saved.id, row.profile, null))
         } else {
             chat?.key?.let { old -> state.sessions.firstOrNull { it.row.id == old && it.profile == chat?.profile }?.let(sessions::noteReturn) }
             detail = null
@@ -117,7 +119,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer); sessions.closeAsync() }
     }
-    LaunchedEffect(pendingBot) { if (pendingBot?.serverId == account.id) { tab = HermesHomeTab.BOTS; bringForward() } }
+    LaunchedEffect(pendingBot) { if (pendingBot?.server == account.id) { tab = HermesHomeTab.BOTS; bringForward() } }
     LaunchedEffect(pending) {
         val destination = pending?.takeIf { it.serverId == account.id } ?: return@LaunchedEffect
         tab = HermesHomeTab.SESSIONS; bringForward()
@@ -150,6 +152,18 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
         val request = newChat?.takeIf { it.serverId == account.id } ?: return@LaunchedEffect
         if (!state.isLive || state.isViewingCachedData) return@LaunchedEffect
         val profile = request.profile ?: state.profile ?: return@LaunchedEffect
+        val share = container.sharedImports.pending.value
+        if (share != null) {
+            shareTransferRunning = true
+            try {
+                if (!io.github.jcartu.hermex.core.share.HermesShareImport.transfer(container, account.id, saved.id, profile, share.id)) return@LaunchedEffect
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) {
+                shareFailure = share.id to (error.message ?: "The shared files couldn't be added.")
+                return@LaunchedEffect
+            } finally { shareTransferRunning = false }
+        }
+        if (HermesSessionLookup.pendingNewChat.value != request) return@LaunchedEffect
         bringForward()
         chat = HermesHomeChat(null, profile, voice = request.autoStartsVoiceInput)
         HermesSessionLookup.consumeNewChat(request)
@@ -161,7 +175,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
         }, newChat = {
             if (tab == HermesHomeTab.BOTS) botNewChat() else IconButton(
                 onClick = { state.profile?.let { detail = null; chat = HermesHomeChat(null, it) } },
-                enabled = state.isLive && !state.isViewingCachedData && state.profile != null,
+                enabled = state.isLive && !state.isViewingCachedData && state.profile != null && !shareTransferRunning,
             ) { Icon(Icons.Default.Edit, "New Session") }
         })
     }
@@ -188,6 +202,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
                 val title = if (detail == "ARCHIVED") "Archived Sessions" else HermesHomeUtility.valueOf(detail!!).label
                 if (detail != "ARCHIVED") SubScreenTopBar(title, ::closeChat)
                 val profile = state.profile
+                CompositionLocalProvider(LocalPaneCount provides maxOf(1, paneCount - 1)) {
                 if (profile != null) when (detail) {
                     "ARCHIVED" -> {
                         val archive: HermesSessionListViewModel = viewModel(key = "hermes-archive-${account.id}-$profile", factory = viewModelFactory { initializer {
@@ -202,6 +217,7 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
                     "MEMORY" -> MemoryRoute(remember(profile) { HermesMemoryDataClient(connection, profile) }, profile)
                     "USAGE" -> InsightsRoute(remember(profile) { HermesInsightsDataClient(HermesInsightsClient(connection, profile)) }, profile = profile)
                 }
+                }
             }
         } else EmptyState("Select a Chat", column, "Choose a session from the sidebar or start a new chat.")
     }
@@ -211,11 +227,24 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
                 HermesHomeSurface(tab, chat != null || detail != null, onBack = ::closeChat,
                     bots = { BotsInbox(account, bar = botBar,
                         header = { open -> HermesHomeHeader(account, onOpenSearch = open) }, bottomBar = bottom,
-                        pendingDestination = pendingBot?.takeIf { it.serverId == account.id }, onDestinationHandled = BotLinkMailbox::consume) },
+                        pendingDestination = pendingBot?.takeIf { it.server == account.id }, onDestinationHandled = BotLinkMailbox::consume) },
                     sessions = list, detail = detailContent)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 88.dp))
         }
+    }
+    shareFailure?.let { failure ->
+        fun keepQueued() {
+            shareFailure = null
+            HermesSessionLookup.pendingNewChat.value?.takeIf { it.serverId == account.id }?.let(HermesSessionLookup::consumeNewChat)
+        }
+        AlertDialog(onDismissRequest = ::keepQueued, title = { Text("Couldn't Add Shared Files") },
+            text = { Text(failure.second + "\n\nNothing was added. Discard deletes this saved share from Hermex.") },
+            confirmButton = { TextButton(onClick = { scope.launch {
+                try { container.sharedImports.acknowledge(failure.first); keepQueued() }
+                catch (error: Exception) { shareFailure = failure.first to (error.message ?: "Couldn't discard the saved share.") }
+            } }) { Text("Discard Share") } },
+            dismissButton = { TextButton(onClick = ::keepQueued) { Text("Keep Queued") } })
     }
 }
 

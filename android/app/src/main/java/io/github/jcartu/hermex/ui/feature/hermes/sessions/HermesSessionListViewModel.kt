@@ -112,6 +112,7 @@ class HermesSessionListViewModel(
 
     fun refresh() { searchAwaitsConnect = _state.value.query.isNotEmpty(); viewModelScope.launch { open() } }
     fun closeAsync() { viewModelScope.launch { close() } }
+    fun loadMoreAsync() { viewModelScope.launch { loadMore() } }
     fun pause() {
         listening = false
         debounceJob?.cancel(); debounceJob = null
@@ -297,6 +298,7 @@ class HermesSessionListViewModel(
     private fun publishPages(live: Boolean = false) {
         val rows = (pages.rows + scheduled.rows).map { (profile, row) -> HermesListedSession(profile, row) }
         _state.update { it.copy(sessions = rows, hasMore = pages.hasMore, hasMoreScheduled = scheduled.hasMore,
+            pageOffset = pages.profiles.sumOf { profile -> pages[profile].nextOffset },
             scheduledTotal = scheduled.totalCount, unreadMarks = marks.mapValues { mark -> mark.value.unread },
             isLive = live || it.isLive, isViewingCachedData = if (live) false else it.isViewingCachedData,
             isCachedCopyProvisional = if (live) false else it.isCachedCopyProvisional) }

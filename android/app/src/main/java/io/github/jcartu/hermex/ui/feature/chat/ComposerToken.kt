@@ -1,5 +1,8 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
+import androidx.compose.ui.graphics.ImageBitmap
+import io.github.jcartu.hermex.ui.feature.bots.BotMentions
+import java.util.Locale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
 import io.github.jcartu.hermex.model.SlashSkillFormatter
@@ -15,6 +18,8 @@ sealed interface ComposerToken {
     data class Text(val text: String) : ComposerToken
     data class PathChip(val path: String) : ComposerToken
     data class SkillChip(val name: String) : ComposerToken
+    /** Original tag stays the clipboard/wire text; the name and cached face are display only. */
+    data class BotChip(val tag: String, val displayName: String, val profile: String, val avatar: ImageBitmap? = null) : ComposerToken
 }
 
 /** Exact plain-text representation accepted by Hermes/webui. */
@@ -23,6 +28,7 @@ val ComposerToken.serverText: String
         is ComposerToken.Text -> text
         is ComposerToken.PathChip -> "@$path"
         is ComposerToken.SkillChip -> "/${SlashSkillFormatter.slug(name.removePrefix("/"))}"
+        is ComposerToken.BotChip -> "@$tag"
     }
 
 /** Human-readable label used by the composer and sent-message bubble. */
@@ -34,6 +40,7 @@ val ComposerToken.displayText: String
             normalized.substringAfterLast('/').ifEmpty { normalized }
         }
         is ComposerToken.SkillChip -> name.removePrefix("/")
+        is ComposerToken.BotChip -> displayName
     }
 
 /**
@@ -63,6 +70,11 @@ fun List<ComposerToken>.toDisplayAnnotatedString(): AnnotatedString = buildAnnot
                 append(token.displayText)
                 pop()
             }
+            is ComposerToken.BotChip -> {
+                pushStringAnnotation(tag = COMPOSER_TOKEN_ANNOTATION, annotation = "bot:${token.profile}")
+                append(token.displayName)
+                pop()
+            }
         }
     }
 }
@@ -84,6 +96,10 @@ fun parseComposerTokens(
     text: String,
     knownPaths: Set<String> = emptySet(),
     knownSkills: Map<String, String> = emptyMap(),
+    /** null retains the webui parser; a bot catalog (even empty) leaves unknown @ text plain. */
+    knownBots: Map<String, ComposerMentionSuggestion>? = null,
+    preservingTrailing: List<ComposerToken> = emptyList(),
+    isComplete: Boolean = false,
 ): List<ComposerToken> {
     if (text.isEmpty()) return emptyList()
 
@@ -97,6 +113,18 @@ fun parseComposerTokens(
         .sortedByDescending(String::length)
         .toList()
 
+    val previousBotRanges = preservingTrailing.chipRanges().filter { it.token is ComposerToken.BotChip }
+    val botRanges = if (knownBots == null) emptyMap() else BotMentions.proseMentions(text).mapNotNull { mention ->
+        val reference = knownBots[mention.form] ?: return@mapNotNull null
+        val end = mention.range.last + 1
+        val source = text.substring(mention.range)
+        val closed = end < text.length && text[end].isWhitespace()
+        val preserved = end == text.length && (isComplete || previousBotRanges.any {
+            it.start == mention.range.first && it.endExclusive == end && it.token.serverText == source
+        })
+        if (!closed && !preserved) return@mapNotNull null
+        mention.range.first to (mention.range to ComposerToken.BotChip(source.drop(1), reference.displayName, reference.profile, reference.avatar))
+    }.orEmpty().toMap()
     val output = ArrayList<ComposerToken>()
     var textStart = 0
     var index = 0
@@ -131,11 +159,15 @@ fun parseComposerTokens(
             if (knownPath != null) {
                 endExclusive = index + knownPath.length + 1
                 token = ComposerToken.PathChip(knownPath)
+            } else if (botRanges[index] != null) {
+                val (range, bot) = requireNotNull(botRanges[index])
+                endExclusive = range.last + 1
+                token = bot
             } else {
                 var end = index + 1
                 while (end < text.length && !text[end].isWhitespace()) end += 1
                 endExclusive = end
-                token = text.substring(index + 1, end)
+                token = if (knownBots != null) null else text.substring(index + 1, end)
                     .takeIf(String::isNotEmpty)
                     ?.let(ComposerToken::PathChip)
             }
