@@ -137,7 +137,7 @@ class AuthManager(
     private val scope: CoroutineScope,
     private val botConnections: BotConnectionRecords,
     private val hermesConnections: HermesConnections = HermesConnections(),
-    private val discardHermesData: suspend (server: String, connectionID: String?) -> Unit = { _, _ -> },
+    private val discardHermesData: suspend (server: String, connectionID: String?) -> Unit,
     private val logoutTimeoutMillis: Long = 5_000,
 ) {
 

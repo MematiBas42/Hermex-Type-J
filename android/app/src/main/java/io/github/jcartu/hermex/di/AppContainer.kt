@@ -26,6 +26,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import io.github.jcartu.hermex.ui.feature.bots.discardBotData
 
 private val Context.dataStore by preferencesDataStore(name = "hermex_prefs")
 
@@ -170,10 +171,11 @@ class AppContainer(context: Context) {
             scope = appScope,
             botConnections = botConnectionStore,
             hermesConnections = hermesConnections,
-            discardHermesData = { server, _ ->
+            discardHermesData = { server, connectionID ->
                 cacheStore.clearCache(server)
                 cacheStore.chatDraftStore.discardDrafts(server)
                 io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesProfilePreference.clear(appContext, server)
+                discardBotData(server, connectionID)
             },
         )
     }
@@ -246,6 +248,7 @@ class AppContainer(context: Context) {
             if (authManager.kind(server) == io.github.jcartu.hermex.model.ServerKind.HERMES) hermesCacheStore.clearCache(server)
             cacheStore.chatDraftStore.discardHermesDrafts(server, connectionID)
         }
+        discardBotData(server, connectionID)
     }
 
     private val hermesUpdateModels = mutableMapOf<String, io.github.jcartu.hermex.ui.feature.settings.HermesUpdateModel>()

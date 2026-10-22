@@ -119,6 +119,14 @@ class HermesSignInActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onDestroy() {
+        if (!isChangingConfigurations) {
+            val pending = requestID?.let(BrowserPresentations.requests::get)
+            if (pending?.activity?.get() === this) pending.finished.complete(Unit)
+        }
+        super.onDestroy()
+    }
+
     private fun finishPresentation() {
         requestID?.let(BrowserPresentations.requests::get)?.finished?.complete(Unit)
         // A callback after process death contains no credential: return to the normal app,
