@@ -92,11 +92,12 @@ fun HermesProfileFeatureHost(
     )
     val state by resolver.state.collectAsStateWithLifecycle()
     LaunchedEffect(preferred, connection) { resolver.resolve(preferred) }
+    val profile = state.profile
     when {
         state.isLoading -> LoadingState(modifier = modifier, label = "Loading Profile…")
         state.error != null -> ErrorState(message = state.error.orEmpty(), modifier = modifier) {
             resolver.resolve(preferred)
         }
-        state.profile != null -> content(state.profile, connection)
+        profile != null -> content(profile, connection)
     }
 }
