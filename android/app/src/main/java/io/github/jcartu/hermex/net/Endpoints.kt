@@ -128,6 +128,19 @@ sealed class Endpoint {
     data class KanbanWorkerLog(val cardId: String, val board: String, val tailBytes: Int) : Endpoint()
     data class KanbanAddComment(val cardId: String, val board: String) : Endpoint()
     data class KanbanCreateCard(val board: String) : Endpoint()
+
+    /**
+     * A route declared outside this file (feature slices add their own in
+     * `net/Endpoints+<Feature>.kt` factories) so the sealed hierarchy's
+     * exhaustive `when`s stay untouched. [fixedPath] is the literal route;
+     * [dynamicSegments] are server-provided identifiers appended one segment
+     * each with traversal-safe encoding; [query] is appended verbatim.
+     */
+    data class Custom(
+        val fixedPath: String,
+        val dynamicSegments: List<String> = emptyList(),
+        val query: List<Pair<String, String>> = emptyList(),
+    ) : Endpoint()
     data class KanbanBulkAction(val board: String) : Endpoint()
     data class KanbanEditCard(val cardId: String, val board: String) : Endpoint()
     data class KanbanCardStatus(val cardId: String, val board: String) : Endpoint()
@@ -243,6 +256,7 @@ sealed class Endpoint {
             is KanbanRemoveDependency -> "/api/kanban/links/delete"
             Tts -> "/api/tts"
             Transcribe -> "/api/transcribe"
+            is Custom -> fixedPath
         }
 
     val queryItems: List<Pair<String, String>>
@@ -354,6 +368,7 @@ sealed class Endpoint {
             is KanbanUnblockCard -> listOf("board" to board)
             is KanbanAddDependency -> listOf("board" to board)
             is KanbanRemoveDependency -> listOf("board" to board)
+            is Custom -> query
 
             else -> emptyList()
         }
@@ -375,6 +390,9 @@ sealed class Endpoint {
             is KanbanCardStatus -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId)
             is KanbanBlockCard -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("block")
             is KanbanUnblockCard -> baseUrl.newBuilder().addPathSegments("api/kanban/tasks").addDynamicPathSegment(cardId).addPathSegment("unblock")
+            is Custom -> baseUrl.newBuilder().addPathSegments(fixedPath.removePrefix("/")).also { b ->
+                dynamicSegments.forEach { b.addDynamicPathSegment(it) }
+            }
             else -> baseUrl.newBuilder().addPathSegments(path.removePrefix("/"))
         }
         for ((name, value) in queryItems) {

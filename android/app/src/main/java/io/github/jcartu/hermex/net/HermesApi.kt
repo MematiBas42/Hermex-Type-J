@@ -144,7 +144,7 @@ import kotlin.math.max
  */
 class HermesApi(
     httpClient: OkHttpClient,
-    private val json: Json,
+    @PublishedApi internal val json: Json,
     private val configProvider: suspend () -> ServerConfig,
     private val customHeaderProvider: () -> List<CustomHeader> = { CustomHeaderStore.shared.snapshot() },
 ) {
@@ -841,21 +841,33 @@ class HermesApi(
         return kanbanRequest(endpoint, method, encoded.toRequestBody(JSON_MEDIA_TYPE))
     }
 
-    private suspend inline fun <reified R> get(endpoint: Endpoint): R =
+    /**
+     * Request helpers are `internal` so feature slices add endpoints in their
+     * own `net/HermesApi+<Feature>.kt` extension files instead of growing
+     * this class. Same contract as the methods above: 401 → Unauthorized,
+     * other non-2xx → Http(code, body), transport → Network, bad 2xx → Decoding.
+     */
+    internal suspend inline fun <reified R> get(endpoint: Endpoint): R =
         decode(sendForBody(endpoint, method = "GET", body = null))
 
-    private suspend inline fun <reified R, reified B> post(endpoint: Endpoint, body: B): R {
+    internal suspend inline fun <reified R, reified B> post(endpoint: Endpoint, body: B): R {
         val encoded = json.encodeToString(body)
         return decode(sendForBody(endpoint, method = "POST", body = encoded.toRequestBody(JSON_MEDIA_TYPE)))
     }
 
-    private inline fun <reified R> decode(body: String): R = try {
+    /** Same as [post] with a non-JSON or pre-encoded body (multipart uploads, raw text). */
+    internal suspend inline fun <reified R> send(endpoint: Endpoint, method: String, body: RequestBody?): R =
+        decode(sendForBody(endpoint, method = method, body = body))
+
+    @PublishedApi
+    internal inline fun <reified R> decode(body: String): R = try {
         json.decodeFromString<R>(body)
     } catch (error: IllegalArgumentException) {
         throw ApiError.Decoding(error)
     }
 
-    private suspend fun sendForBody(endpoint: Endpoint, method: String, body: RequestBody?): String {
+    @PublishedApi
+    internal suspend fun sendForBody(endpoint: Endpoint, method: String, body: RequestBody?): String {
         // Custom headers first, then built-ins so Accept always wins.
         val builder = Request.Builder()
             .url(endpoint.url(resolveBaseUrl()))
@@ -909,7 +921,8 @@ class HermesApi(
         continuation.invokeOnCancellation { cancel() }
     }
 
-    private companion object {
+    @PublishedApi
+    internal companion object {
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
         val EMPTY_REQUEST_BODY = ByteArray(0).toRequestBody(null)
     }
