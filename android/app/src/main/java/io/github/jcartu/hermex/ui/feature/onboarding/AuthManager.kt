@@ -137,7 +137,7 @@ class AuthManager(
     private val scope: CoroutineScope,
     private val botConnections: BotConnectionRecords,
     private val hermesConnections: HermesConnections = HermesConnections(),
-    private val discardHermesData: suspend (server: String, connectionID: String?) -> Unit = { _, _ -> },
+    private val discardHermesData: suspend (server: String, connectionID: String?) -> Unit,
     private val logoutTimeoutMillis: Long = 5_000,
 ) {
 
@@ -547,6 +547,10 @@ class AuthManager(
     fun hermesSignInSaved(server: String) {
         val account = _servers.value.firstOrNull { it.id == server }?.takeIf { it.kind == ServerKind.HERMES } ?: return
         val saved = runCatching { botConnections.load(server) }.getOrNull() ?: return
+        // An explicitly verified re-sign-in supersedes queued failures even when the UUID
+        // and credentials are unchanged. Renames, install-id backfills and token rotations
+        // do not call this path and therefore retain their shared connection.
+        hermesConnections.retire(server)
         var current = account
         if (account.serverVersion != saved.hermesVersion) {
             registry.update(account.copy(serverVersion = saved.hermesVersion))

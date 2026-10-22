@@ -26,6 +26,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import io.github.jcartu.hermex.ui.feature.bots.discardBotData
 
 private val Context.dataStore by preferencesDataStore(name = "hermex_prefs")
 
@@ -187,10 +188,11 @@ class AppContainer(context: Context) {
             scope = appScope,
             botConnections = botConnectionStore,
             hermesConnections = hermesConnections,
-            discardHermesData = { server, _ ->
+            discardHermesData = { server, connectionID ->
                 cacheStore.clearCache(server)
                 cacheStore.chatDraftStore.discardDrafts(server)
                 io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesProfilePreference.clear(appContext, server)
+                discardBotData(server, connectionID)
             },
         )
     }
@@ -216,9 +218,12 @@ class AppContainer(context: Context) {
      */
     val hermesConnections: io.github.jcartu.hermex.net.hermes.HermesConnections by lazy {
         io.github.jcartu.hermex.net.hermes.HermesConnections(httpClient = { okHttpClient }, store = botConnectionStore).also { connections ->
-            connections.onSignInRejected = { server, failure ->
-                // Transport callbacks run on HermesActor, not the UI dispatcher.
-                appScope.launch(Dispatchers.Main.immediate) { authManager.hermesSignInRejected(server, failure) }
+            connections.onSignInRejected = { server, failure, isCurrent ->
+                // Revalidate the emitting connection after the dispatcher hop: the user may
+                // have replaced or re-saved credentials while this event waited for Main.
+                appScope.launch(Dispatchers.Main.immediate) {
+                    if (isCurrent()) authManager.hermesSignInRejected(server, failure)
+                }
             }
         }
     }
@@ -292,6 +297,7 @@ class AppContainer(context: Context) {
             if (authManager.kind(server) == io.github.jcartu.hermex.model.ServerKind.HERMES) hermesCacheStore.clearCache(server)
             cacheStore.chatDraftStore.discardHermesDrafts(server, connectionID)
         }
+        discardBotData(server, connectionID)
     }
 
     private val hermesUpdateModels = mutableMapOf<String, io.github.jcartu.hermex.ui.feature.settings.HermesUpdateModel>()
