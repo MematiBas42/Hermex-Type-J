@@ -674,6 +674,67 @@ class ChatViewModelTest {
         assertEquals("stream-1", vm.uiState.value.activeStreamId)
     }
 
+    @Test
+    fun `new chat submission is reserved before deferred session creation`() = runTest(dispatcher) {
+        val created = kotlinx.coroutines.CompletableDeferred<SessionResponse>()
+        coEvery { api.createSession(any(), any(), any(), any()) } coAnswers { created.await() }
+
+        val vm = viewModel(sessionId = null, newChat = true)
+        vm.switchToSession(null, newChat = true)
+        vm.updateDraft("hi")
+
+        vm.send()
+        assertTrue(vm.uiState.value.isStartingChat)
+        vm.send()
+
+        coVerify(exactly = 1) { api.createSession(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
+
+        created.complete(SessionResponse(SessionDetail(sessionId = "new-1", title = "Fresh")))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { api.createSession(any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            api.startChat("new-1", "hi", any(), any(), any(), any(), any(), any())
+        }
+        assertEquals(listOf("hi"), sentMessages)
+        assertFalse(vm.uiState.value.isStartingChat)
+
+        // Ownership ended with the accepted POST; the active run can take a
+        // later queue submission without starting a duplicate run.
+        vm.updateDraft("later")
+        vm.send(SendMode.QUEUE)
+        assertEquals("Queued, sends when this run finishes", vm.uiState.value.queuedMessagesReceipt)
+        coVerify(exactly = 1) { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `background parking wins over late stop and send cancellation completion`() = runTest(dispatcher) {
+        val cancellation = kotlinx.coroutines.CompletableDeferred<ChatCancelResponse>()
+        coEvery { api.cancelChat("stream-1") } coAnswers { cancellation.await() }
+        val vm = startedViewModel()
+
+        vm.updateDraft("next")
+        vm.send(SendMode.STOP_AND_SEND)
+        coVerify(exactly = 1) { api.cancelChat("stream-1") }
+
+        vm.suspendStreamForBackground()
+        assertEquals("next", vm.uiState.value.draft)
+
+        cancellation.complete(ChatCancelResponse(ok = true))
+        advanceUntilIdle()
+
+        assertEquals("next", vm.uiState.value.draft)
+        assertEquals(listOf("hello"), sentMessages)
+
+        // The cancelled submission no longer owns the composer. The parked
+        // input remains a valid later send and was merged exactly once.
+        vm.send()
+        advanceUntilIdle()
+        assertEquals(listOf("hello", "next"), sentMessages)
+        assertEquals("", vm.uiState.value.draft)
+    }
+
     // MARK: - Slash commands
 
     @Test
@@ -1010,6 +1071,115 @@ class ChatViewModelTest {
         assertEquals("Rejected work", source.text)
         assertEquals("text", draftStore.attachmentData(source.attachments.single().file!!).decodeToString())
         assertNull(disk[io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2")])
+    }
+
+    @Test
+    fun `cancelled continuation lookup retains rejected submission beside newer edits`() = runTest(dispatcher) {
+        val continuation = kotlinx.coroutines.CompletableDeferred<SessionResponse>()
+        val lookupStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { api.uploadFile(any(), any(), any()) } coAnswers {
+            val filename = arg<String>(2)
+            UploadResponse(
+                filename = filename,
+                path = "/up/$filename",
+                size = arg<ByteArray>(1).size,
+                mime = "text/plain",
+                isImage = false,
+            )
+        }
+        coEvery { api.startChat(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            ApiError.Http(409, """{"code":"session_rotated","continuation_session_id":"s2"}""")
+        coEvery { api.session("s2", false, null, any(), any()) } coAnswers {
+            lookupStarted.complete(Unit)
+            continuation.await()
+        }
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("A")
+        vm.askAboutSelection("A quote")
+        vm.uploadAttachment("old".toByteArray(), "old.txt")
+        vm.send()
+
+        assertTrue(lookupStarted.isCompleted)
+        // The continuation GET is still pending, but this is independent new
+        // composer work and must not replace the rejected submission.
+        vm.updateDraft("B")
+        vm.askAboutSelection("B quote")
+        vm.uploadAttachment("new".toByteArray(), "new.txt")
+        viewModels.clear()
+        draftStore.flush()
+
+        val disk = io.github.jcartu.hermex.data.ChatDraftFilePersistence(directory, json, dispatcher).load()
+        val source = disk[io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s1")]!!
+        assertEquals("A\n\nB", source.text)
+        assertEquals(listOf("A quote", "B quote"), source.quotes.map { it.text })
+        assertEquals(listOf("new.txt", "old.txt"), source.attachments.map { it.name }.sorted())
+        val retainedBytes = mutableMapOf<String, String>()
+        for (attachment in source.attachments) {
+            retainedBytes[attachment.name] = draftStore.attachmentData(attachment.file!!).decodeToString()
+        }
+        assertEquals(mapOf("new.txt" to "new", "old.txt" to "old"), retainedBytes)
+        assertNull(disk[io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s2")])
+    }
+
+    @Test
+    fun `accepted send consumes only its source draft after navigation`() = runTest(dispatcher) {
+        val accepted = kotlinx.coroutines.CompletableDeferred<ChatStartResponse>()
+        val startCalled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { api.uploadFile(any(), any(), any()) } coAnswers {
+            val filename = arg<String>(2)
+            UploadResponse(
+                filename = filename,
+                path = "/up/$filename",
+                size = arg<ByteArray>(1).size,
+                mime = "text/plain",
+                isImage = false,
+            )
+        }
+        coEvery {
+            api.startChat(any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers {
+            sentMessages += secondArg<String>()
+            startCalled.complete(Unit)
+            accepted.await()
+        }
+
+        val vm = viewModel()
+        vm.switchToSession("s1", false)
+        vm.updateDraft("A")
+        vm.askAboutSelection("A quote")
+        vm.uploadAttachment("old".toByteArray(), "old.txt")
+        vm.send()
+        assertTrue(startCalled.isCompleted)
+
+        vm.switchToSession("s2", false)
+        vm.updateDraft("B")
+        vm.askAboutSelection("B quote")
+        vm.uploadAttachment("new".toByteArray(), "new.txt")
+        accepted.complete(ChatStartResponse(streamId = "stream-a", sessionId = "s1"))
+        advanceUntilIdle()
+
+        assertEquals("s2", vm.uiState.value.sessionId)
+        assertEquals("B", vm.uiState.value.draft)
+        assertEquals(listOf("B quote"), vm.uiState.value.draftQuotes.map { it.text })
+        assertEquals(listOf("new.txt"), vm.uiState.value.pendingAttachments.map { it.name })
+        assertEquals(1, sentMessages.size)
+
+        val source = draftStore.draft(io.github.jcartu.hermex.data.ChatDraftKey(serverUrl, "s1"))
+        assertTrue(source == null || (
+            source.text.isEmpty() && source.quotes.isEmpty() && source.attachments.isEmpty()
+        ))
+
+        vm.switchToSession("s1", false)
+        assertEquals("", vm.uiState.value.draft)
+        assertTrue(vm.uiState.value.draftQuotes.isEmpty())
+        assertTrue(vm.uiState.value.pendingAttachments.isEmpty())
+        coVerify(exactly = 1) { api.uploadFile("s1", any(), "old.txt") }
+
+        vm.switchToSession("s2", false)
+        assertEquals("B", vm.uiState.value.draft)
+        assertEquals(listOf("B quote"), vm.uiState.value.draftQuotes.map { it.text })
+        assertEquals(listOf("new.txt"), vm.uiState.value.pendingAttachments.map { it.name })
     }
 
     @Test
