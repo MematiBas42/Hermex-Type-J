@@ -1,19 +1,18 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,12 +26,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
 import io.github.jcartu.hermex.model.ChatMessage
@@ -45,14 +52,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-/**
- * Port of `MessageBubbleView.swift`: user messages as right-aligned tinted
- * bubbles, assistant turns full-width on the leading edge, `local_notice` /
- * `local_assistant` as bordered status rows. Long-press copies the message
- * content. When [ChatUiState.rtlChatLayoutEnabled] is on the transcript runs
- * under an RTL `LayoutDirection` (provided by [ChatTranscript]), which flips
- * the start/end alignments here automatically.
- */
+/** Message surface ported from `MessageBubbleView.swift` (1.6–2.0). */
 @Composable
 fun MessageBubble(
     message: ChatMessage,
@@ -63,186 +63,257 @@ fun MessageBubble(
     imageLoader: ImageLoader?,
     onListen: (String) -> Unit,
     modifier: Modifier = Modifier,
+    attachmentDataResolver: suspend (path: String) -> ByteArray? = { null },
+    workspaceRoot: String? = null,
+    onOpenWeb: (String) -> Unit = {},
+    onOpenWorkspaceFile: (String) -> Unit = {},
+    onAskHermex: (String) -> Unit = {},
+    hapticsEnabled: Boolean = true,
 ) {
-    when (message.role) {
-        "local_notice" -> LocalStatusRow(
+    when {
+        message.role == "local_notice" -> LocalStatusRow(
             icon = Icons.Rounded.CheckCircle,
-            iconTint = if (isSystemInDarkTheme()) SuccessDark else SuccessLight,
+            iconTint = SuccessDark,
             message = message,
             state = state,
+            onOpenWeb = onOpenWeb,
+            onOpenWorkspaceFile = onOpenWorkspaceFile,
+            hapticsEnabled = hapticsEnabled,
             modifier = modifier,
         )
-
-        "local_assistant" -> LocalStatusRow(
+        message.role == "local_assistant" -> LocalStatusRow(
             icon = Icons.Rounded.KeyboardCommandKey,
             iconTint = MaterialTheme.colorScheme.primary,
             message = message,
             state = state,
+            onOpenWeb = onOpenWeb,
+            onOpenWorkspaceFile = onOpenWorkspaceFile,
+            hapticsEnabled = hapticsEnabled,
             modifier = modifier,
         )
-
-        "user" -> UserMessageRow(
+        message.isSteerMessage -> SteeringHintRow(message.steerText, modifier)
+        message.role == "user" -> UserMessageRow(
             message = message,
-            state = state,
+            hidesAttachmentPaths = state.hidesAttachmentPaths,
             attachmentUrlResolver = attachmentUrlResolver,
+            attachmentDataResolver = attachmentDataResolver,
             imageLoader = imageLoader,
+            onOpenWorkspaceFile = onOpenWorkspaceFile,
+            onOpenWeb = onOpenWeb,
+            hapticsEnabled = hapticsEnabled,
             modifier = modifier,
         )
-
         else -> AssistantMessageRow(
             message = message,
             state = state,
             isStreaming = isStreaming,
             liveTokensPerSecond = liveTokensPerSecond,
+            attachmentUrlResolver = attachmentUrlResolver,
+            attachmentDataResolver = attachmentDataResolver,
+            workspaceRoot = workspaceRoot,
+            imageLoader = imageLoader,
+            onOpenWeb = onOpenWeb,
+            onOpenWorkspaceFile = onOpenWorkspaceFile,
+            onAskHermex = onAskHermex,
             onListen = onListen,
+            hapticsEnabled = hapticsEnabled,
             modifier = modifier,
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UserMessageRow(
     message: ChatMessage,
-    state: ChatUiState,
-    attachmentUrlResolver: suspend (path: String) -> String?,
+    hidesAttachmentPaths: Boolean,
+    attachmentUrlResolver: suspend (String) -> String?,
+    attachmentDataResolver: suspend (String) -> ByteArray?,
     imageLoader: ImageLoader?,
-    modifier: Modifier = Modifier,
+    onOpenWorkspaceFile: (String) -> Unit,
+    onOpenWeb: (String) -> Unit,
+    hapticsEnabled: Boolean,
+    modifier: Modifier,
 ) {
-    val clipboard = LocalClipboardManager.current
-    val bubbleText = userBubbleText(message, state.hidesAttachmentPaths)
-
+    val text = remember(message.content, hidesAttachmentPaths) {
+        val content = message.content.orEmpty()
+        if (hidesAttachmentPaths) MessageAttachment.contentWithoutAttachedFilesMarker(content) else content
+    }
+    val link = remember(message.content) { TranscriptLinkPreviewEligibility.previewUrl(message, false) }
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 2.dp),
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val attachments = message.attachments
-        if (!attachments.isNullOrEmpty()) {
+        message.attachments.orEmpty().takeIf(List<MessageAttachment>::isNotEmpty)?.let { attachments ->
             MessageAttachmentsGroup(
                 attachments = attachments,
                 attachmentUrlResolver = attachmentUrlResolver,
+                attachmentDataResolver = attachmentDataResolver,
                 imageLoader = imageLoader,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
             )
         }
+        if (text.isNotBlank()) {
+            UserBubble(text, hapticsEnabled)
+        }
+        link?.let { TranscriptLinkPreviewView(it, onOpenWeb) }
+    }
+}
 
-        // When the attachment-path line is hidden, an attachment-only message
-        // has no bubble text left; skip the empty pill so only the attachment
-        // grid shows.
-        if (bubbleText.isNotBlank()) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-                // Leading gutter so a long bubble never spans the full pane.
-                modifier = Modifier.padding(start = 32.dp),
-            ) {
-                Text(
-                    text = bubbleText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = { clipboard.setText(AnnotatedString(bubbleText)) },
-                        )
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                )
+@Composable
+private fun UserBubble(text: String, hapticsEnabled: Boolean) {
+    var expanded by rememberSaveable(text) { mutableStateOf(false) }
+    var canFold by remember(text) { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.padding(start = 32.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Box {
+                SelectionContainer {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = if (expanded) Int.MAX_VALUE else 6,
+                        overflow = TextOverflow.Clip,
+                        onTextLayout = { result -> if (!expanded && result.hasVisualOverflow) canFold = true },
+                    )
+                }
+                if (canFold && !expanded) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(24.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, MaterialTheme.colorScheme.surfaceVariant),
+                                ),
+                            ),
+                    )
+                }
+            }
+            if (canFold) {
+                TextButton(
+                    onClick = {
+                        if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        expanded = !expanded
+                    },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                ) {
+                    Text(if (expanded) "Show less" else "Show more", fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SteeringHintRow(text: String, modifier: Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Icon(Icons.Rounded.AutoAwesome, null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Steer", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (text.isNotBlank()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.13f),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+            ) {
+                SelectionContainer {
+                    Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AssistantMessageRow(
     message: ChatMessage,
     state: ChatUiState,
     isStreaming: Boolean,
     liveTokensPerSecond: Double?,
+    attachmentUrlResolver: suspend (String) -> String?,
+    attachmentDataResolver: suspend (String) -> ByteArray?,
+    workspaceRoot: String?,
+    imageLoader: ImageLoader?,
+    onOpenWeb: (String) -> Unit,
+    onOpenWorkspaceFile: (String) -> Unit,
+    onAskHermex: (String) -> Unit,
     onListen: (String) -> Unit,
-    modifier: Modifier = Modifier,
+    hapticsEnabled: Boolean,
+    modifier: Modifier,
 ) {
-    val clipboard = LocalClipboardManager.current
-    val content = message.content
-    val hasVisibleText = !content.isNullOrBlank()
-    val speedText = if (state.showsResponseSpeed) {
+    val content = message.content.orEmpty()
+    val displayed = rememberWordBoundaryText(content.ifEmpty { " " }, isStreaming, message.messageId ?: message.id)
+    val speed = if (state.showsResponseSpeed) {
         ResponseSpeedFormatter.compactText(if (isStreaming) liveTokensPerSecond else message.turnTps)
-    } else {
-        null
+    } else null
+    val segments = remember(displayed, workspaceRoot, isStreaming) {
+        TranscriptMediaParser.segments(displayed, workspaceRoot)
     }
-    val timeText = if (state.showsAssistantTurnTimestamps) {
-        AssistantTurnTimestampFormatter.shortTime(message.timestamp)
-    } else {
-        null
-    }
-    val showsHeader = showsAssistantTurnHeader(
-        role = message.role,
-        hasTextContent = hasVisibleText,
-        isEnabled = state.showsAssistantTurnTimestamps,
-        showsResponseSpeed = state.showsResponseSpeed,
-        hasResponseSpeed = speedText != null,
-    )
-    // Placeholder space mirrors the Swift `messageText` fallback so an empty
-    // streaming row keeps its layout slot.
-    val messageText = if (content.isNullOrEmpty()) " " else content
+    val hasMedia = segments.any { it is TranscriptMediaSegment.Media }
+    val link = remember(message.content, isStreaming) { TranscriptLinkPreviewEligibility.previewUrl(message, isStreaming) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        if (showsHeader) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Rounded.AutoAwesome,
-                    contentDescription = "Assistant",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(13.dp),
-                )
-                if (timeText != null) {
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = timeText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (speedText != null) {
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = speedText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        if (speed != null && content.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Icon(Icons.Rounded.AutoAwesome, "Assistant", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                Text(speed, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-
-        StreamingTextFade(
-            text = messageText,
-            isStreaming = isStreaming,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            MessageMarkdown(
-                content = messageText,
-                wrapCodeLines = state.wrapsCodeBlockLines,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            if (hasVisibleText) clipboard.setText(AnnotatedString(content.orEmpty()))
-                        },
-                    ),
-            )
+        val body: @Composable () -> Unit = {
+            if (hasMedia) {
+                TranscriptMediaContentView(
+                    segments = segments,
+                    wrapCodeLines = state.wrapsCodeBlockLines,
+                    imageLoader = imageLoader,
+                    loadMediaUrl = { reference ->
+                        when (val source = reference.source) {
+                            is TranscriptMediaSource.RemoteUrl -> source.url
+                            is TranscriptMediaSource.LocalPath -> attachmentUrlResolver(source.path)
+                        }
+                    },
+                    loadMediaData = { reference ->
+                        when (val source = reference.source) {
+                            is TranscriptMediaSource.RemoteUrl -> attachmentDataResolver(source.url)
+                            is TranscriptMediaSource.LocalPath -> attachmentDataResolver(source.path)
+                        }
+                    },
+                    onOpenWeb = onOpenWeb,
+                    onOpenWorkspaceFile = onOpenWorkspaceFile,
+                    onAskHermex = onAskHermex,
+                    hapticsEnabled = hapticsEnabled,
+                )
+            } else {
+                TranscriptMarkdown(
+                    content = displayed,
+                    wrapCodeLines = state.wrapsCodeBlockLines,
+                    onOpenWeb = onOpenWeb,
+                    onOpenWorkspaceFile = onOpenWorkspaceFile,
+                    hapticsEnabled = hapticsEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
-        if (hasVisibleText && !isStreaming) {
-            TextButton(onClick = { onListen(content.orEmpty()) }) {
-                Icon(Icons.Rounded.VolumeUp, contentDescription = null)
+        if (isStreaming) body() else ResponseSelectionContainer(onAskHermex, content = body)
+        link?.let { TranscriptLinkPreviewView(it, onOpenWeb) }
+        if (content.isNotBlank() && !isStreaming) {
+            TextButton(onClick = { onListen(content) }) {
+                Icon(Icons.Rounded.VolumeUp, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("Listen")
             }
@@ -250,76 +321,43 @@ private fun AssistantMessageRow(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LocalStatusRow(
     icon: ImageVector,
     iconTint: Color,
     message: ChatMessage,
     state: ChatUiState,
-    modifier: Modifier = Modifier,
+    onOpenWeb: (String) -> Unit,
+    onOpenWorkspaceFile: (String) -> Unit,
+    hapticsEnabled: Boolean,
+    modifier: Modifier,
 ) {
-    val clipboard = LocalClipboardManager.current
-    val content = message.content
-    val messageText = if (content.isNullOrEmpty()) " " else content
-
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
-            modifier = Modifier
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        if (!content.isNullOrBlank()) clipboard.setText(AnnotatedString(content))
-                    },
-                )
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(iconTint.copy(alpha = 0.16f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(17.dp),
-                )
+            Box(Modifier.size(28.dp).background(iconTint.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = iconTint, modifier = Modifier.size(17.dp))
             }
-
-            MessageMarkdown(
-                content = messageText,
+            TranscriptMarkdown(
+                content = message.content?.ifEmpty { " " } ?: " ",
                 wrapCodeLines = state.wrapsCodeBlockLines,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                hapticsEnabled = hapticsEnabled,
                 modifier = Modifier.weight(1f),
             )
         }
     }
 }
 
-/**
- * The user bubble's text with the appended `[Attached files: …]` marker
- * stripped when the user opted to hide paths. Display-only.
- */
-private fun userBubbleText(message: ChatMessage, hidesAttachmentPaths: Boolean): String {
-    val content = message.content ?: ""
-    if (!hidesAttachmentPaths) return content
-    return MessageAttachment.contentWithoutAttachedFilesMarker(content)
-}
-
-/**
- * Port of `ChatTranscriptDisplaySettings.showsAssistantTurnHeader`: the header
- * is a turn separator, limited to real assistant turns with visible text.
- */
 internal fun showsAssistantTurnHeader(
     role: String?,
     hasTextContent: Boolean,
@@ -327,15 +365,8 @@ internal fun showsAssistantTurnHeader(
     showsResponseSpeed: Boolean = false,
     hasResponseSpeed: Boolean = false,
 ): Boolean =
-    (isEnabled || (showsResponseSpeed && hasResponseSpeed)) &&
-        role == "assistant" &&
-        hasTextContent
+    (isEnabled || (showsResponseSpeed && hasResponseSpeed)) && role == "assistant" && hasTextContent
 
-/**
- * Port of `AssistantTurnTimestampFormatter`: unix `timestamp` → short,
- * locale-/24h-aware time (`2:14 PM` / `14:14`). Null for missing or
- * non-finite timestamps so the header falls back to glyph-only.
- */
 object AssistantTurnTimestampFormatter {
     fun shortTime(
         timestamp: Double?,
@@ -349,7 +380,6 @@ object AssistantTurnTimestampFormatter {
     }
 }
 
-/** Port of `ResponseSpeedFormatter`: `12.3 t/s`, null for absent/non-positive rates. */
 object ResponseSpeedFormatter {
     fun compactText(tokensPerSecond: Double?, locale: Locale = Locale.getDefault()): String? {
         if (tokensPerSecond == null || !tokensPerSecond.isFinite() || tokensPerSecond <= 0) return null

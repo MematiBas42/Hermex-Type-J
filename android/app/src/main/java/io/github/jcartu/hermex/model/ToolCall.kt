@@ -15,6 +15,8 @@ private val toolCallArgumentsSerializer = MapSerializer(String.serializer(), JSO
 /** A live or completed tool invocation shown in the chat transcript. */
 data class ToolCall(
     val id: String = "live-tool-${uuidString()}",
+    /** Stable disclosure identity when a generated id is replaced by the server id. */
+    val presentationID: String = id,
     var name: String?,
     var preview: String?,
     var args: Map<String, JSONValue>?,
@@ -34,6 +36,9 @@ data class PersistedToolCall(
     val tid: String? = null,
     val assistantMsgIdx: Int? = null,
     val args: Map<String, JSONValue>? = null,
+    /** Server verdict when persisted transcripts include it; null on older rows. */
+    val isError: Boolean? = null,
+    val duration: Double? = null,
 ) {
     fun toolCall(fallbackIndex: Int): ToolCall {
         val id = tid?.trim()?.takeIf { it.isNotEmpty() }
@@ -44,6 +49,8 @@ data class PersistedToolCall(
             name = name,
             preview = snippet,
             args = args,
+            duration = duration,
+            isError = isError,
             isCompleted = true,
         )
     }
@@ -58,6 +65,8 @@ internal object PersistedToolCallSerializer :
             snippet = obj.lossyString("snippet"),
             tid = obj.lossyString("tid"),
             assistantMsgIdx = obj.lossyInt("assistant_msg_idx", "assistantMsgIdx"),
+            isError = obj.lossyBool("is_error", "isError"),
+            duration = obj.lossyDouble("duration"),
             args = obj.presentElement("args")?.let { element ->
                 runCatching {
                     json.decodeFromJsonElement(toolCallArgumentsSerializer, element)
@@ -73,6 +82,8 @@ internal object PersistedToolCallSerializer :
         value.args?.let {
             put("args", json.encodeToJsonElement(toolCallArgumentsSerializer, it))
         }
+        value.isError?.let { put("is_error", JsonPrimitive(it)) }
+        value.duration?.let { put("duration", JsonPrimitive(it)) }
     }
 }
 
@@ -511,6 +522,7 @@ data class ToolCallGroup(
                     mergedToolCalls[existingIndex] = mergingToolCall(
                         mergedToolCalls[existingIndex],
                         fallbackToolCall,
+                        presentationID = fallbackToolCall.presentationID,
                     )
                 } else {
                     mergedToolCalls += fallbackToolCall
@@ -583,7 +595,11 @@ data class ToolCallGroup(
             return JSONValue.objectOf(args.toSortedMap()).compactJSONString
         }
 
-        private fun mergingToolCall(existing: ToolCall, fallback: ToolCall): ToolCall {
+        private fun mergingToolCall(
+            existing: ToolCall,
+            fallback: ToolCall,
+            presentationID: String? = null,
+        ): ToolCall {
             val id = if (isGeneratedToolID(existing.id) && !isGeneratedToolID(fallback.id)) {
                 fallback.id
             } else {
@@ -592,6 +608,7 @@ data class ToolCallGroup(
 
             return ToolCall(
                 id = id,
+                presentationID = presentationID ?: existing.presentationID,
                 name = existing.name ?: fallback.name,
                 preview = existing.preview ?: fallback.preview,
                 args = existing.args ?: fallback.args,

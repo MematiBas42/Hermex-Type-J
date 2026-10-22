@@ -35,18 +35,20 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.window.layout.FoldingFeature
 import coil.ImageLoader
 import io.github.jcartu.hermex.HermexApplication
 import io.github.jcartu.hermex.core.media.AssistantSpeaker
-import io.github.jcartu.hermex.net.SseChatStream
 import io.github.jcartu.hermex.ui.adaptive.FoldState
 import io.github.jcartu.hermex.ui.adaptive.HingeAwarePaneRow
 import io.github.jcartu.hermex.ui.adaptive.LocalFoldState
 import io.github.jcartu.hermex.service.AgentRunService
 import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
+import io.github.jcartu.hermex.ui.components.InAppBrowser
+import io.github.jcartu.hermex.ui.feature.workspace.openWorkspaceFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 /**
  * The chat surface (port of `ChatView.swift`'s composition): transcript +
@@ -71,6 +73,8 @@ import io.github.jcartu.hermex.ui.adaptive.LocalPaneCount
 fun ChatPane(
     initialSessionId: String?,
     initialNewChat: Boolean,
+    newChatProjectId: String? = null,
+    newChatProfileName: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -79,32 +83,22 @@ fun ChatPane(
     }
 
     val viewModel: ChatViewModel = viewModel(
-        factory = viewModelFactory {
-            initializer {
-                ChatViewModel(
-                    api = container.api,
-                    sse = SseChatStream(
-                        httpClient = container.okHttpClient,
-                        json = container.json,
-                        api = container.api,
-                        customHeaderProvider = { container.customHeaderStore.snapshot() },
-                    ),
-                    cacheStore = container.cacheStore,
-                    serverConfig = container.serverConfig,
-                    settings = container.settings,
-                    favorites = container.modelFavorites,
-                    recents = container.modelRecents,
-                    initialSessionId = initialSessionId,
-                    initialNewChat = initialNewChat,
-                )
-            }
-        },
+        factory = ChatViewModel.factory(
+            container = container,
+            initialSessionId = initialSessionId,
+            initialNewChat = initialNewChat,
+        ),
     )
 
     // Outside selection changes reload the transcript; switchToSession is
     // idempotent for the already-active session and preserves the draft.
-    LaunchedEffect(initialSessionId, initialNewChat) {
-        viewModel.switchToSession(initialSessionId, initialNewChat)
+    LaunchedEffect(initialSessionId, initialNewChat, newChatProjectId, newChatProfileName) {
+        viewModel.switchToSession(
+            initialSessionId,
+            initialNewChat,
+            newChatProjectId,
+            newChatProfileName,
+        )
     }
 
     val sharedImport by container.sharedImports.pending.collectAsStateWithLifecycle()
@@ -181,6 +175,7 @@ fun ChatPane(
         onDispose { assistantSpeaker.release() }
     }
     val currentSessionId = rememberUpdatedState(state.sessionId)
+    val currentWorkspacePath = rememberUpdatedState(state.selectedWorkspacePath)
     val attachmentUrlResolver: suspend (String) -> String? = remember(container) {
         { path ->
             val sessionId = currentSessionId.value
@@ -189,6 +184,44 @@ fun ChatPane(
             } else {
                 runCatching { container.api.rawFileUrl(sessionId, path).toString() }.getOrNull()
             }
+        }
+    }
+    val attachmentDataResolver: suspend (String) -> ByteArray? = remember(container) {
+        { path ->
+            val url = if (path.startsWith("http://") || path.startsWith("https://")) {
+                path
+            } else {
+                val sessionId = currentSessionId.value
+                if (sessionId.isNullOrEmpty()) null
+                else runCatching { container.api.rawFileUrl(sessionId, path).toString() }.getOrNull()
+            }
+            if (url == null) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        container.okHttpClient.newCall(
+                            Request.Builder().url(url).get().build(),
+                        ).execute().use { response ->
+                            if (response.isSuccessful) response.body.bytes() else null
+                        }
+                    }.getOrNull()
+                }
+            }
+        }
+    }
+    val onOpenWeb = remember(context) {
+        { url: String -> InAppBrowser.open(context, url) }
+    }
+    val onOpenWorkspaceFile = remember {
+        { rawPath: String ->
+            val root = currentWorkspacePath.value?.trimEnd('/')
+            val path = if (!root.isNullOrEmpty() && rawPath.startsWith("$root/")) {
+                rawPath.removePrefix("$root/")
+            } else {
+                rawPath.removePrefix("./")
+            }
+            openWorkspaceFile(path)
         }
     }
 
@@ -203,6 +236,10 @@ fun ChatPane(
                 listState = listState,
                 imageLoader = imageLoader,
                 attachmentUrlResolver = attachmentUrlResolver,
+                attachmentDataResolver = attachmentDataResolver,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                hapticsEnabled = localSettings.hapticsEnabled,
                 onListen = assistantSpeaker::speak,
             )
         } else {
@@ -212,19 +249,15 @@ fun ChatPane(
                 listState = listState,
                 imageLoader = imageLoader,
                 attachmentUrlResolver = attachmentUrlResolver,
+                attachmentDataResolver = attachmentDataResolver,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                hapticsEnabled = localSettings.hapticsEnabled,
                 onListen = assistantSpeaker::speak,
                 fold = fold,
             )
         }
 
-        state.clarificationPrompt?.let { prompt ->
-            ClarificationRequestOverlay(
-                prompt = prompt,
-                isResponding = state.isRespondingToClarification,
-                errorMessage = state.clarificationErrorMessage,
-                onSubmit = viewModel::respondToClarification,
-            )
-        }
 
         state.approvalPrompt?.let { prompt ->
             ApprovalRequestOverlay(
@@ -251,6 +284,10 @@ private fun SingleRegionChatLayout(
     listState: LazyListState,
     imageLoader: ImageLoader,
     attachmentUrlResolver: suspend (String) -> String?,
+    attachmentDataResolver: suspend (String) -> ByteArray?,
+    onOpenWeb: (String) -> Unit,
+    onOpenWorkspaceFile: (String) -> Unit,
+    hapticsEnabled: Boolean,
     onListen: (String) -> Unit,
     fold: FoldState,
 ) {
@@ -282,6 +319,12 @@ private fun SingleRegionChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                attachmentDataResolver = attachmentDataResolver,
+                workspaceRoot = state.selectedWorkspacePath,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                onAskHermex = viewModel::askAboutSelection,
+                hapticsEnabled = hapticsEnabled,
                 onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
@@ -293,6 +336,7 @@ private fun SingleRegionChatLayout(
             ComposerRegion(
                 state = state,
                 viewModel = viewModel,
+                hapticsEnabled = hapticsEnabled,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -303,6 +347,12 @@ private fun SingleRegionChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                attachmentDataResolver = attachmentDataResolver,
+                workspaceRoot = state.selectedWorkspacePath,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                onAskHermex = viewModel::askAboutSelection,
+                hapticsEnabled = hapticsEnabled,
                 onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
@@ -313,6 +363,7 @@ private fun SingleRegionChatLayout(
             ComposerRegion(
                 state = state,
                 viewModel = viewModel,
+                hapticsEnabled = hapticsEnabled,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -331,6 +382,10 @@ private fun TrifoldChatLayout(
     listState: LazyListState,
     imageLoader: ImageLoader,
     attachmentUrlResolver: suspend (String) -> String?,
+    attachmentDataResolver: suspend (String) -> ByteArray?,
+    onOpenWeb: (String) -> Unit,
+    onOpenWorkspaceFile: (String) -> Unit,
+    hapticsEnabled: Boolean,
     onListen: (String) -> Unit,
 ) {
     HingeAwarePaneRow(paneCount = 2) { index, paneModifier ->
@@ -340,6 +395,12 @@ private fun TrifoldChatLayout(
                 listState = listState,
                 attachmentUrlResolver = attachmentUrlResolver,
                 imageLoader = imageLoader,
+                attachmentDataResolver = attachmentDataResolver,
+                workspaceRoot = state.selectedWorkspacePath,
+                onOpenWeb = onOpenWeb,
+                onOpenWorkspaceFile = onOpenWorkspaceFile,
+                onAskHermex = viewModel::askAboutSelection,
+                hapticsEnabled = hapticsEnabled,
                 onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
@@ -350,6 +411,7 @@ private fun TrifoldChatLayout(
                 ComposerRegion(
                     state = state,
                     viewModel = viewModel,
+                    hapticsEnabled = hapticsEnabled,
                     // ~480dp readable width, top-aligned beside the transcript.
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -371,9 +433,21 @@ private fun TrifoldChatLayout(
 private fun ComposerRegion(
     state: ChatUiState,
     viewModel: ChatViewModel,
+    hapticsEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
+        state.clarificationPrompt?.let { prompt ->
+            ClarificationRequestOverlay(
+                prompt = prompt,
+                isResponding = state.isRespondingToClarification,
+                errorMessage = state.clarificationErrorMessage,
+                onSubmit = viewModel::respondToClarification,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
         ChatActiveRunStatusRow(
             state = state,
             onStop = viewModel::stopStream,
@@ -393,6 +467,22 @@ private fun ComposerRegion(
             state = state,
             actions = viewModel,
             modifier = Modifier.fillMaxWidth(),
+            draftTokens = state.draftTokens,
+            onDraftTokensChange = viewModel::updateDraftTokens,
+            loadFileSuggestions = viewModel::loadComposerFileSuggestions,
+            onSendMode = { choice ->
+                viewModel.send(
+                    when (choice) {
+                        ComposerSendModeChoice.QUEUE -> SendMode.QUEUE
+                        ComposerSendModeChoice.STEER -> SendMode.STEER
+                        ComposerSendModeChoice.STOP_AND_SEND -> SendMode.STOP_AND_SEND
+                    },
+                )
+            },
+            recallLastUserMessage = viewModel::recallLastUserMessage,
+            hapticsEnabled = hapticsEnabled,
+            attachmentCacheNamespace = state.serverCacheNamespace,
+            uploadAttachmentWithPreview = viewModel::uploadAttachment,
         )
     }
 }

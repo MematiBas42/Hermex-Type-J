@@ -100,8 +100,33 @@ object MarkdownMathSegmenter {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) return false
         if (SINGLE_MATH_TOKEN.matches(trimmed)) return true
+        if (looksLikeAssignment(trimmed)) return true
+        if (NUMERIC_TUPLE.matches(trimmed)) return true
         if ('\\' in trimmed || '^' in trimmed || '_' in trimmed) return true
         return BINARY_MATH_EXPRESSION.containsMatchIn(trimmed)
+    }
+
+    /**
+     * Grouped right-hand sides such as `E=[4,-2]` are math even though the
+     * operator regex cannot see an alphanumeric token immediately after `=`.
+     */
+    private fun looksLikeAssignment(value: String): Boolean {
+        val separator = value.indexOf('=')
+        if (separator <= 0 || separator != value.lastIndexOf('=')) return false
+        val lhs = value.substring(0, separator).trim()
+        if (!SINGLE_MATH_TOKEN.matches(lhs)) return false
+        val rhs = value.substring(separator + 1).trim()
+        if (rhs.isEmpty() || rhs.any { !it.isLetterOrDigit() && it !in ASSIGNMENT_CHARACTERS }) return false
+        val stack = ArrayDeque<Char>()
+        for (character in rhs) {
+            when (character) {
+                '[', '(', '{' -> stack.addLast(character)
+                ']' -> if (stack.removeLastOrNull() != '[') return false
+                ')' -> if (stack.removeLastOrNull() != '(') return false
+                '}' -> if (stack.removeLastOrNull() != '{') return false
+            }
+        }
+        return stack.isEmpty() && rhs.any { it.isDigit() || it in "\\_^,+-*/<>|" }
     }
 
     private fun displayOpening(
@@ -261,6 +286,10 @@ object MarkdownMathSegmenter {
 
     private val SINGLE_MATH_TOKEN = Regex("^[A-Za-z](?:_[A-Za-z0-9]+|\\^[A-Za-z0-9]+)?$")
     private val BINARY_MATH_EXPRESSION = Regex("[A-Za-z0-9]\\s*[=<>+\\-*/|]\\s*[A-Za-z0-9]")
+    private val NUMERIC_TUPLE =
+        Regex("^\\(\\s*[+-]?\\d+(?:\\.\\d+)?(?:\\s*,\\s*[+-]?\\d+(?:\\.\\d+)?)+\\s*\\)$")
+    private val ASSIGNMENT_CHARACTERS: Set<Char> =
+        ("\\_^,+-*/.=<>|[](){}" + " \t\r\n").toSet()
     private val ENVIRONMENT_NAME = Regex("[A-Za-z]+\\*?")
 }
 

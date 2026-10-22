@@ -110,13 +110,17 @@ object TurnFileChangeAggregator {
      * @param toolCalls the turn's tool calls (live during streaming, or the archived group).
      * @param status the latest `git/status`, joined for line counts and chips (`null` ok).
      */
-    fun summarize(toolCalls: List<ToolCall>, status: GitStatus?): TurnFileChangeSummary {
+    fun summarize(
+        toolCalls: List<ToolCall>,
+        status: GitStatus?,
+        rowPath: (String) -> String = { it },
+    ): TurnFileChangeSummary {
         val orderedPaths = mutableListOf<String>()
         val actionByPath = HashMap<String, TurnFileChange.Action>()
 
         for (toolCall in toolCalls) {
             for (candidate in candidates(toolCall)) {
-                val path = normalize(candidate.path) ?: continue
+                val path = normalize(candidate.path)?.let(rowPath) ?: continue
 
                 val existing = actionByPath[path]
                 if (existing != null) {
