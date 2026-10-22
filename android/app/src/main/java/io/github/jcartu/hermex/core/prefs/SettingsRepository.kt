@@ -106,7 +106,7 @@ class SettingsRepository(
 
     data class Settings(
         val palette: Palette = Palette.DEFAULT,
-        val theme: Theme = Theme.SYSTEM,
+        val theme: Theme = Theme.DARK,
         /** Accent hex; when the user has never picked one it is the palette's own accent. */
         val headerLogoColorHex: String = Palette.DEFAULT.defaultAccentHex,
         val hapticsEnabled: Boolean = true,
@@ -170,7 +170,7 @@ class SettingsRepository(
         val palette = Palette.fromName(prefs[paletteKey])
         Settings(
             palette = palette,
-            theme = prefs[themeKey]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.SYSTEM,
+            theme = prefs[themeKey]?.let { runCatching { Theme.valueOf(it) }.getOrNull() } ?: Theme.DARK,
             headerLogoColorHex = prefs[headerLogoColorKey] ?: palette.defaultAccentHex,
             hapticsEnabled = prefs[hapticsEnabledKey] ?: true,
             backgroundRunNotificationsEnabled = prefs[backgroundRunNotificationsKey] ?: false,

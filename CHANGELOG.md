@@ -1,11 +1,56 @@
 # Changelog
 
-Notable changes to Hermex. Version headings correspond to App Store releases;
-unreleased changes accumulate at the top. Format follows
-[Keep a Changelog](https://keepachangelog.com/) with Added / Changed / Fixed /
-Security sections per release.
+Release notes for the Hermex-Type-J Android fork and the retained upstream
+Hermex iOS history. Android and upstream version numbers are independent.
+Entries use Added / Changed / Fixed / Security sections.
 
-## [2.0.0] - 2026-08-17
+## [Type-J 3.0.0] - Unreleased
+
+### Added
+- Tokyo Night is the default palette, with Day/Night variants, Tokyo accent
+  presets, and the previous Classic palette still available.
+- Multiple saved servers with encrypted credentials and isolated identities,
+  custom headers, cached sessions, drafts, model favorites, and recent models.
+- Direct Hermes transport plus Tasks, live Kanban, Skills, editable Memory and
+  soul, Usage/provider limits, Files, Git, and Profile-bound host speech.
+- Updated chat transcript and composer: compact activity rows, folded turns,
+  file-edit diffs, word-boundary streaming, selection-to-question, file/skill
+  chips, per-message Queue/Steer/Stop-and-send, and hardware-keyboard recall.
+- Task agenda and run history, lazy workspace trees and source previews,
+  document previews, all-file Git review, and a Usage chart with provider limits.
+- Session unread marks, approval/input/working states, multi-word search,
+  undo archive, hardware-keyboard navigation, and selected Profile/project
+  propagation when starting chats.
+- Settings index and per-server pages, optional device-authentication app lock,
+  in-app web-link viewer, and per-kind local run notifications.
+
+### Fixed
+- Partial WebUI streams retain reasoning, tool state, and replay cursors across
+  process recreation. Shared imports commit text and attachment copies together.
+- Failed steering keeps the active run and draft. Compression-continuation
+  recovery preserves rejected input across navigation and Profile mismatches.
+- Pending approvals survive stream transitions; restored and shared documents
+  regenerate their thumbnails. Notifications retain their owning server/session.
+- Android-only startup crash caused by JVM-only Unicode regex flags.
+- Chat Markdown uses readable heading sizes and renders formatting inside tables;
+  Hermes context-only warning footers no longer leak into user messages.
+
+### Security
+- Credential-bearing HTTP redirects are refused before crossing origins;
+  WebSocket upgrades cannot redirect proxy secrets or authentication tickets.
+- Direct-Hermes transport does not automatically replay mutations after a lost
+  response, and queued authentication failures cannot sign out a replacement
+  connection. Browser-origin headers are rejected from custom-header settings.
+
+### Compatibility
+- Package ID remains `io.github.jcartu.hermex`; existing installations migrate
+  their saved WebUI server without losing its credentials or cached data.
+- The upstream source history is merged through the October 22, 2026 snapshot,
+  including released 1.6–1.9 changes and the upstream 2.0 development line.
+- iOS APNs remote push and Live Activities are not Android features; Type-J
+  uses native foreground monitoring, local notifications, sharing, and shortcuts.
+
+## [Type-J 2.0.0] - 2026-08-17
 
 ### Added
 - Renamed the Android fork to **Hermex-Type-J** (`jcartu/Hermex-Type-J`,
@@ -27,9 +72,6 @@ Security sections per release.
   cross-origin redirect stripping, and Keystore encryption at rest.
 - Voice notes (native AAC recorder) with server transcription, and assistant
   Listen via server TTS with Android TextToSpeech fallback.
-- Direct Hermes-host Skills, Memory/soul editing, Usage and provider limits,
-  workspace Files, Git review/writes, Profile voice playback, and host STT,
-  while legacy webui routes remain available.
 - Deterministic fuzz/property tests (hinge geometry, dynamic path encoding,
   deep-link parsing, tolerant decoding, speech normalization, stream reducers).
 
@@ -66,7 +108,7 @@ Security sections per release.
   and real dark-mode captures for cover, phone, tablet, fold, half-fold, and
   trifold layouts.
 
-## [2.0.0] - Unreleased
+## [Upstream 2.0.0] - Unreleased
 
 Hermex now talks to Hermes directly ([#713]). Add a Hermes host as a server and
 chats, Sessions, Tasks, Kanban, Skills, Memory, Usage, Files and Git all run
@@ -164,16 +206,6 @@ working and get fixes, and new features go to Hermes.
 - An approval answer the host can't confirm keeps the card answerable with a
   warning, and an approval with malformed choices offers only Deny. ([#1103],
   [#1104])
-- Android: live webui streams retain their partial reply, reasoning, tool cards
-  and replay cursor across process recreation. Shared imports commit text and
-  attachment copies together; restored/shared documents regenerate composer
-  thumbnails. Rejected compression continuations preserve their original draft
-  across navigation, cancellation and Profile mismatches.
-- Android: local run alerts have separate reply, approval, question and failure
-  channels, respect each Notifications toggle, and carry the owning server and
-  session on tap. Approvals use a high-importance channel; stopped runs stay
-  silent. The first accepted run claims the one-time permission offer, and
-  Send Test Notification uses the production reply channel.
 
 [#713]: https://github.com/uzairansaruzi/hermex/issues/713
 [#1020]: https://github.com/uzairansaruzi/hermex/pull/1020

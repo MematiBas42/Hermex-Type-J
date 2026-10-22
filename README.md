@@ -5,13 +5,12 @@
 # Hermex-Type-J
 
 **A native Android control plane for your self-hosted Hermes agent.**<br />
-Built for phones, tablets, foldables, and the Samsung Galaxy Trifold.
+Built for phones, tablets, foldables, and the Samsung Galaxy Trifold. Tokyo Night by default.
 
 [![Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml/badge.svg)](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml)
 [![Android 8+](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)](android/README.md)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](android/README.md)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack-Compose-4285F4?logo=jetpackcompose&logoColor=white)](android/README.md)
-[![Tests](https://img.shields.io/badge/tests-538%20passing-34C759)](#verification)
 [![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
 [Android guide](android/README.md) · [Upstream iOS project](https://github.com/uzairansaruzi/hermex) · [Hermes WebUI](https://github.com/nesquena/hermes-webui) · [Type-J issues](https://github.com/jcartu/Hermex-Type-J/issues)
@@ -22,11 +21,11 @@ Built for phones, tablets, foldables, and the Samsung Galaxy Trifold.
 
 ## What this is
 
-Hermex-Type-J is a **native Kotlin + Jetpack Compose client** for a
-self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server.
-It lets you start work, watch an agent run, steer it, approve actions, inspect
-files, manage scheduled jobs, and recover context without sitting at the
-machine hosting the agent.
+Hermex-Type-J is a **native Kotlin + Jetpack Compose client** for a self-hosted
+[Hermes](https://github.com/NousResearch/hermes-agent) host, with continuing
+support for legacy [hermes-webui](https://github.com/nesquena/hermes-webui) servers.
+Start work, follow a run, steer it, answer requests, inspect files, manage jobs,
+and recover context without sitting at the machine hosting the agent.
 
 The server remains the compute plane. The Android device is the control,
 review, and continuity surface.
@@ -38,32 +37,32 @@ This is deliberately not:
 - a copy of the Hermes Python runtime inside Android;
 - a phone-only layout stretched across a tablet.
 
-The app talks directly to the server you configure over REST and Server-Sent
-Events. There is no analytics SDK, ad SDK, third-party relay, or subscription.
+The app talks directly to your configured servers over REST and WebSocket RPC
+(Hermes) or Server-Sent Events (WebUI). There is no analytics SDK, ad SDK,
+third-party relay, or subscription.
 
 ## What this fork adds over upstream Hermex
 
-Upstream [Hermex](https://github.com/uzairansaruzi/hermex) is an iPhone app.
-Same server, same wire contract — but Type-J is a substantially bigger client:
+Upstream [Hermex](https://github.com/uzairansaruzi/hermex) supplies the iOS
+application and behavioral reference. Type-J brings those workflows to native
+Android while preserving its hinge-aware layouts and platform integrations.
 
-| | Upstream Hermex (iOS) | **Hermex-Type-J (Android)** |
+| Surface | Upstream Hermex | Hermex-Type-J |
 |---|---|---|
-| Platform | SwiftUI, iPhone | Kotlin + Compose, **phones / tablets / foldables / trifold** |
-| Layout | Single-column portrait/landscape | **Hinge-aware 1/2/3-pane with state continuity** across every posture change |
-| Kanban boards | — | **Boards, cards, comments, dependencies, bulk actions, dispatcher, worker logs, live events** |
-| Git workspaces | — | **Status, branches, diffs, stage/commit, guarded remotes, generated commit messages** |
-| Share target | iOS share extension | **Durable ACTION_SEND inbox — survives process death; text + up to 10 files** |
-| Deep links | `hermes-agent://` | **`hermex-type-j://` + legacy, launcher shortcuts, notification intents, onboarding-safe** |
-| Background runs | Background URLSession | **Foreground service with private progress/completion notifications + cancel action** |
-| Proxy headers | Static list | **Keystore-encrypted, per-origin, validated editor, redirect-safe** |
-| Voice | Dictation + TTS | **Dictation + native voice notes with server transcription + assistant Listen (server TTS, device fallback)** |
-| Quality gates | XCTest suite | **608 tests across 63 suites incl. Robolectric + deterministic fuzz · Android Lint 0 · Kotlin LSP clean · 2,500-event monkey 0 crashes** |
-| Distribution | App Store / TestFlight | **Source build, signed local APK, CI artifact on every push** |
+| Platform | SwiftUI on iOS | Kotlin + Compose on Android 8+ |
+| Layout | Native iOS layouts | Hinge-aware one/two/three-pane layouts |
+| Servers | Hermes hosts and legacy WebUI | Both kinds, with isolated credentials and local state |
+| Kanban and Git | Native board and workspace tools | Adaptive boards, all-file review, and confirmed mutations |
+| Sharing and links | Share extension and App Intents | Durable ACTION_SEND inbox, deep links, launcher shortcuts |
+| Run updates | Live Activities and optional APNs relay | Foreground monitoring and private local notifications |
+| Proxy credentials | Server-scoped custom headers | Keystore-encrypted, per-origin, redirect-safe headers |
+| Voice | Host speech and device dictation | Host speech/transcription, native recording, Android TTS fallback |
+| Appearance | Upstream themes | Tokyo Night by default; Classic and explicit Light/System options |
+| Distribution | App Store / TestFlight | Source build, signed local APK, unsigned Android CI artifact |
 
-Everything the iOS app does — streaming chat with reasoning and tools, stop and
-steer, approvals, sessions and projects, models and profiles, tasks, skills,
-files, memory, insights, settings, offline cache — is here too, tested against
-the same pinned server contract ([`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA)).
+The upstream history is retained, including the 1.6–1.9 releases and the
+October 22, 2026 upstream 2.0 development snapshot. Platform-specific differences
+are described below rather than presented as blanket feature parity.
 
 ## Why this fork exists
 
@@ -72,8 +71,8 @@ are the foundation of this repository. But Android needed more than a
 mechanical port: foldables and large screens change how an agent client should
 work — the session list stays visible, the transcript keeps its place, the
 composer doesn't cover the work, and a third panel carries real context instead
-of empty padding. And Android's platform services (share sheet, deep links,
-foreground services, Keystore) allow capabilities no iOS build can offer.
+of empty padding. Android's share intents, foreground services, shortcuts, and
+Keystore provide native equivalents for the corresponding iOS integrations.
 
 This fork keeps the original iOS project intact in `HermesMobile/` and adds a
 separate native `android/` application:
@@ -82,8 +81,8 @@ separate native `android/` application:
    Android Keystore, DataStore, predictive back, proper lifecycle handling.
 2. **First-class adaptive layouts.** Compact cover displays, phones, tablets,
    dual-fold and triple-fold devices each get a layout shaped for their space.
-3. **Operational parity — and then beyond.** Every iOS surface works, plus
-   Kanban, Git, sharing, notifications, and voice features listed above.
+3. **Current upstream workflows.** Chat, sessions, Tasks, Kanban, Files, Git,
+   Skills, Memory, and Usage retain native controls rather than embedding WebUI.
 4. **Upstream-compatible wire behavior.** Tolerant decoding of the same models;
    no invented server APIs.
 
@@ -130,33 +129,35 @@ system falls back to measured window width.
 - Kotlin 2.4 and Jetpack Compose with Material 3 Adaptive behavior
 - Android 8 / API 26 minimum; target and compile SDK 37
 - edge-to-edge system UI, predictive back, resizable activity, and multi-window
-- Android Keystore encryption for the saved server password
-- persistent cookie jar for hermes-webui authentication
+- Android Keystore encryption for server registries, passwords, OAuth refresh tokens, and custom headers
+- isolated authentication and local state for multiple saved servers
 - DataStore-backed settings, model favorites, and recents
 - file-backed offline session and transcript cache
 - tolerant `kotlinx.serialization` models matching the iOS wire behavior
-- OkHttp REST client plus a native SSE stream client
-- no WebView and no embedded browser runtime
+- OkHttp REST, WebSocket RPC, and replay-aware SSE clients
+- native app screens; a sandboxed in-app web viewer only for ordinary external links
 
 ### Chat and run control
 
-- token-by-token streaming with replay-aware reconnect
-- reasoning blocks, tool calls, tool results, status, title, and metering events
-- markdown, code blocks, copy actions, and monospace math fallback
-- stop and steer while a run is active
-- approval and clarification sheets with expiry handling
+- word-boundary streaming with replay-aware reconnect and offline waiting
+- compact reasoning/tool activity and folded completed turns with elapsed time
+- Markdown, file-edit diffs, copy actions, media previews, and math fallback
+- stop, steer, queue, or stop-and-send while a run is active
+- answerable approval/question cards with confirmed-clear and reconnect handling
 - optimistic sending with rollback when a request fails
 - active-run status and context-window indicator
 - transcript pagination and offline cache fallback
 - response speed, timestamps, RTL chat layout, code wrapping, and card display settings
+- durable composer drafts and partial-stream snapshots across process recreation
+- selection-to-question and keyboard recall of the last user message
 
 ### Composer
 
 - model picker grouped by provider
 - model favorites and recent selections
-- reasoning effort and reasoning visibility
-- profile switching and workspace selection
-- slash-command autocomplete from local, server, and skill commands
+- session-scoped reasoning effort and a combined model/effort control
+- Profile and working-folder selection
+- caret-aware slash/skill autocomplete and workspace-file chips
 - persistent goal controls
 - Android document picker with multiple file types
 - camera capture through the native activity-result API
@@ -166,8 +167,8 @@ system falls back to measured window width.
 
 ### Sessions and projects
 
-- local title/model/workspace search plus debounced server content search
-- pinned, recent, scheduled, archived, CLI-imported, and delegated-session visibility
+- order-independent multi-word search plus server-side content excerpts
+- pinned, unread, scheduled, archived, and active-session state indicators
 - rename, pin, archive, restore, duplicate/branch, move, delete, and export
 - project create, rename, delete, color, filtering, and session counts
 - swipe actions on compact screens and contextual actions on larger screens
@@ -175,7 +176,7 @@ system falls back to measured window width.
 
 ### Tasks and skills
 
-- scheduled task list, detail, status, timing, delivery, model/profile metadata, and output
+- task agenda with filters, recent runs, per-task history, and output
 - create, edit, run now, pause, resume, and delete cron jobs
 - delivery options, toast behavior, validation, and server-rejection handling
 - skill grouping, search, tags, enable/disable, markdown content, and linked files
@@ -195,9 +196,10 @@ system falls back to measured window width.
 - session-scoped workspace status, branch, ahead/behind, and conflict badges
 - per-file staged/unstaged unified diffs with binary and size-cap handling
 - stage, unstage, and explicitly confirmed discard
-- fetch, pull, push, checkout, and stash-checkout with dirty-guard semantics
+- fetch, pull, push and checkout with dirty-tree guards; WebUI retains stash-checkout
 - generated commit messages and staged or selected-path commits
 - no force-push and no unconfirmed destructive action anywhere
+- Hermes fetch/pull/new-branch actions appear only when companion capabilities permit them
 
 ### Android platform integration
 
@@ -220,19 +222,19 @@ system falls back to measured window width.
 - assistant **Listen** action: server neural TTS for ≤5,000 characters with
   silent Android TextToSpeech fallback and markdown-safe text normalization
 
-### Files, memory, and insights
+### Files, memory, and Usage
 
-- workspace roots, breadcrumbs, directory navigation, search, and back stack
-- text/markdown preview, line numbers, wrapping, copy, image loading, and binary detection
-- cookie-authenticated raw file previews through the shared OkHttp client
-- memory, user profile, agent soul, and project-context sections
-- usage timeframes, token totals, estimated cost, daily usage chart, model share, and top sessions
+- lazy workspace trees, file-type icons, folder navigation, and source highlighting
+- Markdown/image previews, line numbers, wrapping, copy/share, and PDF viewing
+- authenticated, bounded file downloads; document previews up to 25 MB
+- memory and soul editing on Hermes; existing read-only WebUI panels remain available
+- usage windows, token/cost totals, model breakdowns, top sessions, and provider limits
 
 ### Settings and onboarding
 
 - connection test, health probe, auth-status detection, password and passwordless servers
 - Tailscale-focused setup guidance
-- system/light/dark theme and selectable accent colors
+- Tokyo Night dark by default, explicit System/Light/Dark modes, and selectable accents
 - chat, haptics, section visibility, default model/profile, providers, server info, and logout
 - one shared authentication state machine across shell, onboarding, and settings
 
@@ -319,7 +321,7 @@ application against a disposable local hermes-webui-compatible fixture.
 | Skills | Browse, search, render, linked files, enable/disable |
 | Files | Workspace roots, directories, text/markdown/image previews |
 | Memory | Memory, user, soul, and project context |
-| Insights | Tokens, cost, timeframes, models, daily chart, top sessions |
+| Usage | Tokens, cost, timeframes, models, daily chart, top sessions, provider limits |
 | Settings | Appearance, chat behavior, providers, defaults, visibility, logout |
 | Offline | Cached session list and transcripts with connectivity-aware fallback |
 | Foldables | Width + hinge-aware one/two/three-pane layouts and state continuity |
@@ -328,12 +330,13 @@ application against a disposable local hermes-webui-compatible fixture.
 
 ```mermaid
 flowchart LR
-    A[Hermex-Type-J<br/>Compose UI] -->|HTTPS REST| B[hermes-webui]
-    B -->|Server-Sent Events| A
+    A[Hermex-Type-J<br/>Compose UI] <-->|REST + WebSocket RPC| H[Hermes host]
+    A <-->|REST + SSE| B[Legacy hermes-webui]
     B --> C[Hermes agent + tools]
-    A --> D[Android Keystore<br/>encrypted password]
-    A --> E[DataStore<br/>settings + selections]
-    A --> F[JSON cache<br/>sessions + transcript]
+    H --> C
+    A --> D[Android Keystore<br/>server credentials]
+    A --> E[DataStore<br/>server-scoped settings]
+    A --> F[JSON cache<br/>sessions + drafts + replay]
     G[WindowManager<br/>fold + hinge state] --> A
 ```
 
@@ -344,9 +347,9 @@ from Compose UI.
 ```text
 android/app/src/main/java/io/github/jcartu/hermex/
 ├── core/          # crypto, prefs, cookies, logging
-├── data/          # offline cache
+├── data/          # server-scoped cache, drafts, and stream snapshots
 ├── model/         # tolerant server models
-├── net/           # endpoints, REST, SSE, errors
+├── net/           # WebUI REST/SSE plus Hermes REST/RPC
 ├── ui/adaptive/   # fold state and hinge-aligned panes
 └── ui/feature/    # chat, sessions, tasks, skills, files, memory, insights…
 ```
@@ -354,8 +357,8 @@ android/app/src/main/java/io/github/jcartu/hermex/
 ## Privacy and security
 
 - The app connects only to the server URL you enter.
-- The server password is encrypted by a key held in Android Keystore.
-- Session cookies persist locally; logout clears the local session.
+- Passwords, saved Hermes sign-in records, and registry data are encrypted with Android Keystore.
+- Authentication, headers, cache, drafts, and selections stay with their owning server.
 - Native requests deliberately omit browser `Origin` and `Referer` headers,
   matching hermes-webui's supported non-browser CSRF path.
 - Unknown JSON fields are ignored; malformed optional fields degrade instead of
@@ -370,11 +373,13 @@ recommended transport.
 
 ## Getting started
 
-### 1. Run hermes-webui
+### 1. Run a Hermes host or legacy WebUI
 
-Install and start [hermes-webui](https://github.com/nesquena/hermes-webui) on a
-machine you control. Configure a strong `HERMES_WEBUI_PASSWORD` whenever the
-server is reachable beyond loopback.
+Run [Hermes](https://github.com/NousResearch/hermes-agent)'s dashboard on your
+own machine. Configure its supported sign-in provider, persistent signing secret,
+and public URL as described in [`DEVELOPMENT.md`](DEVELOPMENT.md#hermes-host-setup).
+Legacy [hermes-webui](https://github.com/nesquena/hermes-webui) remains supported;
+set a strong `HERMES_WEBUI_PASSWORD` when exposing it beyond loopback.
 
 ### 2. Make it reachable
 
@@ -404,32 +409,35 @@ Signing credentials live in a gitignored `android/keystore.properties`; see
 
 ## Verification
 
-The Android delivery is checked at three levels:
+The Android gates are reproducible; use the current CI run rather than a
+hardcoded test count from a previous release.
 
-| Gate | Evidence |
+| Gate | Check |
 |---|---|
-| JVM behavior | 608 unit, contract, fuzz, and framework tests across 63 suites |
-| Static analysis | Android Lint: 0 issues; JetBrains Kotlin LSP: 0 diagnostics |
-| Release | `assembleRelease` succeeds; local APK verified with Signature Scheme v2 |
-| Surface | Android 16 Pixel Fold emulator: CLOSED, HALF_OPENED, OPENED, standard phone/tablet widths, simulated 3600×2208 trifold, and 1.3× font scale |
-| Abuse | 2,500-event UI monkey sweep with zero crashes/ANRs; deterministic fuzz invariants for hinge geometry, path encoding, deep links, tolerant decoding, and stream reducers |
-| Native flows | Auth restore, session continuity, share target, deep links, notifications, document picker, Kanban, Git, task detail/output, file preview, memory/insights/settings |
-| Cloud | [Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml) runs tests and uploads an unsigned release APK |
+| Behavior | JVM regression suite for models, protocols, state transitions, drafts, and recovery |
+| Static analysis | Android Lint on the integrated build |
+| Packaging | Debug/release builds; verify a locally signed APK before distribution |
+| Native surfaces | Emulator sign-in, sessions, settings, sharing, and folded/unfolded continuity |
+| Cloud | [Android CI](https://github.com/jcartu/Hermex-Type-J/actions/workflows/android-ci.yml) runs tests and uploads an unsigned APK |
+
+JVM and Robolectric tests do not replace on-device checks: Android's runtime
+and rendering behavior differ from the host JVM. Never treat a past monkey
+run or an upstream iOS result as verification of the current Android build.
 
 Run the same local gate:
 
 ```bash
 cd android
-./gradlew testDebugUnitTest assembleRelease
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
 ```
 
 ## Current scope boundaries
 
-The Android app does not currently port an Android share-extension process
-model beyond the share target described above, push notifications via a remote
-relay, TTS engine voice pickers, or iOS-specific Live Activities and App
-Intents. They are intentionally omitted, not represented by non-functional
-placeholders.
+The upstream notification relay currently targets APNs, not Android. Type-J's
+local run notifications and foreground monitoring are not remote push delivery
+while the app is stopped. iOS Live Activities/App Intents map to Android ongoing
+notifications and shortcuts; general documents use Android viewers rather than
+Quick Look. A separate TTS-engine voice picker is not provided.
 
 ## Upstream and attribution
 
@@ -443,7 +451,8 @@ this Android work possible.
 - Upstream iOS app: [App Store](https://apps.apple.com/app/hermex/id6767006319)
 - Upstream contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Android implementation guide: [`android/README.md`](android/README.md)
-- Tested server pin: [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA)
+- WebUI compatibility pin: [`UPSTREAM_TESTED_SHA`](UPSTREAM_TESTED_SHA)
+- Hermes compatibility pin: [`HERMES_AGENT_TESTED_SHA`](HERMES_AGENT_TESTED_SHA)
 
 Android-specific issues and pull requests belong in this fork. Changes to the
 iOS product should be proposed upstream.
@@ -463,6 +472,11 @@ Hermex is funded by its members. Thank you.
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+Tokyo Night colors follow [enkia's Tokyo Night](https://github.com/enkia/tokyo-night-vscode-theme)
+and [folke's Tokyonight](https://github.com/folke/tokyonight.nvim). Upstream's
+workspace file icons are from Pierre's `@pierre/trees` (Apache-2.0) with additions
+from T3 Code (MIT); Type-J uses Android vector counterparts and the same type mapping.
 
 Hermex is an independent client and is not affiliated with the upstream
 hermes-webui project. Apple, the Apple logo, and App Store are trademarks of

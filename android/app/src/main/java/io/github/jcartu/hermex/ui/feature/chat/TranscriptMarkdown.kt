@@ -32,6 +32,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -314,17 +317,22 @@ private fun MarkdownTableView(table: MarkdownTableSegment.Table) {
     ) {
         Column {
             (listOf(table.header) + table.rows).forEachIndexed { rowIndex, row ->
-                Row {
+                val rowColor = if (rowIndex == 0) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+                val borderColor = MaterialTheme.colorScheme.outline
+                Row(
+                    modifier = Modifier.drawWithContent {
+                        drawRect(rowColor)
+                        drawContent()
+                        val strokeWidth = 0.75.dp.toPx()
+                        drawRect(borderColor, style = Stroke(strokeWidth))
+                        for (column in 1 until columnCount) {
+                            val x = column * 160.dp.toPx()
+                            drawLine(borderColor, Offset(x, 0f), Offset(x, size.height), strokeWidth)
+                        }
+                    },
+                ) {
                     repeat(columnCount) { column ->
-                        Surface(
-                            modifier = Modifier.width(160.dp),
-                            color = if (rowIndex == 0) {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.surface
-                            },
-                            border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outline),
-                        ) {
+                        Box(Modifier.width(160.dp)) {
                             val cellStyle = MaterialTheme.typography.bodySmall.copy(
                                 fontWeight = if (rowIndex == 0) FontWeight.SemiBold else FontWeight.Normal,
                             )
@@ -345,7 +353,6 @@ private fun MarkdownTableView(table: MarkdownTableSegment.Table) {
         }
     }
 }
-
 
 private fun isWebUri(value: String): Boolean {
     val scheme = runCatching { Uri.parse(value).scheme?.lowercase(Locale.ROOT) }.getOrNull()

@@ -371,7 +371,7 @@ private enum class MoreEntry(val label: String, val icon: ImageVector) {
     SKILLS("Skills", Icons.Filled.Bolt),
     GIT("Git", Icons.Filled.Source),
     MEMORY("Memory", Icons.Filled.Psychology),
-    INSIGHTS("Insights", Icons.Filled.Insights),
+    INSIGHTS("Usage", Icons.Filled.Insights),
     SETTINGS("Settings", Icons.Filled.Settings),
 }
 

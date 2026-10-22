@@ -33,7 +33,7 @@ fallbacks keep the same behavior on tablets and emulators that report no hinge.
 - Android SDK platform 37
 - Android build-tools (36.0.0 or newer works with the current project)
 - `adb` for device installation
-- a reachable hermes-webui server for real use
+- a reachable Hermes dashboard (0.21.3 or newer) or legacy hermes-webui server
 
 The checked-in Gradle wrapper pins Gradle 9.7.0. The version catalog pins AGP,
 Kotlin, Compose, OkHttp, serialization, and the remaining dependencies.
@@ -101,15 +101,23 @@ APKs, Gradle output, IDE metadata, and local SDK state.
 
 Hermex is a client; it does not embed the Hermes Python runtime.
 
-1. Start [hermes-webui](https://github.com/nesquena/hermes-webui).
-2. Set `HERMES_WEBUI_PASSWORD` whenever the host is not loopback-only.
-3. Expose it over HTTPS with Tailscale Serve, Cloudflare Tunnel, or a reverse
-   proxy.
-4. Open Hermex, enter the exact base URL, test the connection, and connect.
+1. Run a [Hermes](https://github.com/NousResearch/hermes-agent) dashboard, or
+   keep your existing [hermes-webui](https://github.com/nesquena/hermes-webui).
+2. Configure the server's sign-in provider and expose it over HTTPS through
+   Tailscale Serve, Cloudflare Tunnel, or a reverse proxy.
+3. Enter the exact URL in the app. The connect form detects a Hermes host and
+   offers its password, browser-PKCE, or open-dashboard connection flow;
+   non-Hermes servers follow the existing WebUI flow.
+4. Add and switch servers in Settings. Credentials, headers, cached sessions,
+   drafts, and model history remain scoped to the selected server.
 
-Passwordless servers are supported when `/api/auth/status` reports auth
-disabled. Passkey-only servers are detected and rejected with a clear message
-because this client does not implement the browser passkey ceremony.
+For Hermes authentication and persistent signing secrets, see
+[`DEVELOPMENT.md`](../DEVELOPMENT.md#hermes-host-setup). A reachable dashboard
+with no sign-in displays an explicit access warning. Passwordless WebUI is
+accepted only when its auth-status endpoint reports authentication disabled.
+
+Tokyo Night dark is the default appearance. Settings → Appearance offers
+Classic, Light, and System alternatives without overwriting saved choices.
 
 Plain HTTP is permitted for trusted LAN/emulator development. Prefer HTTPS for
 anything routed beyond that boundary.
@@ -129,15 +137,17 @@ app/src/main/java/io/github/jcartu/hermex/
 │   ├── media/                       # voice notes + assistant TTS
 │   ├── navigation/                  # durable deep-link inbox
 │   ├── net/                         # persistent cookie jar
-│   ├── prefs/                       # settings/config + encrypted headers
+│   ├── prefs/                       # server registry, encrypted records, settings
 │   └── share/                       # durable ACTION_SEND inbox
 ├── data/
-│   └── CacheStore.kt                # file-backed offline cache
+│   ├── CacheStore.kt                # server-scoped offline cache
+│   └── ChatDraftStore.kt            # durable drafts and retained attachments
 ├── model/                           # tolerant server contract models
 ├── net/
-│   ├── Endpoints.kt                 # every route incl. Kanban/Git/voice
-│   ├── HermesApi.kt                 # OkHttp REST client
-│   └── SseChatStream.kt             # native SSE stream
+│   ├── Endpoints.kt                 # legacy WebUI routes + feature extensions
+│   ├── HermesApi.kt                 # legacy WebUI REST client
+│   ├── SseChatStream.kt             # WebUI SSE with replay cursor
+│   └── hermes/                     # Hermes REST, sign-in, shared gateway RPC
 └── ui/
     ├── adaptive/                    # fold state + hinge geometry
     ├── components/
@@ -162,6 +172,9 @@ single instance of:
 - `SettingsRepository`
 - `ModelFavoritesStore` and `ModelRecentsStore`
 - `CacheStore`
+- `HermesConnections` and the encrypted `BotConnectionRecordStore`
+- `ServerRegistry`, `ServerCredentialStore`, and server identity defaults
+- `ChatDraftStore` and durable live-stream snapshots
 
 Keeping these process-wide prevents split auth state, duplicate DataStores, or
 feature-specific caches.
@@ -196,31 +209,39 @@ Files    workspaces | directory contents | file preview
 
 ## Networking contract
 
-The Android app follows the same upstream pin as iOS:
-[`UPSTREAM_TESTED_SHA`](../UPSTREAM_TESTED_SHA).
+The Android port uses the same behavioral references and compatibility pins as
+the retained Swift sources: [`UPSTREAM_TESTED_SHA`](../UPSTREAM_TESTED_SHA) for
+WebUI and [`HERMES_AGENT_TESTED_SHA`](../HERMES_AGENT_TESTED_SHA) for Hermes.
+The current upstream 2.0 development snapshot is included; these pins do not
+claim compatibility with every past or future host release.
 
 Important rules:
 
 - unknown JSON keys never crash decoding;
 - optional malformed fields degrade independently;
 - native requests do not add browser `Origin` or `Referer` headers;
-- non-2xx responses map to typed `ApiError` cases;
-- 401 demotes auth state without discarding the saved server;
+- failures remain typed (`ApiError` on WebUI, `BotFailure` on Hermes);
+- a sign-in rejection affects only the owning server and current credential generation;
 - cross-origin redirects strip custom headers;
 - SSE comments/heartbeats do not render as events;
 - interrupted streams use status/replay recovery and never auto-resend.
+- Hermes socket upgrades never follow redirects with their ticket/proxy credentials;
+- transport failures do not silently replay non-idempotent Hermes operations;
+- only confirmed authentication-gate 401s permit the guarded re-sign-in/retry path.
 
 ## Tests
 
-The current suite covers models, endpoint request shapes, auth, cache, SSE,
-ViewModels, mutations, chat stream lifecycle, slash commands, attachment flow,
-adaptive geometry, analytics, and navigation continuity.
+The suite covers protocol decoding, authentication isolation, replay/recovery,
+draft persistence, transactional imports, requests and approvals, notifications,
+session mutations, adaptive geometry, file/Git operations, and navigation.
 
 ```bash
 ./gradlew testDebugUnitTest
 ```
 
-Current local gate: **538 tests across 49 suites, 0 failures**.
+Current results are recorded by the build output and Android CI, not a static
+test-count badge. Run `./gradlew lintDebug assembleDebug assembleRelease` as
+the packaging/static gate, then install and exercise the actual app.
 
 GitHub Actions runs the same test task, builds the release variant, and uploads
 an unsigned APK for every Android change.
@@ -243,11 +264,12 @@ Real Android emulator captures live in [`docs/assets/android`](../docs/assets/an
 
 ## Current exclusions
 
-A TTS engine voice picker, remote-relay push notifications, and iOS-only Live
-Activities/App Intents are outside the current Android scope. Everything else —
-Kanban boards, Git workspace tooling, the share target, deep links, foreground
-run notifications, encrypted custom headers, and voice notes/transcription — is
-implemented. There are no fake buttons or placeholder screens.
+The upstream relay supports APNs only. Foreground monitoring and local Android
+notifications are not remote push delivery while the app is stopped. Live
+Activities/App Intents use Android ongoing notifications and shortcuts instead.
+Document previews use PdfRenderer, the native source/image viewer, or an
+external Android document handler rather than iOS Quick Look. There is no
+separate TTS-engine voice picker; Hermes speech uses the host's configured voice.
 
 ## Contributing
 
@@ -268,3 +290,9 @@ The Android implementation is maintained in the proper
 [`jcartu/Hermex-Type-J`](https://github.com/jcartu/Hermex-Type-J) fork. The original
 SwiftUI project and product foundation are by
 [`uzairansaruzi/hermex`](https://github.com/uzairansaruzi/hermex).
+
+Tokyo Night follows the palettes maintained by
+[enkia](https://github.com/enkia/tokyo-night-vscode-theme) and
+[folke](https://github.com/folke/tokyonight.nvim). The file-type mapping follows
+upstream's Pierre `@pierre/trees` icons (Apache-2.0) and T3 Code additions (MIT),
+with native Android vector counterparts.
