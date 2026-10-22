@@ -33,6 +33,11 @@ class SessionMutator(private val api: HermesApi) {
         api.archiveSession(id = sessionId, archived = true)
     }
 
+    /** Port of `SessionMutator.unarchive(sessionID:)` — the Undo action of the archive toast (#865). */
+    suspend fun unarchive(sessionId: String) {
+        api.archiveSession(id = sessionId, archived = false)
+    }
+
     suspend fun delete(sessionId: String) {
         api.deleteSession(id = sessionId)
     }

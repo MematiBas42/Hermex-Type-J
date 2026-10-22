@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,7 +63,9 @@ import io.github.jcartu.hermex.ui.feature.onboarding.AuthManager
 import io.github.jcartu.hermex.ui.feature.onboarding.AuthState
 import io.github.jcartu.hermex.ui.feature.onboarding.OnboardingRoute
 import io.github.jcartu.hermex.ui.feature.kanban.KanbanRoute
+import io.github.jcartu.hermex.ui.feature.sessions.LocalSessionListShortcutActions
 import io.github.jcartu.hermex.ui.feature.sessions.SessionsListPane
+import io.github.jcartu.hermex.ui.feature.sessions.handleSessionListShortcutKey
 import io.github.jcartu.hermex.ui.feature.settings.SettingsRoute
 import io.github.jcartu.hermex.ui.feature.skills.SkillsRoute
 import io.github.jcartu.hermex.ui.feature.tasks.TasksRoute
@@ -242,17 +245,28 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
     val selectedSessionId = navigation.selectedSessionId
     val newChat = navigation.isNewChat
 
+    // Hardware-keyboard chat shortcuts (HermexCommands port): bubbles key
+    // events from any focused child in the chats area; the sessions list
+    // provides the action set via LocalSessionListShortcutActions.
+    val shortcutActions = LocalSessionListShortcutActions.current
+
+    Box(Modifier.fillMaxSize().onKeyEvent { handleSessionListShortcutKey(it, shortcutActions) }) {
     if (paneCount == 1) {
         if (selectedSessionId == null && !newChat) {
             SessionsListPane(
                 onSessionSelected = { summary -> navigation.selectSession(summary.id) },
-                onNewChat = navigation::startNewChat,
+                onNewChat = { request ->
+                    navigation.startNewChat(request.projectId, request.profileName)
+                },
+                onOpenSettings = navigation::openSettings,
             )
         } else {
             BackHandler { navigation.showSessionList() }
             ChatPane(
                 initialSessionId = selectedSessionId,
                 initialNewChat = newChat,
+                newChatProjectId = navigation.newChatProjectId,
+                newChatProfileName = navigation.newChatProfileName,
             )
         }
     } else {
@@ -260,7 +274,10 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
             firstPane = { _, modifier ->
                 SessionsListPane(
                     onSessionSelected = { summary -> navigation.selectSession(summary.id) },
-                    onNewChat = navigation::startNewChat,
+                    onNewChat = { request ->
+                        navigation.startNewChat(request.projectId, request.profileName)
+                    },
+                    onOpenSettings = navigation::openSettings,
                     modifier = modifier,
                 )
             },
@@ -268,10 +285,13 @@ private fun ChatsArea(navigation: AppNavigationViewModel) {
                 ChatPane(
                     initialSessionId = selectedSessionId,
                     initialNewChat = newChat,
+                    newChatProjectId = navigation.newChatProjectId,
+                    newChatProfileName = navigation.newChatProfileName,
                     modifier = modifier,
                 )
             },
         )
+    }
     }
 }
 
@@ -298,6 +318,11 @@ private fun MoreRoute(navigation: AppNavigationViewModel, container: AppContaine
         if (navigation.pendingMoreRoute == "git") {
             entry = MoreEntry.GIT
             if (navigation.gitSessionId == null) navigation.consumeGitTarget()
+        }
+        // The session-list header avatar routes here (More → Settings, #283).
+        if (navigation.pendingMoreRoute == "settings") {
+            entry = MoreEntry.SETTINGS
+            navigation.consumeMoreRoute()
         }
     }
     // A hidden Usage entry can't stay selected: fall back to the menu.

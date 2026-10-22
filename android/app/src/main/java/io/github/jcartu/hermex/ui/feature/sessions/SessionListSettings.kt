@@ -31,6 +31,7 @@ data class SessionListSettings(
     val showsSubagentSessions: Boolean = DEFAULT_SHOWS_SUBAGENT_SESSIONS,
     val projectsAreExpanded: Boolean = DEFAULT_PROJECTS_ARE_EXPANDED,
     val scheduledSessionsAreExpanded: Boolean = DEFAULT_SCHEDULED_SESSIONS_ARE_EXPANDED,
+    val profilesAreExpanded: Boolean = DEFAULT_PROFILES_ARE_EXPANDED,
 ) {
     val automatedVisibility: AutomatedSessionVisibility
         get() = AutomatedSessionVisibility(
@@ -49,6 +50,9 @@ data class SessionListSettings(
 
         /** `SessionSidebarDisclosureSettings.defaultScheduledSessionsAreExpanded`. */
         const val DEFAULT_SCHEDULED_SESSIONS_ARE_EXPANDED = false
+
+        /** `SessionSidebarDisclosureSettings.defaultProfilesAreExpanded`. */
+        const val DEFAULT_PROFILES_ARE_EXPANDED = false
     }
 }
 
@@ -75,6 +79,9 @@ class SessionListSettingsRepository(private val dataStore: DataStore<Preferences
         val scheduledSessionsAreExpandedKey =
             booleanPreferencesKey("sessionSidebar.scheduledSessionsAreExpanded")
 
+        /** `SessionSidebarDisclosureSettings.profilesAreExpandedKey`. */
+        val profilesAreExpandedKey = booleanPreferencesKey("sessionSidebar.profilesAreExpanded")
+
         /** `SessionRowDisplaySettings.showCliSessionsKey(for:)` — key per server URL. */
         fun showCliSessionsKey(serverUrl: String): Preferences.Key<Boolean> =
             booleanPreferencesKey("sessionRow.showCliSessions|$serverUrl")
@@ -100,6 +107,8 @@ class SessionListSettingsRepository(private val dataStore: DataStore<Preferences
                 ?: SessionListSettings.DEFAULT_PROJECTS_ARE_EXPANDED,
             scheduledSessionsAreExpanded = prefs[scheduledSessionsAreExpandedKey]
                 ?: SessionListSettings.DEFAULT_SCHEDULED_SESSIONS_ARE_EXPANDED,
+            profilesAreExpanded = prefs[profilesAreExpandedKey]
+                ?: SessionListSettings.DEFAULT_PROFILES_ARE_EXPANDED,
         )
     }
 
@@ -126,4 +135,7 @@ class SessionListSettingsRepository(private val dataStore: DataStore<Preferences
 
     suspend fun setScheduledSessionsAreExpanded(value: Boolean) =
         dataStore.edit { it[scheduledSessionsAreExpandedKey] = value }
+
+    suspend fun setProfilesAreExpanded(value: Boolean) =
+        dataStore.edit { it[profilesAreExpandedKey] = value }
 }

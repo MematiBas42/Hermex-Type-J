@@ -3,10 +3,13 @@ package io.github.jcartu.hermex.ui.feature.sessions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.data.CacheStore
+import io.github.jcartu.hermex.model.ProfileSummary
+import io.github.jcartu.hermex.model.ProfilesResponse
 import io.github.jcartu.hermex.model.ProjectSummary
 import io.github.jcartu.hermex.model.SessionExportFile
 import io.github.jcartu.hermex.model.SessionExportFormat
 import io.github.jcartu.hermex.model.SessionSummary
+import io.github.jcartu.hermex.net.ApiError
 import io.github.jcartu.hermex.net.CacheFallbackPolicy
 import io.github.jcartu.hermex.net.HermesApi
 import java.time.Instant
@@ -16,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -84,10 +88,80 @@ data class SessionListUiState(
     val activeRemoteSearchQuery: String? = null,
     /** True when the last list load failed with a connectivity-class error. */
     val loadFailedOffline: Boolean = false,
+    /**
+     * Attention state per streaming session, refreshed on the same tick that
+     * checks stream liveness (port of `attentionStatesBySessionID`, 1.6.0).
+     * Only sessions with an active stream ever have an entry, and the map is
+     * reassigned only when a value actually changes so rows do not invalidate
+     * on every poll tick.
+     */
+    val attentionStatesBySessionId: Map<String, SessionRowAttentionState> = emptyMap(),
+    /**
+     * `match_preview` per content-matched session from the last search, so a
+     * row can show why it matched (port of `remoteContentSearchExcerpts`,
+     * 1.6.0). Empty against servers that omit the field.
+     */
+    val remoteContentSearchExcerpts: Map<String, String> = emptyMap(),
+    /**
+     * Device-local last-seen `lastMessageAt` per session id (port of
+     * `seenMessageTimes`, 1.7.0 unread replies). Persisted per server.
+     */
+    val seenMessageTimes: Map<String, Double> = emptyMap(),
+    /** Active-profile picker surface (port of the Swift `activeProfile*` properties). */
+    val activeProfileName: String? = null,
+    val activeProfileDisplayName: String? = null,
+    val activeProfileModel: String? = null,
+    val activeProfileProvider: String? = null,
+    val profileOptions: List<ProfileSummary> = emptyList(),
+    val isSingleProfileMode: Boolean = false,
+    val isLoadingActiveProfile: Boolean = false,
+    val isSwitchingActiveProfile: Boolean = false,
+    val switchingActiveProfileName: String? = null,
+    val activeProfileErrorMessage: String? = null,
 ) {
     fun isMutating(session: SessionSummary): Boolean {
         val sessionId = nonEmpty(session.sessionId) ?: return false
         return sessionId in mutatingSessionIds
+    }
+
+    /** Port of `SessionListViewModel.attentionState(for:)`. */
+    fun attentionStateFor(session: SessionSummary): SessionRowAttentionState? {
+        val sessionId = nonEmpty(session.sessionId) ?: return null
+        return attentionStatesBySessionId[sessionId]
+    }
+
+    /**
+     * Port of `SessionListViewModel.isUnread(_:)`: a settled row is unread only
+     * when its server timestamp moved past the last timestamp this device
+     * showed. No phone clock enters the comparison.
+     */
+    fun isUnread(session: SessionSummary): Boolean {
+        val sessionId = nonEmpty(session.sessionId) ?: return false
+        val timestamp = messageTime(session) ?: return false
+        val seen = seenMessageTimes[sessionId] ?: return false
+        if (isActiveStreaming(session) || session.hasPendingUserMessage == true) return false
+        return timestamp > seen
+    }
+
+    /** Port of `SessionListViewModel.canToggleUnread(_:)`. */
+    fun canToggleUnread(session: SessionSummary): Boolean =
+        nonEmpty(session.sessionId) != null &&
+            messageTime(session) != null &&
+            !isActiveStreaming(session) &&
+            session.hasPendingUserMessage != true
+
+    /**
+     * Port of `searchExcerpt(for:searchText:)`. `searchText` is the query of
+     * the *screen* asking, not the view model's: screens with their own search
+     * field (Scheduled sessions) share this view model, and they must not
+     * inherit the sidebar's last excerpts.
+     */
+    fun searchExcerptFor(session: SessionSummary, searchText: String): SessionSearchExcerpt? {
+        val query = normalizedSearchQuery(searchText)
+        if (query.isEmpty() || activeRemoteSearchQuery != query) return null
+        val sessionId = session.sessionId ?: return null
+        val text = remoteContentSearchExcerpts[sessionId] ?: return null
+        return SessionSearchExcerpt.of(text = text, query = query)
     }
 
     /** Port of `SessionListViewModel.sections`. */
@@ -102,14 +176,51 @@ data class SessionListUiState(
         selectedProjectId: String?,
         automatedVisibility: io.github.jcartu.hermex.model.AutomatedSessionVisibility =
             io.github.jcartu.hermex.model.AutomatedSessionVisibility.showAll,
+    ): List<SessionSummary> =
+        visibleSessionsAmong(sessions, searchText, selectedProjectId, automatedVisibility)
+
+    /**
+     * Port of `visibleActiveSessions(searchText:selectedProjectID:automatedVisibility:)`:
+     * the visible rows that are still streaming, for the list's active-row
+     * monitor. Filters to streaming rows first (usually zero to two), so a body
+     * pass does not filter and sort every session to find them.
+     */
+    fun visibleActiveSessions(
+        searchText: String,
+        selectedProjectId: String?,
+        automatedVisibility: io.github.jcartu.hermex.model.AutomatedSessionVisibility =
+            io.github.jcartu.hermex.model.AutomatedSessionVisibility.showAll,
+    ): List<SessionSummary> {
+        val activeSessions = sessions.filter(::isActiveStreaming)
+        if (activeSessions.isEmpty()) return emptyList()
+        return visibleSessionsAmong(activeSessions, searchText, selectedProjectId, automatedVisibility)
+    }
+
+    /**
+     * Port of the private `visibleSessions(among:searchText:selectedProjectID:automatedVisibility:)`.
+     * Visibility is decided per row, so running this over a subset of
+     * `sessions` yields exactly the visible rows of that subset.
+     */
+    private fun visibleSessionsAmong(
+        candidates: List<SessionSummary>,
+        searchText: String,
+        selectedProjectId: String?,
+        automatedVisibility: io.github.jcartu.hermex.model.AutomatedSessionVisibility,
     ): List<SessionSummary> {
         val query = normalizedSearchQuery(searchText)
-        val baseSessions = sessions.filter { automatedVisibility.shows(it) }
+        // Every word must appear somewhere in the row, in any order and field (1.8.0).
+        val searchTerms = query.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val baseSessions = candidates.filter { automatedVisibility.shows(it) }
         val projectFilteredSessions = baseSessions.filter { session ->
             selectedProjectId == null || session.projectId == selectedProjectId
         }
         val localMatches = projectFilteredSessions.filter { session ->
-            query.isEmpty() || searchableText(session).contains(query)
+            if (searchTerms.isEmpty()) {
+                true
+            } else {
+                val text = searchableText(session)
+                searchTerms.all { text.contains(it) }
+            }
         }
         val sortedLocalMatches = sortedSessions(localMatches)
 
@@ -160,6 +271,12 @@ data class SessionListUiState(
         /** Port of `timestamp(for:)`: last message, else updated, else created, else 0. */
         internal fun timestamp(session: SessionSummary): Double =
             session.lastMessageAt ?: session.updatedAt ?: session.createdAt ?: 0.0
+
+        /** Port of `messageTime(for:)`: `lastMessageAt` only, finite and positive. */
+        internal fun messageTime(session: SessionSummary): Double? {
+            val timestamp = session.lastMessageAt ?: return null
+            return if (timestamp.isFinite() && timestamp > 0.0) timestamp else null
+        }
 
         /** Port of `sortedSessions(_:)`: pinned first, then newest first. */
         internal fun sortedSessions(sessions: List<SessionSummary>): List<SessionSummary> =
@@ -219,6 +336,12 @@ fun sessionListSections(
 }
 
 /**
+ * Port of the Swift `ActiveSessionStateRefreshResult` — the outcome of one
+ * active-row monitor tick.
+ */
+enum class ActiveSessionStateRefreshResult { UNCHANGED, RELOADED, FAILED }
+
+/**
  * Port of `SessionListViewModel.swift` (minus the iOS-only profile switcher,
  * App Intents, and share-sheet plumbing). Suspend functions mirror the Swift
  * async methods one-to-one and return the same success values; `*Async`
@@ -229,6 +352,7 @@ class SessionListViewModel(
     private val cacheStore: CacheStore?,
     private val serverUrlProvider: suspend () -> String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val unreadStore: SessionUnreadStore? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SessionListUiState())
@@ -236,6 +360,21 @@ class SessionListViewModel(
 
     private val sessionMutator = SessionMutator(api)
     private var searchJob: Job? = null
+
+    /** The session the user is inside right now (`viewingSessionID`). */
+    private var viewingSessionId: String? = null
+
+    /** Sessions a chat opened from this list has just closed (`returnedFromSessionIDs`). */
+    private val returnedFromSessionIds = LinkedHashSet<String>()
+
+    /** Guards the one-shot unread-mark read from [unreadStore]. */
+    private var seenMarksLoaded = false
+
+    /** Bumped by each active-profile apply, so only the newest one applies. */
+    private var activeProfileGeneration = 0
+
+    /** The last list-load failure, for the monitor's `loadFailureRefreshResult`. */
+    private var lastLoadError: Exception? = null
 
     // MARK: - Loading
 
@@ -249,11 +388,14 @@ class SessionListViewModel(
                 loadFailedOffline = false,
             )
         }
+        ensureSeenMarksLoaded()
 
         try {
             val response = api.sessions()
-            val visibleSessions = (response.sessions ?: emptyList())
+            val allSessions = response.sessions ?: emptyList()
+            val visibleSessions = allSessions
                 .filter { it.archived != true && it.shouldAppearInSessionList }
+            reconcileUnread(visibleSessions, allSessions = allSessions)
             _uiState.update {
                 it.copy(
                     sessions = visibleSessions,
@@ -262,12 +404,15 @@ class SessionListViewModel(
                     isLoading = false,
                 )
             }
+            pruneAttentionStates()
+            lastLoadError = null
             cacheSessionsQuietly(visibleSessions)
             return true
         } catch (cancellation: CancellationException) {
             _uiState.update { it.copy(isLoading = false) }
             throw cancellation
         } catch (error: Exception) {
+            lastLoadError = error
             val useCache = CacheFallbackPolicy.shouldUseCache(error)
             _uiState.update { it.copy(loadFailedOffline = useCache) }
             if (useCache && cacheStore != null) {
@@ -285,6 +430,9 @@ class SessionListViewModel(
                                 isLoading = false,
                             )
                         }
+                        // Cached rows carry no live server state, so nothing can
+                        // still be waiting on the user here.
+                        clearAttentionStates()
                     } else {
                         _uiState.update {
                             it.copy(
@@ -336,16 +484,374 @@ class SessionListViewModel(
         }
     }
 
-    /** `loadSessions()` in `SessionListView.swift`: list + projects when online. */
+    /**
+     * `loadSessions()` in `SessionListView.swift`: list first (restore needs
+     * only the session rows, so it runs as soon as they arrive), then projects
+     * and the active profile side by side when online
+     * (`SessionListInitialLoad.loadProjectsAndActiveProfile`).
+     */
     suspend fun refresh() {
         load()
         if (!_uiState.value.isViewingCachedData) {
-            loadProjects()
+            coroutineScope {
+                launch { loadProjects() }
+                launch { loadActiveProfile() }
+            }
         }
     }
 
     fun refreshAsync() {
         viewModelScope.launch { refresh() }
+    }
+
+    // MARK: - Unread replies (1.7.0)
+
+    /**
+     * Port of `beginViewing(_:)`. Every chat entry point selects a
+     * destination, so this one stamp covers rows and deep links alike.
+     */
+    suspend fun beginViewing(session: SessionSummary) {
+        viewingSessionId = SessionListUiState.nonEmpty(session.sessionId)
+        markSeen(session)
+    }
+
+    /**
+     * Port of `noteReturn(from:)`: the next list load after a chat closes
+     * stamps its freshest server timestamp if it succeeds, including a reply
+     * completed during that visit.
+     */
+    fun noteReturn(session: SessionSummary) {
+        val sessionId = SessionListUiState.nonEmpty(session.sessionId) ?: return
+        if (viewingSessionId == sessionId) viewingSessionId = null
+        returnedFromSessionIds.add(sessionId)
+    }
+
+    /** Port of `toggleUnread(_:)`. */
+    suspend fun toggleUnread(session: SessionSummary) {
+        if (!_uiState.value.canToggleUnread(session)) return
+        val sessionId = SessionListUiState.nonEmpty(session.sessionId) ?: return
+        val timestamp = SessionListUiState.messageTime(session) ?: return
+        val unread = _uiState.value.isUnread(session)
+        // Unread marks sit strictly below the server timestamp; marking read
+        // stamps the timestamp itself (`nextDown` on the unread arm).
+        val mark = if (unread) timestamp else Math.nextDown(timestamp)
+        updateSeenMessageTimes { it + (sessionId to mark) }
+        persistSeen()
+    }
+
+    /** Port of the private `markSeen(_:)`. */
+    private suspend fun markSeen(session: SessionSummary) {
+        val sessionId = SessionListUiState.nonEmpty(session.sessionId) ?: return
+        val timestamp = SessionListUiState.messageTime(session) ?: return
+        val seen = _uiState.value.seenMessageTimes[sessionId] ?: 0.0
+        if (seen >= timestamp) return
+        updateSeenMessageTimes { it + (sessionId to timestamp) }
+        persistSeen()
+    }
+
+    /**
+     * Port of `reconcileUnread(_:allSessions:returnedFromIDs:)`: drops marks
+     * for sessions the server no longer lists, seeds marks for rows never seen
+     * on this device (so an install does not light up every existing chat),
+     * and stamps rows the user is inside or just returned from.
+     */
+    private suspend fun reconcileUnread(
+        visibleSessions: List<SessionSummary>,
+        allSessions: List<SessionSummary>,
+    ) {
+        val returnedFromIds = returnedFromSessionIds.toSet()
+        returnedFromSessionIds.clear()
+        val presentIds = allSessions.mapNotNullTo(HashSet()) {
+            SessionListUiState.nonEmpty(it.sessionId)
+        }
+        val current = _uiState.value.seenMessageTimes
+        val updated = current.filterKeys { it in presentIds }.toMutableMap()
+        for (session in visibleSessions) {
+            val sessionId = SessionListUiState.nonEmpty(session.sessionId) ?: continue
+            val timestamp = SessionListUiState.messageTime(session) ?: continue
+            if (updated[sessionId] == null ||
+                sessionId in returnedFromIds ||
+                viewingSessionId == sessionId
+            ) {
+                updated[sessionId] = maxOf(updated[sessionId] ?: timestamp, timestamp)
+            }
+        }
+        if (updated == current) return
+        _uiState.update { it.copy(seenMessageTimes = updated) }
+        persistSeen()
+    }
+
+    private fun updateSeenMessageTimes(transform: (Map<String, Double>) -> Map<String, Double>) {
+        _uiState.update { it.copy(seenMessageTimes = transform(it.seenMessageTimes)) }
+    }
+
+    /** One-shot read of the per-server seen marks (`SessionUnreadStore.load`). */
+    private suspend fun ensureSeenMarksLoaded() {
+        if (seenMarksLoaded) return
+        seenMarksLoaded = true
+        val store = unreadStore ?: return
+        val serverUrl = serverUrlProvider()
+        val seen = withContext(ioDispatcher) { store.load(serverUrl) }
+        if (seen.isEmpty()) return
+        _uiState.update { state ->
+            // A mark written before the first load landed (the user opened a
+            // chat from a restored list) wins over the stored value.
+            state.copy(seenMessageTimes = seen + state.seenMessageTimes)
+        }
+    }
+
+    private suspend fun persistSeen() {
+        val store = unreadStore ?: return
+        val serverUrl = serverUrlProvider()
+        val seen = _uiState.value.seenMessageTimes
+        withContext(ioDispatcher) { store.save(seen, serverUrl) }
+    }
+
+    // MARK: - Active-row monitor (1.6.0 row states, 1.8.0 no-pulse fix)
+
+    /**
+     * Port of `refreshActiveSessionStatesIfNeeded(streamIDs:modelContext:)`.
+     * One monitor tick: checks the active rows' streams and reloads when one
+     * ended, then refreshes attention probes.
+     */
+    suspend fun refreshActiveSessionStatesIfNeeded(
+        rawStreamIds: List<String>,
+    ): ActiveSessionStateRefreshResult {
+        if (_uiState.value.isViewingCachedData || _uiState.value.isLoading) {
+            return ActiveSessionStateRefreshResult.UNCHANGED
+        }
+
+        val streamIds = rawStreamIds
+            .mapNotNull { SessionListUiState.nonEmpty(it) }
+            .distinct()
+            .sorted()
+        if (streamIds.isEmpty()) {
+            return if (load()) {
+                ActiveSessionStateRefreshResult.RELOADED
+            } else {
+                loadFailureRefreshResult
+            }
+        }
+
+        for (streamId in streamIds) {
+            try {
+                val response = api.chatStreamStatus(streamId)
+                if (response.active == false) {
+                    return if (load()) {
+                        ActiveSessionStateRefreshResult.RELOADED
+                    } else {
+                        loadFailureRefreshResult
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                if (error is ApiError.Unauthorized) return ActiveSessionStateRefreshResult.FAILED
+                continue
+            }
+        }
+
+        return refreshAttentionStates()
+    }
+
+    private val loadFailureRefreshResult: ActiveSessionStateRefreshResult
+        get() = if (lastLoadError == null) {
+            ActiveSessionStateRefreshResult.UNCHANGED
+        } else {
+            ActiveSessionStateRefreshResult.FAILED
+        }
+
+    /**
+     * Port of `refreshAttentionStates()`: one approval probe and one
+     * clarification probe per streaming row, on the tick the caller already
+     * runs. Sessions without an active stream are never probed, and there is
+     * no separate polling loop or timer. A row's two probes go out together,
+     * so N streaming rows cost about N round trips per tick instead of 2N.
+     */
+    private suspend fun refreshAttentionStates(): ActiveSessionStateRefreshResult {
+        val streamingSessions = _uiState.value.sessions.filter(::isActiveStreaming)
+        if (streamingSessions.isEmpty()) {
+            clearAttentionStates()
+            return ActiveSessionStateRefreshResult.UNCHANGED
+        }
+
+        val refreshed = HashMap<String, SessionRowAttentionState>()
+        for (session in streamingSessions) {
+            val sessionId = SessionListUiState.nonEmpty(session.sessionId) ?: continue
+            val previous = _uiState.value.attentionStatesBySessionId[sessionId]
+
+            // A failed probe is not evidence that nothing is pending, so it
+            // keeps what the last successful tick knew rather than letting the
+            // row fall back to "Working". A previous `.approval` masks any
+            // clarification, so it carries no clarify knowledge, and a clarify
+            // probe that fails behind it resolves to nothing pending.
+            var probeError: Exception? = null
+            val hasPendingApproval = try {
+                api.approvalPending(sessionId).pending?.let { !it.isEmpty } == true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                probeError = error
+                previous == SessionRowAttentionState.APPROVAL
+            }
+            val hasPendingClarification = try {
+                api.clarifyPending(sessionId).pending?.let { !it.isEmpty } == true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                if (probeError == null) probeError = error
+                previous == SessionRowAttentionState.INPUT
+            }
+
+            val failure = probeError
+            if (failure is ApiError.Unauthorized) return ActiveSessionStateRefreshResult.FAILED
+
+            SessionRowAttentionState.resolve(
+                session = session,
+                hasPendingApproval = hasPendingApproval,
+                hasPendingClarification = hasPendingClarification,
+            )?.let { refreshed[sessionId] = it }
+        }
+
+        if (refreshed != _uiState.value.attentionStatesBySessionId) {
+            _uiState.update { it.copy(attentionStatesBySessionId = refreshed) }
+        }
+        return ActiveSessionStateRefreshResult.UNCHANGED
+    }
+
+    private fun clearAttentionStates() {
+        if (_uiState.value.attentionStatesBySessionId.isEmpty()) return
+        _uiState.update { it.copy(attentionStatesBySessionId = emptyMap()) }
+    }
+
+    /**
+     * Port of `pruneAttentionStates()`: attention state only means something
+     * for a row the server still reports as streaming, so a reload that ends a
+     * stream drops that row's entry.
+     */
+    private fun pruneAttentionStates() {
+        val current = _uiState.value.attentionStatesBySessionId
+        if (current.isEmpty()) return
+        val streamingSessionIds = _uiState.value.sessions.mapNotNullTo(HashSet()) { session ->
+            if (!isActiveStreaming(session)) return@mapNotNullTo null
+            SessionListUiState.nonEmpty(session.sessionId)
+        }
+        val pruned = current.filterKeys { it in streamingSessionIds }
+        if (pruned != current) {
+            _uiState.update { it.copy(attentionStatesBySessionId = pruned) }
+        }
+    }
+
+    // MARK: - Active profile
+
+    /** Port of `loadActiveProfile()`. */
+    suspend fun loadActiveProfile() {
+        if (_uiState.value.isLoadingActiveProfile) return
+
+        _uiState.update { it.copy(isLoadingActiveProfile = true, activeProfileErrorMessage = null) }
+        val generation = ++activeProfileGeneration
+        try {
+            val response = api.profiles()
+            if (generation != activeProfileGeneration) return
+            applyActiveProfile(response)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            if (generation != activeProfileGeneration) return
+            _uiState.update { it.copy(activeProfileErrorMessage = error.userMessage) }
+        } finally {
+            _uiState.update { it.copy(isLoadingActiveProfile = false) }
+        }
+    }
+
+    /** Port of `switchActiveProfile(_:)`. */
+    suspend fun switchActiveProfile(profile: ProfileSummary): Boolean {
+        if (_uiState.value.isViewingCachedData) {
+            _uiState.update {
+                it.copy(activeProfileErrorMessage = "Reconnect to the server to change profiles.")
+            }
+            return false
+        }
+
+        val profileName = SessionListUiState.nonEmpty(profile.name)
+        if (profileName == null) {
+            _uiState.update {
+                it.copy(activeProfileErrorMessage = "The server did not provide a profile name.")
+            }
+            return false
+        }
+
+        if (profileName == _uiState.value.activeProfileName) return true
+
+        _uiState.update {
+            it.copy(
+                isSwitchingActiveProfile = true,
+                switchingActiveProfileName = profileName,
+                activeProfileErrorMessage = null,
+            )
+        }
+        try {
+            val response = api.switchProfile(profileName)
+            val serverError = SessionListUiState.nonEmpty(response.error)
+            if (serverError != null) {
+                _uiState.update { it.copy(activeProfileErrorMessage = serverError) }
+                return false
+            }
+
+            val resolvedName = SessionListUiState.nonEmpty(response.active) ?: profileName
+            // The switch response has no `single_profile_mode` field; carry the
+            // last known value forward so the switcher visibility doesn't flap.
+            val profileResponse = ProfilesResponse(
+                profiles = response.profiles ?: _uiState.value.profileOptions,
+                active = resolvedName,
+                singleProfileMode = _uiState.value.isSingleProfileMode,
+            )
+            applyActiveProfile(
+                profileResponse,
+                fallbackProfile = profile,
+                fallbackDefaultModel = response.defaultModel,
+            )
+            return true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            _uiState.update { it.copy(activeProfileErrorMessage = error.userMessage) }
+            return false
+        } finally {
+            _uiState.update {
+                it.copy(isSwitchingActiveProfile = false, switchingActiveProfileName = null)
+            }
+        }
+    }
+
+    /** Port of `applyActiveProfile(_:fallbackProfile:fallbackDefaultModel:)`. */
+    private fun applyActiveProfile(
+        response: ProfilesResponse,
+        fallbackProfile: ProfileSummary? = null,
+        fallbackDefaultModel: String? = null,
+    ) {
+        activeProfileGeneration += 1
+
+        // Tolerant: only a present field moves the flag, so an older server
+        // (or the carried-forward switch-response value) keeps today's behavior.
+        response.singleProfileMode?.let { mode ->
+            _uiState.update { it.copy(isSingleProfileMode = mode) }
+        }
+        response.profiles?.let { options ->
+            _uiState.update { it.copy(profileOptions = options) }
+        }
+
+        val profileName = response.effectiveDefaultProfileName
+        val profile = response.profile(matching = profileName) ?: fallbackProfile
+        _uiState.update {
+            it.copy(
+                activeProfileName = profileName,
+                activeProfileDisplayName = response.displayName(profileName) ?: profile?.displayName,
+                activeProfileModel = SessionListUiState.nonEmpty(profile?.model)
+                    ?: SessionListUiState.nonEmpty(fallbackDefaultModel),
+                activeProfileProvider = SessionListUiState.nonEmpty(profile?.provider),
+            )
+        }
     }
 
     // MARK: - Remote content search
@@ -362,6 +868,7 @@ class SessionListViewModel(
             it.copy(
                 activeRemoteSearchQuery = query,
                 remoteContentSearchSessionIds = emptyList(),
+                remoteContentSearchExcerpts = emptyMap(),
                 searchErrorMessage = null,
             )
         }
@@ -379,9 +886,11 @@ class SessionListViewModel(
             val response = api.searchSessions(query = query, content = content, depth = depth)
             if (_uiState.value.activeRemoteSearchQuery != query) return
 
+            val matches = contentMatches(response.sessions ?: emptyList())
             _uiState.update {
                 it.copy(
-                    remoteContentSearchSessionIds = contentMatchIds(response.sessions ?: emptyList()),
+                    remoteContentSearchSessionIds = matches.sessionIds,
+                    remoteContentSearchExcerpts = matches.excerpts,
                     isSearchingRemoteSessions = false,
                 )
             }
@@ -393,6 +902,7 @@ class SessionListViewModel(
                 it.copy(
                     isSearchingRemoteSessions = false,
                     remoteContentSearchSessionIds = emptyList(),
+                    remoteContentSearchExcerpts = emptyMap(),
                     searchErrorMessage = error.userMessage,
                 )
             }
@@ -412,6 +922,7 @@ class SessionListViewModel(
             it.copy(
                 activeRemoteSearchQuery = null,
                 remoteContentSearchSessionIds = emptyList(),
+                remoteContentSearchExcerpts = emptyMap(),
                 searchErrorMessage = null,
                 isSearchingRemoteSessions = false,
             )
@@ -437,6 +948,23 @@ class SessionListViewModel(
         if (!beginSessionMutation(sessionId)) return false
         try {
             return mutate { sessionMutator.archive(sessionId) }
+        } finally {
+            endSessionMutation(sessionId)
+        }
+    }
+
+    /**
+     * Port of `unarchive(_:modelContext:animation:)` (1.8.0 #865): undoes an
+     * archive from the list's confirmation toast — restores the session, then
+     * reloads so its row returns to its old place (the server keeps
+     * `updated_at`). A second call while one is in flight for the same session
+     * sends nothing.
+     */
+    suspend fun unarchive(session: SessionSummary): Boolean {
+        val sessionId = requireSessionId(session) ?: return false
+        if (!beginSessionMutation(sessionId)) return false
+        try {
+            return mutate { sessionMutator.unarchive(sessionId) }
         } finally {
             endSessionMutation(sessionId)
         }
@@ -776,6 +1304,11 @@ class SessionListViewModel(
         _uiState.update { it.copy(actionErrorMessage = null) }
     }
 
+    /** Clears the active-profile error line (paired with `clearActionError`). */
+    fun clearActiveProfileError() {
+        _uiState.update { it.copy(activeProfileErrorMessage = null) }
+    }
+
     // MARK: - Private helpers
 
     /**
@@ -835,21 +1368,42 @@ class SessionListViewModel(
         }
     }
 
-    /** Port of `contentMatchIDs(from:)`. */
-    private fun contentMatchIds(searchResults: List<SessionSummary>): List<String> {
+    /**
+     * Port of `contentMatches(from:)`: content-match rows narrowed to sessions
+     * the list can actually show, in server order, plus each row's excerpt when
+     * the server sent one (`match_preview`).
+     */
+    private fun contentMatches(
+        searchResults: List<SessionSummary>,
+    ): ContentMatches {
         val locallyVisibleSessionIds = _uiState.value.sessions.mapNotNullTo(HashSet()) { session ->
             if (session.archived != true) session.sessionId?.takeIf { it.isNotEmpty() } else null
         }
         val seenSessionIds = HashSet<String>()
+        val sessionIds = mutableListOf<String>()
+        val excerpts = mutableMapOf<String, String>()
 
-        return searchResults.mapNotNull { session ->
-            val sessionId = session.sessionId ?: return@mapNotNull null
-            if (session.matchType?.lowercase() != "content") return@mapNotNull null
-            if (sessionId !in locallyVisibleSessionIds) return@mapNotNull null
-            if (!seenSessionIds.add(sessionId)) return@mapNotNull null
-            sessionId
+        for (session in searchResults) {
+            if (session.matchType?.lowercase() != "content") continue
+            val sessionId = session.sessionId ?: continue
+            if (sessionId !in locallyVisibleSessionIds) continue
+            if (!seenSessionIds.add(sessionId)) continue
+
+            sessionIds.add(sessionId)
+            val preview = session.matchPreview?.trim()
+            if (!preview.isNullOrEmpty()) {
+                excerpts[sessionId] = preview
+            }
         }
+
+        return ContentMatches(sessionIds = sessionIds, excerpts = excerpts)
     }
+
+    /** Result of [contentMatches]: ordered ids plus per-id excerpt. */
+    private data class ContentMatches(
+        val sessionIds: List<String>,
+        val excerpts: Map<String, String>,
+    )
 
     private fun duplicateTitle(session: SessionSummary): String {
         val baseTitle = SessionListUiState.nonEmpty(session.title) ?: "Untitled Session"
