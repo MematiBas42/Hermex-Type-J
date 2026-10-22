@@ -175,9 +175,9 @@ fun HermesChatPane(
     }
     val face = when {
         turn?.engine?.connectionState != HermesConversation.ConnectionState.CONNECTED -> HermesTitleFace.RESTING
-        turn.requests.isWaiting -> HermesTitleFace.WAITING
+        turn?.requests?.isWaiting == true -> HermesTitleFace.WAITING
         state.isStreaming -> HermesTitleFace.WORKING
-        turn.activity.failure != null -> HermesTitleFace.FAILED
+        turn?.activity?.failure != null -> HermesTitleFace.FAILED
         else -> HermesTitleFace.RESTING
     }
     val requests = turn?.requests
@@ -285,7 +285,7 @@ fun HermesChatPane(
                         }
                         state.contextWindow?.let { ContextWindowIndicator(it, Modifier.align(Alignment.End).padding(horizontal = 12.dp)) }
                         if (requests?.approvalBypass == true) TextButton(enabled = requests.mayTurnOffApprovalBypass, onClick = { perform { requests.turnOffApprovalBypass() } }) { Text("Approvals bypassed${if (requests.mayTurnOffApprovalBypass) " · Ask again" else " by the host"}") }
-                        if (state.queuedMessagesReceipt != null) Text(state.queuedMessagesReceipt, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 16.dp))
+                        state.queuedMessagesReceipt?.let { Text(it, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 16.dp)) }
                         if (turn?.isUploadingAttachments == true) TextButton(onClick = model::cancelUpload) { Text("Cancel upload") }
                         turn?.settings?.pendingModel?.let { pending -> Text("${pending.displayName} switches after this response", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 16.dp)) }
                         ChatComposer(

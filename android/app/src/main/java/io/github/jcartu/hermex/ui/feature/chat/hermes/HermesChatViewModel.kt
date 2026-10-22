@@ -358,7 +358,9 @@ class HermesChatViewModel(
                 when (route.command.name) {
                     "new", "clear" -> {
                         consumeTyped(typed)
-                        val model = if (route.command.name == "clear") turn.reportedModel else null
+                        val model = if (route.command.name == "clear") {
+                            turn.settings.selectedModel?.let { option -> option.providerID?.let { HermesCall.Model(option.id, it) } } ?: turn.reportedModel
+                        } else null
                         val folder = if (route.command.name == "clear") turn.cwd else null
                         newChat(profile, folder, model)
                     }
@@ -451,6 +453,7 @@ class HermesChatViewModel(
 
     fun editablePrompt(message: ChatMessage): ChatMessage? {
         if (coordinator?.policy?.offersHistoryActions != true || _uiState.value.isStreaming) return null
+        if (message.isSteerMessage || message.role !in setOf("user", "assistant") || _uiState.value.isViewingCachedData) return null
         val rows = _uiState.value.messages
         val index = rows.indexOfFirst { it.id == message.id }
         if (index < 0) return null
@@ -681,7 +684,12 @@ class HermesChatViewModel(
     fun loadOlderMessages() = launchAction { coordinator?.loadOlderHistory() }
     fun retryLoad() = launchAction { coordinator?.activate(); coordinator?.retryHistoryIfFailed() }
     fun resumeForForeground() { active = true; viewModelScope.launch { initialization.join(); coordinator?.activate() } }
-    fun suspendForBackground() { active = false; saveDraft(); viewModelScope.launch { drafts.flush(); coordinator?.suspendConnection() } }
+    fun suspendForBackground() { active = false; parkPendingGoal(); saveDraft(); viewModelScope.launch { drafts.flush(); coordinator?.suspendConnection() } }
+    private fun parkPendingGoal() {
+        val argument = pendingGoal ?: return
+        pendingGoal = null
+        updateDraft(listOf("/goal $argument", _uiState.value.draft).filter(String::isNotBlank).joinToString("\n\n"))
+    }
     fun answerApproval(choice: BotApprovalChoice) = requestAction { turn, action -> turn.requests.respond(action, choice) }
     fun answerQuestion(answers: List<BotQuestionAnswer>) = requestAction { turn, action -> turn.requests.answerQuestion(action, answers) }
     fun skipQuestion() = requestAction { turn, action -> turn.requests.skipQuestion(action) }
@@ -697,6 +705,7 @@ class HermesChatViewModel(
     private fun report(error: Throwable) { val cause = (error as? HermesChatTurnCoordinator.NotSent)?.underlying ?: error; _uiState.update { it.copy(sendErrorMessage = cause.message ?: "The host could not complete that request.") } }
     private fun setMessages(messages: List<ChatMessage>, cached: Boolean) { _uiState.update { it.copy(messages = messages, transcriptMessages = messages.mapIndexed { index, row -> TranscriptMessage(index, "cached:$index", row.id, row) }, isViewingCachedData = cached, isLoading = false) } }
     override fun onCleared() {
+        parkPendingGoal()
         saveDraft()
         val turn = coordinator
         container.appScope.launch {
