@@ -10,11 +10,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cancel
@@ -40,18 +41,64 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import io.github.jcartu.hermex.model.ApprovalChoice
+import io.github.jcartu.hermex.model.JSONValue
 
-/**
- * Port of `ApprovalRequestOverlay.swift`: a modal scrim with a decision card —
- * header ("Approval required" + pending count), optional description, the
- * command in a horizontally scrollable monospace box, pattern-key chips, an
- * inline error line, and the five decision actions (Allow once / Allow
- * session / Always allow / Deny / Skip all this session). All actions are
- * disabled while a response is in flight.
- */
+/** Host-safe validation from `BotPendingRequest.swift` (#1104). */
+object ApprovalChoiceValidation {
+    /**
+     * A present malformed value can never be rebuilt: Deny is the only safe
+     * choice. An absent field uses [legacyChoices] for older hosts.
+     */
+    fun choices(
+        fieldPresent: Boolean,
+        rawValue: JSONValue?,
+        legacyChoices: List<ApprovalChoice> = ApprovalChoice.entries,
+    ): List<ApprovalChoice> {
+        if (!fieldPresent) return legacyChoices.distinct()
+        val array = rawValue?.arrayValue ?: return listOf(ApprovalChoice.DENY)
+        val offered = array.mapNotNull { value ->
+            value.string?.let(ApprovalChoice::fromRawValue)
+        }.distinct()
+        if (offered.isEmpty()) return listOf(ApprovalChoice.DENY)
+        return if (ApprovalChoice.DENY in offered) offered else offered + ApprovalChoice.DENY
+    }
+}
+
+data class ApprovalOverlayContent(
+    val description: String?,
+    val command: String?,
+    val scopeLine: String?,
+    val pendingCount: Int,
+    val choices: List<ApprovalChoice>,
+)
+
+/** Port of `ApprovalRequestOverlay.swift`, including 1.9 scope copy. */
 @Composable
 fun ApprovalRequestOverlay(
     prompt: ApprovalPromptState,
+    isResponding: Boolean,
+    errorMessage: String?,
+    onChoice: (ApprovalChoice) -> Unit,
+    onSkipAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val content = ApprovalOverlayContent(
+        description = prompt.pending.description,
+        command = prompt.pending.command,
+        scopeLine = ApprovalScopeFormatter.webUiLine(
+            keys = prompt.patternKeys,
+            description = prompt.pending.description,
+            command = prompt.pending.command,
+        ),
+        pendingCount = prompt.pendingCount.coerceAtLeast(1),
+        choices = ApprovalChoice.entries,
+    )
+    ApprovalRequestOverlay(content, isResponding, errorMessage, onChoice, onSkipAll, modifier)
+}
+
+@Composable
+fun ApprovalRequestOverlay(
+    content: ApprovalOverlayContent,
     isResponding: Boolean,
     errorMessage: String?,
     onChoice: (ApprovalChoice) -> Unit,
@@ -64,36 +111,31 @@ fun ApprovalRequestOverlay(
             .fillMaxSize()
             .zIndex(10f)
             .background(Color.Black.copy(alpha = 0.38f))
-            // Swallow taps so the transcript behind is inert (modal semantics).
-            .clickable(
-                interactionSource = scrimInteraction,
-                indication = null,
-                onClick = {},
-            ),
+            .clickable(scrimInteraction, indication = null, onClick = {}),
         contentAlignment = Alignment.Center,
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .padding(horizontal = 18.dp)
-                .widthIn(max = 520.dp),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 6.dp,
-            shadowElevation = 12.dp,
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp)
+                .widthIn(max = 520.dp)
+                .heightIn(max = 720.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
+                shadowElevation = 12.dp,
             ) {
-                ApprovalHeader(pendingCount = prompt.pendingCount)
-                ApprovalDetails(prompt = prompt, errorMessage = errorMessage)
-                ApprovalActions(
-                    isResponding = isResponding,
-                    onChoice = onChoice,
-                    onSkipAll = onSkipAll,
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    ApprovalHeader(content.pendingCount)
+                    ApprovalDetails(content, errorMessage)
+                    ApprovalActions(content.choices, isResponding, onChoice, onSkipAll)
+                }
             }
         }
     }
@@ -102,18 +144,11 @@ fun ApprovalRequestOverlay(
 @Composable
 private fun ApprovalHeader(pendingCount: Int) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Icon(
-            imageVector = Icons.Filled.Warning,
-            contentDescription = null,
-            tint = Color(0xFFFFCC00),
-        )
+        Icon(Icons.Filled.Warning, null, tint = Color(0xFFFFCC00))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Approval required", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Approval required",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                text = "Pending approvals: $pendingCount",
+                "Pending approvals: $pendingCount",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -122,127 +157,71 @@ private fun ApprovalHeader(pendingCount: Int) {
 }
 
 @Composable
-private fun ApprovalDetails(prompt: ApprovalPromptState, errorMessage: String?) {
+private fun ApprovalDetails(content: ApprovalOverlayContent, errorMessage: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        nonEmptyText(prompt.pending.description)?.let { description ->
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+        content.description?.trim()?.takeIf(String::isNotEmpty)?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium)
         }
-
-        nonEmptyText(prompt.pending.command)?.let { command ->
+        content.command?.trim()?.takeIf(String::isNotEmpty)?.let { command ->
             Box(
-                modifier = Modifier
+                Modifier
                     .fillMaxWidth()
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        shape = RoundedCornerShape(8.dp),
-                    )
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(8.dp))
                     .horizontalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = command,
+                    command,
                     modifier = Modifier.padding(10.dp),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 )
             }
         }
-
-        if (prompt.patternKeys.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Pattern keys",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                prompt.patternKeys.forEach { key ->
-                    Text(
-                        text = key,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        modifier = Modifier
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                shape = CircleShape,
-                            )
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                    )
-                }
-            }
+        content.scopeLine?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-
-        if (prompt.pendingCount > 1) {
+        if (content.pendingCount > 1) {
             Text(
-                text = "1 of ${prompt.pendingCount} pending",
+                "1 of ${content.pendingCount} pending",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-
-        nonEmptyText(errorMessage)?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+        errorMessage?.trim()?.takeIf(String::isNotEmpty)?.let { message ->
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Filled.Warning, null, tint = MaterialTheme.colorScheme.error)
+                Text(
+                    "$message\nThe host did not confirm that answer. You can try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun ApprovalActions(
+    choices: List<ApprovalChoice>,
     isResponding: Boolean,
     onChoice: (ApprovalChoice) -> Unit,
     onSkipAll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ApprovalDecisionButton(
-                title = "Allow once",
-                icon = Icons.Filled.CheckCircle,
-                prominent = true,
-                enabled = !isResponding,
-                onClick = { onChoice(ApprovalChoice.ONCE) },
-                modifier = Modifier.weight(1f),
-            )
-            ApprovalDecisionButton(
-                title = "Allow session",
-                icon = Icons.Filled.LockOpen,
-                prominent = false,
-                enabled = !isResponding,
-                onClick = { onChoice(ApprovalChoice.SESSION) },
-                modifier = Modifier.weight(1f),
-            )
+        choices.ifEmpty { listOf(ApprovalChoice.DENY) }.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { choice ->
+                    ApprovalDecisionButton(
+                        choice = choice,
+                        enabled = !isResponding,
+                        onClick = { onChoice(choice) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (row.size == 1) Box(Modifier.weight(1f))
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ApprovalDecisionButton(
-                title = "Always allow",
-                icon = Icons.Filled.Star,
-                prominent = false,
-                enabled = !isResponding,
-                onClick = { onChoice(ApprovalChoice.ALWAYS) },
-                modifier = Modifier.weight(1f),
-            )
-            ApprovalDecisionButton(
-                title = "Deny",
-                icon = Icons.Filled.Cancel,
-                prominent = false,
-                destructive = true,
-                enabled = !isResponding,
-                onClick = { onChoice(ApprovalChoice.DENY) },
-                modifier = Modifier.weight(1f),
-            )
-        }
-        OutlinedButton(
-            onClick = onSkipAll,
-            enabled = !isResponding,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Bolt,
-                contentDescription = null,
-                modifier = Modifier.padding(end = 6.dp),
-            )
+        OutlinedButton(onClick = onSkipAll, enabled = !isResponding, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Bolt, null, modifier = Modifier.padding(end = 6.dp))
             Text("Skip all this session")
         }
     }
@@ -250,35 +229,98 @@ private fun ApprovalActions(
 
 @Composable
 private fun ApprovalDecisionButton(
-    title: String,
-    icon: ImageVector,
-    prominent: Boolean,
+    choice: ApprovalChoice,
     enabled: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    destructive: Boolean = false,
+    modifier: Modifier,
 ) {
-    if (prominent) {
-        Button(onClick = onClick, enabled = enabled, modifier = modifier) {
-            Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    val (title, icon) = when (choice) {
+        ApprovalChoice.ONCE -> "Allow once" to Icons.Filled.CheckCircle
+        ApprovalChoice.SESSION -> "Allow session" to Icons.Filled.LockOpen
+        ApprovalChoice.ALWAYS -> "Always allow" to Icons.Filled.Star
+        ApprovalChoice.DENY -> "Deny" to Icons.Filled.Cancel
+    }
+    if (choice == ApprovalChoice.ONCE) {
+        Button(onClick, modifier, enabled = enabled) {
+            DecisionLabel(title, icon, prominent = true)
         }
     } else {
         OutlinedButton(
             onClick = onClick,
-            enabled = enabled,
             modifier = modifier,
-            colors = if (destructive) {
+            enabled = enabled,
+            colors = if (choice == ApprovalChoice.DENY) {
                 ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             } else {
                 ButtonDefaults.outlinedButtonColors()
             },
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-            Text(title, maxLines = 1)
+            DecisionLabel(title, icon, prominent = false)
         }
     }
 }
 
-private fun nonEmptyText(value: String?): String? =
-    value?.trim()?.takeIf { it.isNotEmpty() }
+@Composable
+private fun DecisionLabel(title: String, icon: ImageVector, prominent: Boolean) {
+    Icon(icon, null, modifier = Modifier.padding(end = 6.dp))
+    Text(title, fontWeight = if (prominent) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+}
+
+/** Exact scope sentences from `Models/Approval.swift` for legacy webui hosts. */
+object ApprovalScopeFormatter {
+    private val oneTimeKeys = setOf("mcp_elicitation", "protected_instruction_file")
+
+    fun webUiLine(keys: List<String>, description: String?, command: String?): String? {
+        if (keys.isEmpty() || keys.any(oneTimeKeys::contains)) return null
+        val subject = subject(keys, description, command)
+        return when (subject) {
+            is Subject.Shell -> "Allow session covers every “${subject.label}” in this session; Always allow covers it on this server from now on."
+            is Subject.Plugin -> "Allow session covers every ${subject.tool} call for this reason in this session; Always allow covers it on this server from now on."
+            Subject.Python -> "Allow session covers every Python script in this session; Always allow covers every Python script on this server from now on."
+            Subject.Ssh -> "Allow session covers writes to SSH config in this session; Always allow covers them on this server from now on."
+            is Subject.Computer -> "Allow session covers computer use: ${subject.action} (${subject.mode}) in this session; Always allow covers it on this server from now on."
+            Subject.Security -> "Allow session covers this security finding in this session; Always allow covers it on this server from now on."
+            is Subject.ShellAndSecurity -> "Allow session covers “${subject.label}” and this security finding in this session; Always allow covers both on this server from now on."
+            Subject.Other -> "Allow session covers every action like this one in this session; Always allow covers it on this server from now on."
+        }
+    }
+
+    private sealed interface Subject {
+        data class Shell(val label: String) : Subject
+        data class Plugin(val tool: String) : Subject
+        data class Computer(val action: String, val mode: String) : Subject
+        data class ShellAndSecurity(val label: String) : Subject
+        data object Python : Subject
+        data object Ssh : Subject
+        data object Security : Subject
+        data object Other : Subject
+    }
+
+    private fun subject(keys: List<String>, description: String?, command: String?): Subject {
+        val findings = keys.filter { it.startsWith("tirith:") }
+        val others = keys.filterNot { it.startsWith("tirith:") }
+        if (findings.size == 1 && others.isEmpty()) return Subject.Security
+        if (findings.isEmpty() && others.size == 1) return subject(others.single(), description, command)
+        if (findings.size == 1 && others.size == 1) {
+            val shell = subject(others.single(), description, null)
+            if (shell is Subject.Shell) return Subject.ShellAndSecurity(shell.label)
+        }
+        return Subject.Other
+    }
+
+    private fun subject(key: String, description: String?, command: String?): Subject {
+        if (key == "execute_code") return Subject.Python
+        if (key == "ssh_config_write") return Subject.Ssh
+        if (key.startsWith("plugin_rule:")) {
+            val rule = key.removePrefix("plugin_rule:")
+            val tool = Regex("^(.+):[0-9a-f]{12}$").matchEntire(rule)?.groupValues?.get(1)
+                ?: Regex("^<([^<>\\s]+)>").find(command.orEmpty())?.groupValues?.get(1)
+            return tool?.let(Subject::Plugin) ?: Subject.Other
+        }
+        Regex("^cua:([^:]+):([^:]+)$").matchEntire(key)?.let {
+            return Subject.Computer(it.groupValues[1], it.groupValues[2])
+        }
+        val parts = description?.split("; ")?.map(String::trim).orEmpty()
+        return if (key in parts) Subject.Shell(key) else Subject.Other
+    }
+}

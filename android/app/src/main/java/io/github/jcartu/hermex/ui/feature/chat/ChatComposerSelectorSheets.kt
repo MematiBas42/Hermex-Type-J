@@ -3,6 +3,7 @@ package io.github.jcartu.hermex.ui.feature.chat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,10 +19,12 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,7 +45,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.jcartu.hermex.model.ProfileSummary
 import io.github.jcartu.hermex.ui.feature.models.ModelPickerSheet
-import io.github.jcartu.hermex.ui.feature.models.ReasoningEffortSelector
+import io.github.jcartu.hermex.ui.feature.models.ProviderGlyph
+import io.github.jcartu.hermex.ui.feature.models.ReasoningEffortOption
 import io.github.jcartu.hermex.ui.feature.models.WorkspacePickerSheet
 
 internal enum class ChatComposerSelectorSheet { MODEL, PROFILE, WORKSPACE }
@@ -59,6 +63,13 @@ internal fun ChatComposerSelectorChips(
     modifier: Modifier = Modifier,
     trailingContent: @Composable () -> Unit = {},
 ) {
+    var modelEffortMenuOpen by remember { mutableStateOf(false) }
+    val selectedEffortTitle = state.reasoningEffort
+        ?.takeIf { state.showsReasoningEffortControl }
+        ?.let(ReasoningEffortOption::titleFor)
+    val modelEffortTitle = listOfNotNull(state.selectedModelTitle, selectedEffortTitle)
+        .joinToString(" · ")
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -66,29 +77,72 @@ internal fun ChatComposerSelectorChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AssistChip(
-            onClick = onOpenModel,
-            enabled = enabled,
-            label = {
-                Text(
-                    text = state.selectedModelTitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            leadingIcon = {
-                Icon(Icons.Filled.SmartToy, contentDescription = null, modifier = Modifier.size(18.dp))
-            },
-        )
-
-        if (state.showsReasoningEffortControl) {
-            ReasoningEffortSelector(
-                selectedEffort = state.reasoningEffort,
-                supportedEfforts = state.supportedReasoningEfforts,
-                onSelectEffort = onSelectReasoningEffort,
+        Box {
+            AssistChip(
+                onClick = { modelEffortMenuOpen = true },
                 enabled = enabled,
-                supportsReasoningEffort = true,
+                label = {
+                    Text(
+                        text = modelEffortTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                leadingIcon = {
+                    ProviderGlyph(
+                        providerId = state.selectedModelProviderId,
+                        modifier = Modifier.size(20.dp),
+                        contentDescription = null,
+                    )
+                },
+                trailingIcon = {
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = "Choose model or reasoning effort",
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
             )
+            DropdownMenu(
+                expanded = modelEffortMenuOpen,
+                onDismissRequest = { modelEffortMenuOpen = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Choose model…") },
+                    leadingIcon = {
+                        ProviderGlyph(
+                            providerId = state.selectedModelProviderId,
+                            modifier = Modifier.size(20.dp),
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        modelEffortMenuOpen = false
+                        onOpenModel()
+                    },
+                )
+                if (state.showsReasoningEffortControl) {
+                    ReasoningEffortOption.optionsForSupportedEfforts(state.supportedReasoningEfforts)
+                        .forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text("Reasoning: ${option.title}") },
+                                leadingIcon = {
+                                    if (state.reasoningEffort == option.id) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    modelEffortMenuOpen = false
+                                    onSelectReasoningEffort(option.id)
+                                },
+                            )
+                        }
+                }
+            }
         }
 
         AssistChip(

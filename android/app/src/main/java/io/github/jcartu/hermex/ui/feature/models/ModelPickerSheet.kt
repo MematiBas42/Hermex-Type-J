@@ -55,6 +55,13 @@ import io.github.jcartu.hermex.model.ModelCatalogOption
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
 import io.github.jcartu.hermex.ui.theme.Gold
+/** Optional first row for surfaces where an unset/default model is a valid choice. */
+data class ModelPickerClearAction(
+    val title: String,
+    val isSelected: Boolean,
+    val action: () -> Unit,
+)
+
 
 /**
  * Model picker — port of `ComposerModelPickerSheet`
@@ -82,6 +89,7 @@ fun ModelPickerSheet(
     onDismiss: () -> Unit,
     currentModel: String?,
     currentModelProvider: String? = null,
+    clearAction: ModelPickerClearAction? = null,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as HermexApplication).container
@@ -111,6 +119,14 @@ fun ModelPickerSheet(
             onGroupExpandedChange = viewModel::setGroupExpanded,
             onToggleFavorite = viewModel::toggleFavorite,
             onDeleteSavedCustom = viewModel::deleteSavedCustom,
+            clearAction = clearAction?.let { clear ->
+                clear.copy(
+                    action = {
+                        clear.action()
+                        onDismiss()
+                    },
+                )
+            },
             onRetry = viewModel::loadCatalog,
             onSelect = { option ->
                 viewModel.select(option)
@@ -133,6 +149,7 @@ internal fun ModelPickerContent(
     onDeleteSavedCustom: (ModelCatalogOption) -> Unit,
     onRetry: () -> Unit,
     onSelect: (ModelCatalogOption) -> Unit,
+    clearAction: ModelPickerClearAction? = null,
 ) {
     Column(Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -161,6 +178,7 @@ internal fun ModelPickerContent(
                 onGroupExpandedChange = onGroupExpandedChange,
                 onToggleFavorite = onToggleFavorite,
                 onDeleteSavedCustom = onDeleteSavedCustom,
+                clearAction = clearAction,
                 onSelect = onSelect,
             )
         }
@@ -176,11 +194,18 @@ private fun ModelPickerList(
     onToggleFavorite: (ModelCatalogOption) -> Unit,
     onDeleteSavedCustom: (ModelCatalogOption) -> Unit,
     onSelect: (ModelCatalogOption) -> Unit,
+    clearAction: ModelPickerClearAction?,
 ) {
     val displayGroups = state.displayGroups
     val listState = rememberLazyListState()
 
     LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+        if (clearAction != null && state.searchText.isBlank()) {
+            item(key = "clear-selection") {
+                ModelPickerClearRow(clearAction)
+            }
+        }
+
         item(key = "custom-entry") {
             CustomModelEntry(
                 state = state,
@@ -235,6 +260,33 @@ private fun ModelPickerList(
         }
 
         item(key = "bottom-spacer") { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun ModelPickerClearRow(clearAction: ModelPickerClearAction) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = clearAction.action)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = clearAction.title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (clearAction.isSelected) {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = "Selected",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -392,6 +444,11 @@ private fun ModelOptionRow(
             contentDescription = null,
             modifier = Modifier.size(20.dp),
             tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        )
+        ProviderGlyph(
+            providerId = option.providerID,
+            modifier = Modifier.size(22.dp),
+            contentDescription = option.providerID?.let { "$it provider" },
         )
 
         Column(Modifier.weight(1f)) {

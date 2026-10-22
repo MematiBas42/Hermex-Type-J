@@ -1,6 +1,7 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,11 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
-import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.BrokenImage
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.InsertDriveFile
@@ -28,7 +27,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,22 +47,19 @@ import coil.ImageLoader
 import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
+import io.github.jcartu.hermex.core.media.DocumentPreview
+import io.github.jcartu.hermex.core.media.DocumentPreviewOpenResult
 import io.github.jcartu.hermex.model.ImagePreviewDownsampler
 import io.github.jcartu.hermex.model.MessageAttachment
 import io.github.jcartu.hermex.model.inferredIsAudio
 import java.util.Locale
+import kotlinx.coroutines.launch
 
-/**
- * Transcript-side attachment rendering — port of the attachment previews in
- * `MessageBubbleView.swift` (audio bars stacked above a 2-column square
- * image/file grid). Audio playback is out of scope for the Android v1: an
- * audio attachment renders as a chip with the audiotrack glyph and its
- * display name instead of the full inline player.
- */
 private const val GRID_COLUMNS = 2
 private val CELL_SIZE = 118.dp
 private val CELL_SPACING = 8.dp
 
+/** Transcript attachment grid + inline audio, port of `MessageBubbleView.swift`. */
 @Composable
 fun MessageAttachmentsGroup(
     attachments: List<MessageAttachment>,
@@ -67,12 +67,16 @@ fun MessageAttachmentsGroup(
     imageLoader: ImageLoader?,
     modifier: Modifier = Modifier,
     horizontalAlignment: Alignment.Horizontal = Alignment.End,
+    attachmentDataResolver: suspend (path: String) -> ByteArray? = { null },
+    onOpenWorkspaceFile: (String) -> Unit = {},
 ) {
     if (attachments.isEmpty()) return
-
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var previewError by remember { mutableStateOf<String?>(null) }
     val audioItems = attachments.filter { it.inferredIsAudio }
-    val gridItems = attachments.filter { !it.inferredIsAudio }
-    val contentWidth = CELL_SIZE * GRID_COLUMNS + CELL_SPACING * (GRID_COLUMNS - 1)
+    val gridItems = attachments.filterNot { it.inferredIsAudio }
+    val contentWidth = CELL_SIZE * GRID_COLUMNS + CELL_SPACING
 
     Column(
         modifier = modifier,
@@ -80,188 +84,153 @@ fun MessageAttachmentsGroup(
         verticalArrangement = Arrangement.spacedBy(CELL_SPACING),
     ) {
         audioItems.forEach { attachment ->
-            AudioAttachmentChip(
-                attachment = attachment,
+            val path = attachment.resolvedAttachmentPath
+            InlineAudioPlayerView(
+                title = attachmentDisplayName(attachment, "Audio"),
+                load = { path?.let { attachmentDataResolver(it) } },
                 modifier = Modifier.widthIn(max = contentWidth),
             )
         }
-
         gridItems.chunked(GRID_COLUMNS).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(CELL_SPACING)) {
                 row.forEach { attachment ->
                     if (attachment.inferredIsImage) {
-                        ImageAttachmentCell(
-                            attachment = attachment,
-                            attachmentUrlResolver = attachmentUrlResolver,
-                            imageLoader = imageLoader,
-                        )
+                        ImageAttachmentCell(attachment, attachmentUrlResolver, imageLoader)
                     } else {
-                        FileAttachmentCell(attachment = attachment)
+                        FileAttachmentCell(attachment) {
+                            val path = attachment.resolvedAttachmentPath ?: return@FileAttachmentCell
+                            scope.launch {
+                                val bytes = attachmentDataResolver(path)
+                                if (bytes == null) {
+                                    onOpenWorkspaceFile(path)
+                                } else {
+                                    val result = DocumentPreview.open(
+                                        context = context,
+                                        filename = attachmentDisplayName(attachment),
+                                        mimeType = attachment.mime,
+                                        bytes = bytes,
+                                    )
+                                    previewError = (result as? DocumentPreviewOpenResult.Rejected)?.message
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+        previewError?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.widthIn(max = contentWidth),
+            )
+        }
     }
 }
 
-/**
- * Image detection ported from `GridAttachmentCell.inferredIsImage`: explicit
- * server flag first, then MIME type, then file extension for older sessions.
- */
 internal val MessageAttachment.inferredIsImage: Boolean
     get() {
         if (isImage == true) return true
         if (mime?.lowercase(Locale.ROOT)?.startsWith("image/") == true) return true
-        val ext = fileExtension(name ?: resolvedAttachmentPath ?: "")
-        return ext in imageExtensions
+        return fileExtension(name ?: resolvedAttachmentPath.orEmpty()) in IMAGE_EXTENSIONS
     }
 
-/**
- * The server saves uploads to the workspace root. Use the explicit path when
- * available; for older sessions fall back to the filename.
- */
 internal val MessageAttachment.resolvedAttachmentPath: String?
-    get() {
-        path?.takeIf { it.isNotEmpty() }?.let { return it }
-        name?.takeIf { it.isNotEmpty() }?.let { return it }
-        return null
-    }
+    get() = path?.takeIf(String::isNotEmpty) ?: name?.takeIf(String::isNotEmpty)
 
-/** Display name mirroring `GridAttachmentCell.fileDisplayName`. */
 internal fun attachmentDisplayName(attachment: MessageAttachment, fallback: String = "File"): String {
-    attachment.name?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
-    attachment.path?.trim()?.takeIf { it.isNotEmpty() }?.let { path ->
-        val lastComponent = MessageAttachment.lastPathComponent(path)
-        return lastComponent.ifEmpty { path }
+    attachment.name?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+    attachment.path?.trim()?.takeIf(String::isNotEmpty)?.let { path ->
+        return MessageAttachment.lastPathComponent(path).ifEmpty { path }
     }
     return fallback
 }
 
 @Composable
-private fun AudioAttachmentChip(attachment: MessageAttachment, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Audiotrack,
-                contentDescription = "Audio attachment",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = attachmentDisplayName(attachment, fallback = "Audio"),
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
 private fun ImageAttachmentCell(
     attachment: MessageAttachment,
-    attachmentUrlResolver: suspend (path: String) -> String?,
+    attachmentUrlResolver: suspend (String) -> String?,
     imageLoader: ImageLoader?,
-    modifier: Modifier = Modifier,
 ) {
     val path = attachment.resolvedAttachmentPath
-    val resolvedUrl by produceState<String?>(initialValue = null, path) {
+    val resolvedUrl by produceState<String?>(null, path) {
         value = path?.let { attachmentUrlResolver(it) }
     }
-
+    var lightbox by remember(path) { mutableStateOf(false) }
     Surface(
-        modifier = modifier.size(CELL_SIZE),
+        modifier = Modifier.size(CELL_SIZE).clickable(enabled = resolvedUrl != null) { lightbox = true },
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         val url = resolvedUrl
         if (url == null) {
-            AttachmentImagePlaceholder(showsProgress = path != null)
+            AttachmentImagePlaceholder(path != null)
         } else {
             val context = LocalContext.current
-            val request = ImageRequest.Builder(context)
-                .data(url)
-                // Same preview cap the iOS downsampler applies to attachments.
-                .size(ImagePreviewDownsampler.attachmentMaxPixelSize)
-                .build()
+            val request = remember(url) {
+                ImageRequest.Builder(context)
+                    .data(url)
+                    .size(ImagePreviewDownsampler.attachmentMaxPixelSize)
+                    .build()
+            }
             SubcomposeAsyncImage(
                 model = request,
                 imageLoader = imageLoader ?: context.imageLoader,
-                contentDescription = "Image attachment ${attachmentDisplayName(attachment, fallback = "image")}",
+                contentDescription = "Image attachment ${attachmentDisplayName(attachment, "image")}",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                loading = { AttachmentImagePlaceholder(showsProgress = true) },
-                error = { AttachmentImagePlaceholder(showsProgress = false) },
+                loading = { AttachmentImagePlaceholder(true) },
+                error = { AttachmentImagePlaceholder(false) },
             )
         }
+    }
+    if (lightbox && resolvedUrl != null) {
+        ImageLightboxView(
+            model = resolvedUrl!!,
+            title = attachmentDisplayName(attachment, "Image"),
+            imageLoader = imageLoader,
+            onDismiss = { lightbox = false },
+        )
     }
 }
 
 @Composable
-private fun AttachmentImagePlaceholder(showsProgress: Boolean, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+private fun AttachmentImagePlaceholder(showsProgress: Boolean) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (showsProgress) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else {
-            Icon(
-                imageVector = Icons.Rounded.BrokenImage,
-                contentDescription = "Image unavailable",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(28.dp),
-            )
+            Icon(Icons.Rounded.BrokenImage, "Image unavailable", modifier = Modifier.size(28.dp))
         }
     }
 }
 
 @Composable
-private fun FileAttachmentCell(attachment: MessageAttachment, modifier: Modifier = Modifier) {
-    val ext = fileExtension(attachment.name ?: "")
+private fun FileAttachmentCell(attachment: MessageAttachment, onClick: () -> Unit) {
+    val ext = fileExtension(attachment.name ?: attachment.path.orEmpty())
     val displayName = attachmentDisplayName(attachment)
-    val sizeLabel = attachment.size?.let { humanReadableSize(it) }
+    val sizeLabel = attachment.size?.let(::humanReadableSize)
     val badge = buildString {
-        append(if (ext.isEmpty()) "FILE" else ext.uppercase(Locale.ROOT).take(5))
-        if (sizeLabel != null) {
-            append(" · ")
-            append(sizeLabel)
-        }
+        append(ext.uppercase(Locale.ROOT).take(5).ifEmpty { "FILE" })
+        sizeLabel?.let { append(" · "); append(it) }
     }
-
     Surface(
-        modifier = modifier.size(CELL_SIZE),
+        modifier = Modifier.size(CELL_SIZE).clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(9.dp),
+            Modifier.fillMaxSize().padding(9.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Icon(
-                imageVector = fileIcon(ext),
-                contentDescription = "File attachment $displayName",
-                tint = fileBadgeColor(ext),
-                modifier = Modifier.size(28.dp),
-            )
+            Icon(fileIcon(ext), "File attachment $displayName", tint = fileBadgeColor(ext), modifier = Modifier.size(28.dp))
             Spacer(Modifier.size(5.dp))
             Text(
-                text = displayName,
+                displayName,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
@@ -270,26 +239,22 @@ private fun FileAttachmentCell(attachment: MessageAttachment, modifier: Modifier
             )
             Spacer(Modifier.size(5.dp))
             Text(
-                text = badge,
+                badge,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = fileBadgeColor(ext),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-private val imageExtensions =
-    setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif")
+private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif")
 
-/** `URL(fileURLWithPath:).pathExtension` semantics, lowercased. */
 private fun fileExtension(path: String): String {
     val component = path.trimEnd('/').substringAfterLast('/')
     val dot = component.lastIndexOf('.')
-    if (dot <= 0) return ""
-    return component.substring(dot + 1).lowercase(Locale.ROOT)
+    return if (dot <= 0) "" else component.substring(dot + 1).lowercase(Locale.ROOT)
 }
 
 private fun fileIcon(ext: String): ImageVector = when (ext) {
@@ -308,7 +273,6 @@ private fun fileBadgeColor(ext: String): Color = when (ext) {
     else -> MaterialTheme.colorScheme.primary
 }
 
-/** Compact byte-count label for the file cell badge (e.g. "1.2 MB"). */
 internal fun humanReadableSize(bytes: Int): String = when {
     bytes >= 1_048_576 -> String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0)
     bytes >= 1_024 -> String.format(Locale.US, "%.0f KB", bytes / 1_024.0)

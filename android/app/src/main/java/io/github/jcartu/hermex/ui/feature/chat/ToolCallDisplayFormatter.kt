@@ -8,6 +8,8 @@ import kotlinx.serialization.json.Json
 data class ToolCallDisplayContent(
     val argumentRows: List<ToolCallArgumentDisplay>,
     val result: ToolCallResultDisplay?,
+    /** An edit's parsed change, drawn before remaining arguments when expanded. */
+    val diff: ToolCallDiff? = null,
 )
 
 data class ToolCallArgumentDisplay(
@@ -35,6 +37,32 @@ object ToolCallDisplayFormatter {
         argumentRows = argumentRows(toolCall.args),
         result = resultDisplay(toolCall.preview, toolCall.name),
     )
+
+    /** Port of `openedContent(for:)`: parsed diff replaces the fields it represents. */
+    fun openedContent(toolCall: ToolCall): ToolCallDisplayContent {
+        val content = content(toolCall)
+        val diff = ToolCallDiff.resolve(toolCall) ?: return content
+        return ToolCallDisplayContent(
+            argumentRows = content.argumentRows.filterNot { it.key in diff.consumedArgumentKeys },
+            result = content.result.takeUnless { diff.hidesResult },
+            diff = diff,
+        )
+    }
+
+    /**
+     * Whether a JSON result envelope reports failure. Null means the preview
+     * was not an object envelope and callers may use text heuristics.
+     */
+    fun envelopeReportsFailure(preview: String?): Boolean? {
+        val objectValue = nonEmpty(preview)
+            ?.let(::parsedJSONValue)
+            ?.objectValue
+            ?: return null
+        if (errorText(objectValue["error"]) != null) return true
+        return exitCode(objectValue["exit_code"] ?: objectValue["exitCode"])
+            ?.let { it != 0L }
+            ?: false
+    }
 
     fun displayName(toolCall: ToolCall): String = toolCall.displayName
 
@@ -210,7 +238,7 @@ object ToolCallDisplayFormatter {
         return null
     }
 
-    private fun parsedJSONValue(text: String): JSONValue? {
+    internal fun parsedJSONValue(text: String): JSONValue? {
         for (candidate in jsonCandidates(text)) {
             val value = decodedJSONValue(candidate) ?: continue
             return unwrappedNestedJSONValue(value)

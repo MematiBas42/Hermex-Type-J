@@ -81,6 +81,89 @@ data class MessageAttachment(
             return content.substring(0, marker.startIndex).trimEnd()
         }
 
+        /** Parsed display text and chips for a Hermes-host transcript row (#1012). */
+        data class HermesReferenceResult(
+            val text: String,
+            val attachments: List<MessageAttachment>,
+        )
+
+        /**
+         * Port of `MessageAttachment.hermesReferences(in:)`: strips the exact
+         * image/file reference blocks Hermex sends to Hermes and turns them
+         * into attachment chips. Ordinary user text is returned unchanged.
+         */
+        fun hermesReferences(content: String): HermesReferenceResult {
+            if (
+                "@file:" !in content &&
+                "[The user attached an image: " !in content &&
+                " Context ---" !in content
+            ) return HermesReferenceResult(content, emptyList())
+
+            val footer = HERMES_CONTEXT_FOOTER.find(content)
+            val body = footer?.let { content.substring(0, it.range.first) } ?: content
+            val kept = mutableListOf<String>()
+            val attachments = mutableListOf<MessageAttachment>()
+            body.split("\n\n").forEach { block ->
+                val line = block.trim()
+                val image = HERMES_IMAGE_REFERENCE.matchEntire(line)
+                val file = HERMES_FILE_REFERENCE.matchEntire(line)
+                when {
+                    image != null -> attachments += MessageAttachment(
+                        name = hermesImageName(image.groupValues[1]),
+                        path = image.groupValues[2],
+                        isImage = true,
+                    )
+                    file != null -> {
+                        val path = file.groupValues.drop(1).firstOrNull(String::isNotEmpty)
+                        if (path != null) {
+                            attachments += MessageAttachment(
+                                name = hermesFileName(path),
+                                path = path,
+                                isImage = false,
+                            )
+                        }
+                    }
+                    else -> kept += block
+                }
+            }
+            if (footer == null && attachments.isEmpty()) {
+                return HermesReferenceResult(content, emptyList())
+            }
+            return HermesReferenceResult(kept.joinToString("\n\n").trimEnd(), attachments)
+        }
+
+        /** Display-safe title/preview with Hermes attachment references removed. */
+        fun hermesTitle(value: String?): String? {
+            val text = value?.trim()?.takeIf(String::isNotEmpty) ?: return null
+            if ('[' !in text && '@' !in text) return text
+            val parsed = hermesReferences(text)
+            if (parsed.text != text || parsed.attachments.isNotEmpty()) {
+                val typed = parsed.text.replace(Regex("\\s+"), " ").trim()
+                return typed.ifEmpty { parsed.attachments.firstOrNull()?.name }
+            }
+            val names = mutableListOf<String>()
+            var stripped = HERMES_IMAGE_INLINE.replace(text) { match ->
+                names += hermesImageName(match.groupValues[1])
+                ""
+            }
+            stripped = HERMES_FILE_INLINE.replace(stripped) { match ->
+                val path = match.groupValues.drop(1).firstOrNull(String::isNotEmpty).orEmpty()
+                if (path.isNotEmpty()) names += hermesFileName(path)
+                ""
+            }
+            val typed = stripped.replace(Regex("\\s+"), " ").trim()
+            return typed.ifEmpty { names.firstOrNull() ?: text }
+        }
+
+        private fun hermesImageName(value: String): String =
+            value.replace(Regex("^dashboard_\\d{8}_\\d{6}_[0-9a-f]{8}_"), "")
+
+        private fun hermesFileName(value: String): String =
+            lastPathComponent(value).replace(
+                Regex("^[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}-"),
+                "",
+            )
+
         private data class Marker(
             val startIndex: Int,
             val references: List<String>,
@@ -131,6 +214,18 @@ data class MessageAttachment(
 
         internal fun parentPath(path: String): String =
             path.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
+
+        private val HERMES_IMAGE_REFERENCE = Regex(
+            """\[The user attached an image: ([^\n]*)]\n\[Examine it with the vision_analyze tool using image_url: (/[^\n]*)]""",
+        )
+        private val HERMES_FILE_REFERENCE =
+            Regex("""@file:(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|(\S+))""")
+        private val HERMES_CONTEXT_FOOTER =
+            Regex("""(?m)(?:^|\n)--- (?:Context Warnings|Attached Context) ---[ \t]*(?:\n|$)""")
+        private val HERMES_IMAGE_INLINE =
+            Regex("""\[The user attached an image: ([^]]*)]""")
+        private val HERMES_FILE_INLINE =
+            Regex("""@file:(?:`([^`]+)`|"([^"]+)"|'([^']+)'|(\S+))""")
     }
 }
 

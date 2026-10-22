@@ -20,7 +20,7 @@ class MarkdownMathFormatterTest {
         val input = """Use ${'$'}x^2 + y^2 = z^2${'$'} and \(e^{i\pi}+1=0\)."""
 
         assertEquals(
-            """Use `x^2 + y^2 = z^2` and `e^{i\pi}+1=0`.""",
+            """Use `x² + y² = z²` and `eⁱπ+1=0`.""",
             MarkdownMathFormatter.format(input),
         )
     }
@@ -46,7 +46,7 @@ class MarkdownMathFormatterTest {
         """.trimIndent()
         val formatted = MarkdownMathFormatter.format(input)
 
-        assertTrue(formatted.contains("```latex\n\\frac{1}{2}\n```"))
+        assertTrue(formatted.contains("```latex\n1/2\n```"))
         assertFalse(formatted.contains("${'$'}${'$'}"))
         assertTrue(formatted.startsWith("Before"))
         assertTrue(formatted.endsWith("After"))
@@ -93,7 +93,7 @@ class MarkdownMathFormatterTest {
             """.trimIndent(),
             display.latex,
         )
-        assertTrue(MarkdownMathFormatter.format(input).contains("```latex\n${display.latex}\n```"))
+        assertTrue(MarkdownMathFormatter.format(input).contains("```latex\nx = 1\ny = 2\n```"))
     }
 
     @Test
@@ -110,7 +110,7 @@ class MarkdownMathFormatterTest {
 
         assertTrue(formatted.contains("val equation = \"${'$'}x^2${'$'}\""))
         assertTrue(formatted.contains("`${'$'}y^2${'$'}`"))
-        assertTrue(formatted.contains("but `z^2` changes"))
+        assertTrue(formatted.contains("but `z²` changes"))
         assertEquals(1, MarkdownMathSegmenter.segments(input).filterIsInstance<MarkdownMathSegment.InlineMath>().size)
     }
 
@@ -124,6 +124,21 @@ class MarkdownMathFormatterTest {
 
         assertEquals(input, MarkdownMathFormatter.format(input))
         assertFalse(MarkdownMathSegmenter.segments(input).containsMath)
+    }
+
+    @Test
+    fun `inline subscripts superscripts assignments and numeric tuples render accurately`() {
+        val input =
+            """${'$'}Q_{447}${'$'} ${'$'}x_{i,j}^2${'$'} ${'$'}E=[4,-2]${'$'} ${'$'}(4,-2)${'$'} ${'$'}M_S${'$'}"""
+        val formatted = MarkdownMathFormatter.format(input)
+
+        assertEquals("`Q₄₄₇` `xᵢ,ⱼ²` `E=[4,-2]` `(4,-2)` `M_S`", formatted)
+        assertEquals(
+            listOf("Q_{447}", "x_{i,j}^2", "E=[4,-2]", "(4,-2)", "M_S"),
+            MarkdownMathSegmenter.segments(input)
+                .filterIsInstance<MarkdownMathSegment.InlineMath>()
+                .map { it.latex },
+        )
     }
 
     @Test

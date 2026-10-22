@@ -3,8 +3,7 @@ package io.github.jcartu.hermex.ui.feature.models
 import io.github.jcartu.hermex.model.WorkspaceRoot
 import io.github.jcartu.hermex.model.WorkspaceSuggestionsResponse
 import io.github.jcartu.hermex.model.WorkspacesResponse
-import io.github.jcartu.hermex.net.ApiError
-import io.github.jcartu.hermex.net.HermesApi
+import io.github.jcartu.hermex.net.*
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk

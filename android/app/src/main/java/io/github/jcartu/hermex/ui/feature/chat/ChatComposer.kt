@@ -1,23 +1,29 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Stop
@@ -26,10 +32,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -38,35 +42,72 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import io.github.jcartu.hermex.model.PendingAttachment
-import java.io.ByteArrayOutputStream
-import java.io.IOException
-import java.io.InputStream
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-/** Native Android port of the iOS chat message composer. */
+/**
+ * Native Android port of `Features/Chat/ChatComposerView.swift`.
+ *
+ * Optional callbacks isolate the composer-owned UI from ChatViewModel-owned
+ * behavior while preserving the old call site. ChatPane supplies them from the
+ * final ChatCore API (`send(mode)`, token updates, recall, file suggestions).
+ */
 @Composable
 fun ChatComposer(
     state: ChatUiState,
     actions: ChatComposerActions,
     modifier: Modifier = Modifier,
+    draftTokens: List<ComposerToken>? = null,
+    onDraftTokensChange: ((List<ComposerToken>) -> Unit)? = null,
+    loadFileSuggestions: (suspend (String) -> List<ComposerFileSuggestion>)? = null,
+    onSendMode: ((ComposerSendModeChoice) -> Unit)? = null,
+    recallLastUserMessage: (() -> String?)? = null,
+    hapticsEnabled: Boolean = true,
+    attachmentCacheNamespace: String? = null,
+    uploadAttachmentWithPreview: ((ByteArray, String, ByteArray?) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var activeSheet by remember { mutableStateOf<ChatComposerSelectorSheet?>(null) }
+    var showsAttachmentPicker by remember { mutableStateOf(false) }
     var dismissedSendError by remember { mutableStateOf<String?>(null) }
     var dismissedConfigurationError by remember { mutableStateOf<String?>(null) }
+    var selection by remember(state.sessionId, attachmentCacheNamespace) {
+        mutableStateOf(TextRange(state.draft.length))
+    }
+    var caretRequestSequence by remember { mutableLongStateOf(0L) }
+    var caretRequest by remember { mutableStateOf<ComposerCaretRequest?>(null) }
+
+    val knownSkills = remember(state.skillSuggestions) {
+        state.skillSuggestions.associate { it.slashName to it.name }
+    }
+    val effectiveTokens = remember(state.draft, draftTokens, knownSkills) {
+        draftTokens?.takeIf { it.toServerText() == state.draft }
+            ?: parseComposerTokens(state.draft, knownSkills = knownSkills)
+    }
+    val fileController = remember(state.sessionId, state.selectedWorkspacePath, attachmentCacheNamespace) {
+        ComposerFileAutocompleteController()
+    }
+    val trigger = remember(state.draft, selection) {
+        detectComposerCaretTrigger(
+            draft = state.draft,
+            selectionStart = selection.start,
+            selectionEnd = selection.end,
+        )
+    }
 
     LaunchedEffect(state.sendErrorMessage) {
         if (state.sendErrorMessage == null) dismissedSendError = null
@@ -75,46 +116,98 @@ fun ChatComposer(
         if (state.composerConfigurationErrorMessage == null) dismissedConfigurationError = null
     }
 
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents(),
-    ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+    fun moveCaret(caret: Int) {
+        caretRequestSequence += 1
+        caretRequest = ComposerCaretRequest(caretRequestSequence, caret)
+        selection = TextRange(caret)
+    }
+
+    fun publishDraft(text: String) {
+        if (onDraftTokensChange == null) {
+            actions.updateDraft(text)
+        } else {
+            val paths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
+                .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
+            onDraftTokensChange(parseComposerTokens(text, knownPaths = paths, knownSkills = knownSkills))
+        }
+    }
+
+    fun publishTokenCompletion(completion: ComposerCompletion, selectedToken: ComposerToken) {
+        val knownPaths = effectiveTokens.filterIsInstance<ComposerToken.PathChip>()
+            .mapTo(linkedSetOf(), ComposerToken.PathChip::path)
+            .apply {
+                if (selectedToken is ComposerToken.PathChip) add(selectedToken.path)
+            }
+        val completionSkills = knownSkills.toMutableMap().apply {
+            if (selectedToken is ComposerToken.SkillChip) {
+                put(io.github.jcartu.hermex.model.SlashSkillFormatter.slug(selectedToken.name), selectedToken.name)
+            }
+        }
+        val tokens = parseComposerTokens(
+            text = completion.draft,
+            knownPaths = knownPaths,
+            knownSkills = completionSkills,
+        )
+        if (onDraftTokensChange != null) onDraftTokensChange(tokens) else actions.updateDraft(completion.draft)
+        moveCaret(completion.caret)
+    }
+
+    fun applySlashSelection(selected: ComposerAutocompleteSelection) {
+        val activeTrigger = trigger?.takeIf { it.kind == ComposerTriggerKind.SLASH } ?: return
+        val completion = activeTrigger.applying(selected.replacement, state.draft)
+        val token = selected.token
+        if (token != null) publishTokenCompletion(completion, token) else {
+            publishDraft(completion.draft)
+            moveCaret(completion.caret)
+        }
+    }
+
+    fun applyFileSelection(match: ComposerFileSuggestion) {
+        val activeTrigger = trigger?.takeIf { it.kind == ComposerTriggerKind.FILE } ?: return
+        val replacement = if (match.isDirectory) "@${match.path.trimEnd('/')}/" else "@${match.path} "
+        val completion = activeTrigger.applying(replacement, state.draft)
+        if (match.isDirectory) {
+            actions.updateDraft(completion.draft)
+            moveCaret(completion.caret)
+        } else {
+            publishTokenCompletion(completion, ComposerToken.PathChip(match.path))
+        }
+    }
+
+    val uploadPreparedAttachment: (PreparedAttachmentResult) -> Unit = { result ->
+        when (result) {
+            is PreparedAttachmentResult.Success -> {
+                val upload = uploadAttachmentWithPreview
+                if (upload != null) {
+                    upload(result.bytes, result.filename, result.previewData)
+                } else {
+                    actions.uploadAttachment(result.bytes, result.filename)
+                }
+            }
+            is PreparedAttachmentResult.TooLarge -> actions.setUploadAttachmentError(
+                PendingAttachment.uploadTooLargeMessage(result.filename),
+            )
+            is PreparedAttachmentResult.Failure -> actions.setUploadAttachmentError(result.message)
+        }
+    }
+    val cacheNamespace = attachmentCacheNamespace
+        ?.takeIf(String::isNotBlank)
+        ?: "session:${state.sessionId ?: "new"}"
+
+    fun processPickedUris(uris: List<Uri>) {
         scope.launch {
             for (uri in uris) {
-                when (val result = withContext(Dispatchers.IO) { readPickedAttachment(context, uri) }) {
-                    is PickedAttachmentResult.Success -> actions.uploadAttachment(result.bytes, result.filename)
-                    is PickedAttachmentResult.TooLarge -> actions.setUploadAttachmentError(
-                        PendingAttachment.uploadTooLargeMessage(result.filename),
-                    )
-                    is PickedAttachmentResult.Failure -> actions.setUploadAttachmentError(result.message)
-                }
+                uploadPreparedAttachment(preparePickedAttachment(context, uri, cacheNamespace))
             }
         }
     }
 
-    val cameraPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview(),
-    ) { bitmap ->
-        if (bitmap == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val bytes = withContext(Dispatchers.IO) { encodeCameraImage(bitmap) }
-            when {
-                bytes == null -> actions.setUploadAttachmentError("Couldn't prepare the camera image.")
-                bytes.size > PendingAttachment.maximumUploadBytes -> actions.setUploadAttachmentError(
-                    PendingAttachment.uploadTooLargeMessage("Camera image"),
-                )
-                else -> actions.uploadAttachment(
-                    bytes = bytes,
-                    filename = "camera-${System.currentTimeMillis()}.jpg",
-                )
-            }
-        }
+    fun processCameraBitmap(bitmap: Bitmap) {
+        scope.launch { uploadPreparedAttachment(prepareCameraAttachment(bitmap)) }
     }
 
     val isOfflineReadOnly = state.isReadOnly || state.isViewingCachedData
     val hasSendPayload = state.draft.isNotBlank() || state.pendingAttachments.isNotEmpty()
-    // A running turn can be steered when the user has entered content; with no
-    // payload the same trailing button is the iOS stop-response control.
     val showsStopButton = state.isStreaming && !hasSendPayload
     val actionButtonEnabled = if (showsStopButton) {
         !isOfflineReadOnly && !state.isCancellingStream
@@ -170,6 +263,12 @@ fun ChatComposer(
         SlashCommandAutocomplete(
             state = state,
             actions = actions,
+            trigger = trigger,
+            fileController = fileController,
+            loadFileSuggestions = loadFileSuggestions,
+            hapticsEnabled = hapticsEnabled,
+            onSelectSlash = ::applySlashSelection,
+            onSelectFile = ::applyFileSelection,
             modifier = Modifier.padding(horizontal = 12.dp),
         )
 
@@ -201,10 +300,7 @@ fun ChatComposer(
                     onSelectReasoningEffort = actions::selectReasoningEffort,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     trailingContent = {
-                        GoalControl(
-                            enabled = configurationControlsEnabled,
-                            actions = actions,
-                        )
+                        GoalControl(enabled = configurationControlsEnabled, actions = actions)
                     },
                 )
 
@@ -216,33 +312,10 @@ fun ChatComposer(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     IconButton(
-                        onClick = {
-                            runCatching { filePicker.launch("*/*") }
-                                .onFailure {
-                                    actions.setUploadAttachmentError("No file picker is available.")
-                                }
-                        },
+                        onClick = { showsAttachmentPicker = true },
                         enabled = attachmentControlsEnabled,
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.AttachFile,
-                            contentDescription = "Attach files",
-                        )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            runCatching { cameraPicker.launch(null) }
-                                .onFailure {
-                                    actions.setUploadAttachmentError("Camera is not available.")
-                                }
-                        },
-                        enabled = attachmentControlsEnabled,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CameraAlt,
-                            contentDescription = "Take a photo",
-                        )
+                        Icon(Icons.Filled.AttachFile, contentDescription = "Add attachment")
                     }
 
                     ComposerVoiceInput(
@@ -258,43 +331,41 @@ fun ChatComposer(
 
                     ChatComposerTextInput(
                         draft = state.draft,
+                        draftTokens = effectiveTokens,
                         enabled = !isOfflineReadOnly,
                         keyboardSendEnabled = actionButtonEnabled && !showsStopButton,
-                        onDraftChange = actions::updateDraft,
+                        requestedCaret = caretRequest,
+                        onDraftChange = ::publishDraft,
+                        onSelectionChange = { selection = it },
                         onKeyboardSend = { actions.send() },
+                        recallLastUserMessage = recallLastUserMessage,
                         modifier = Modifier.weight(1f),
                     )
 
-                    FilledIconButton(
-                        onClick = {
-                            if (showsStopButton) actions.stopStream() else actions.send()
-                        },
+                    ComposerSendButton(
+                        isRunActive = state.isStreaming,
+                        hasPayload = hasSendPayload,
+                        showsStop = showsStopButton,
+                        isBusy = state.isStartingChat || state.isCancellingStream,
                         enabled = actionButtonEnabled,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                        ),
-                    ) {
-                        when {
-                            state.isStartingChat || state.isCancellingStream -> CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                            showsStopButton -> Icon(
-                                imageVector = Icons.Filled.Stop,
-                                contentDescription = "Stop response",
-                            )
-                            else -> Icon(
-                                imageVector = Icons.Filled.ArrowUpward,
-                                contentDescription = "Send",
-                            )
-                        }
-                    }
+                        hapticsEnabled = hapticsEnabled,
+                        supportsSendModes = onSendMode != null,
+                        onSend = { actions.send() },
+                        onStop = actions::stopStream,
+                        onSendMode = { mode -> onSendMode?.invoke(mode) },
+                    )
                 }
             }
         }
     }
+
+    CustomAttachmentPicker(
+        visible = showsAttachmentPicker,
+        onDismiss = { showsAttachmentPicker = false },
+        onUrisPicked = ::processPickedUris,
+        onCameraCaptured = ::processCameraBitmap,
+        onError = actions::setUploadAttachmentError,
+    )
 
     ChatComposerSelectorSheets(
         state = state,
@@ -302,6 +373,113 @@ fun ChatComposer(
         activeSheet = activeSheet,
         onDismiss = { activeSheet = null },
     )
+}
+
+private enum class ComposerSendButtonVisual { SEND, STOP, BUSY }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ComposerSendButton(
+    isRunActive: Boolean,
+    hasPayload: Boolean,
+    showsStop: Boolean,
+    isBusy: Boolean,
+    enabled: Boolean,
+    hapticsEnabled: Boolean,
+    supportsSendModes: Boolean,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    onSendMode: (ComposerSendModeChoice) -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val view = LocalView.current
+    val choices = composerSendModeChoices(isRunActive = isRunActive, hasPayload = hasPayload)
+    val mayOpenMenu = enabled && supportsSendModes && choices.isNotEmpty()
+    LaunchedEffect(mayOpenMenu) {
+        if (!mayOpenMenu) menuOpen = false
+    }
+    val visual = when {
+        isBusy -> ComposerSendButtonVisual.BUSY
+        showsStop -> ComposerSendButtonVisual.STOP
+        else -> ComposerSendButtonVisual.SEND
+    }
+
+    Box {
+        Surface(
+            modifier = Modifier
+                .size(40.dp)
+                .combinedClickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    hapticFeedbackEnabled = false,
+                    onClick = { if (showsStop) onStop() else onSend() },
+                    onLongClick = if (mayOpenMenu) {
+                        {
+                            if (hapticsEnabled) {
+                                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            }
+                            menuOpen = true
+                        }
+                    } else {
+                        null
+                    },
+                ),
+            shape = CircleShape,
+            color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                AnimatedContent(
+                    targetState = visual,
+                    transitionSpec = {
+                        (fadeIn() + scaleIn(initialScale = 0.82f)) togetherWith
+                            (fadeOut() + scaleOut(targetScale = 0.82f))
+                    },
+                    label = "composer-send-stop",
+                ) { target ->
+                    when (target) {
+                        ComposerSendButtonVisual.BUSY -> CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = if (enabled) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        ComposerSendButtonVisual.STOP -> Icon(
+                            Icons.Filled.Stop,
+                            contentDescription = "Stop response",
+                        )
+                        ComposerSendButtonVisual.SEND -> Icon(
+                            Icons.Filled.ArrowUpward,
+                            contentDescription = "Send",
+                        )
+                    }
+                }
+            }
+        }
+
+        DropdownMenu(expanded = menuOpen && mayOpenMenu, onDismissRequest = { menuOpen = false }) {
+            choices.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when (choice) {
+                                ComposerSendModeChoice.QUEUE -> "Queue"
+                                ComposerSendModeChoice.STEER -> "Steer"
+                                ComposerSendModeChoice.STOP_AND_SEND -> "Stop and send"
+                            },
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onSendMode(choice)
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -314,11 +492,7 @@ private fun ComposerStatusStrip(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
-        color = if (isError) {
-            MaterialTheme.colorScheme.errorContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerHigh
-        },
+        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Row(
             modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 2.dp),
@@ -328,11 +502,7 @@ private fun ComposerStatusStrip(
                 text = message,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (isError) {
-                    MaterialTheme.colorScheme.onErrorContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (onDismiss != null) {
                 IconButton(onClick = onDismiss) {
@@ -348,10 +518,7 @@ private fun ComposerStatusStrip(
 }
 
 @Composable
-private fun GoalControl(
-    enabled: Boolean,
-    actions: ChatComposerActions,
-) {
+private fun GoalControl(enabled: Boolean, actions: ChatComposerActions) {
     var menuOpen by remember { mutableStateOf(false) }
     var showsSetGoalDialog by remember { mutableStateOf(false) }
     var goalDraft by remember { mutableStateOf("") }
@@ -370,10 +537,7 @@ private fun GoalControl(
                 Icon(Icons.Filled.Flag, contentDescription = null, modifier = Modifier.size(18.dp))
             },
         )
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-        ) {
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
                 text = { Text("Set Goal") },
                 onClick = {
@@ -415,9 +579,7 @@ private fun GoalControl(
                 )
             },
             dismissButton = {
-                TextButton(onClick = { showsSetGoalDialog = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showsSetGoalDialog = false }) { Text("Cancel") }
             },
             confirmButton = {
                 TextButton(
@@ -428,102 +590,8 @@ private fun GoalControl(
                         submitGoal(submittedGoal)
                     },
                     enabled = goalDraft.isNotBlank(),
-                ) {
-                    Text("Set")
-                }
+                ) { Text("Set") }
             },
         )
-    }
-}
-
-private sealed interface PickedAttachmentResult {
-    data class Success(val filename: String, val bytes: ByteArray) : PickedAttachmentResult
-    data class TooLarge(val filename: String) : PickedAttachmentResult
-    data class Failure(val message: String) : PickedAttachmentResult
-}
-
-private data class PickedAttachmentMetadata(
-    val filename: String,
-    val size: Long?,
-)
-
-private fun readPickedAttachment(context: Context, uri: Uri): PickedAttachmentResult {
-    val metadata = pickedAttachmentMetadata(context, uri)
-    if (metadata.size != null && metadata.size > PendingAttachment.maximumUploadBytes) {
-        return PickedAttachmentResult.TooLarge(metadata.filename)
-    }
-
-    return try {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-            input.readBounded(PendingAttachment.maximumUploadBytes)
-        } ?: return PickedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
-
-        if (bytes == null) {
-            PickedAttachmentResult.TooLarge(metadata.filename)
-        } else {
-            PickedAttachmentResult.Success(metadata.filename, bytes)
-        }
-    } catch (_: SecurityException) {
-        PickedAttachmentResult.Failure("Hermex-Type-J doesn't have permission to read ${metadata.filename}.")
-    } catch (_: IOException) {
-        PickedAttachmentResult.Failure("Couldn't read ${metadata.filename}.")
-    }
-}
-
-private fun pickedAttachmentMetadata(context: Context, uri: Uri): PickedAttachmentMetadata {
-    var filename: String? = null
-    var size: Long? = null
-    runCatching {
-        context.contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (nameColumn >= 0 && !cursor.isNull(nameColumn)) {
-                    filename = cursor.getString(nameColumn)
-                }
-                val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
-                    size = cursor.getLong(sizeColumn).takeIf { it >= 0L }
-                }
-            }
-        }
-    }
-
-    val resolvedName = filename
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-        ?: uri.lastPathSegment
-            ?.substringAfterLast('/')
-            ?.takeIf(String::isNotEmpty)
-        ?: "attachment"
-    return PickedAttachmentMetadata(filename = resolvedName, size = size)
-}
-
-private fun InputStream.readBounded(maximumBytes: Int): ByteArray? {
-    val output = ByteArrayOutputStream(minOf(maximumBytes, DEFAULT_BUFFER_SIZE))
-    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-    var total = 0
-    while (true) {
-        val count = read(buffer)
-        if (count < 0) break
-        if (count == 0) continue
-        if (total > maximumBytes - count) return null
-        output.write(buffer, 0, count)
-        total += count
-    }
-    return output.toByteArray()
-}
-
-private fun encodeCameraImage(bitmap: Bitmap): ByteArray? {
-    val output = ByteArrayOutputStream()
-    return if (bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
-        output.toByteArray()
-    } else {
-        null
     }
 }
