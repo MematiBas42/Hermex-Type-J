@@ -23,7 +23,11 @@ import java.nio.file.StandardCopyOption
  * All methods are synchronized; callers wrap calls in `Dispatchers.IO`.
  * Timestamps (`now` / `cachedAt`) are epoch millis, server URLs plain strings.
  */
-class CacheStore(private val directory: File, private val json: Json) {
+class CacheStore(
+    private val directory: File,
+    private val json: Json,
+    private val onClear: (String?) -> Unit = {},
+) {
     private val sessionsFile = File(directory, "sessions.json")
     private val messagesFile = File(directory, "messages.json")
     private val lock = Any()
@@ -32,6 +36,10 @@ class CacheStore(private val directory: File, private val json: Json) {
     /** Drafts are not offline-cache entries and are never evicted by cache maintenance. */
     val chatDraftStore: ChatDraftStore by lazy {
         ChatDraftStore(ChatDraftFilePersistence(directory, json), ChatDraftAttachmentStore(directory), persistenceScope)
+    }
+    /** Live-run snapshots (`ActiveChatStreamSnapshotStore`): process-owned like drafts, never evicted by cache maintenance. */
+    val activeStreamSnapshots: ActiveChatStreamSnapshotStore by lazy {
+        ActiveChatStreamSnapshotStore(directory, json, persistenceScope)
     }
 
     /** Keyed by `cacheKey` (the SwiftData unique attribute). */
@@ -154,6 +162,7 @@ class CacheStore(private val directory: File, private val json: Json) {
 
     /** Port of `clearAll(in:)`. */
     fun clearAll(): Unit = synchronized(lock) {
+        onClear(null)
         loadedSessions().clear()
         loadedMessages().clear()
         persist()
@@ -167,6 +176,7 @@ class CacheStore(private val directory: File, private val json: Json) {
      * leaves orphaned rows behind.
      */
     fun clearCache(serverURL: String): Unit = synchronized(lock) {
+        onClear(serverURL)
         loadedSessions().values.removeAll { it.serverURLString == serverURL }
         loadedMessages().values.removeAll { it.serverURLString == serverURL }
         persist()
