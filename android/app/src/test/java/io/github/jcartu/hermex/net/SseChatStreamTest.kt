@@ -77,7 +77,7 @@ class SseChatStreamTest {
         }
 
     @Test
-    fun scriptedStreamDecodesInOrderAndSkipsHeartbeats() {
+    fun scriptedStreamDecodesInOrderAndSurfacesHeartbeats() {
         enqueueStream(
             buildString {
                 append("retry: 3000\n")
@@ -98,28 +98,53 @@ class SseChatStreamTest {
 
         val events = collect("stream-1")
 
-        assertEquals(ChatStreamEvent.Token("Hel"), events[0])
-        assertEquals(ChatStreamEvent.Token("lo"), events[1])
-        assertEquals(ChatStreamEvent.Reasoning("thinking"), events[2])
-        val tool = events[3] as ChatStreamEvent.ToolStarted
+        // Heartbeat comments surface as events (Swift `onComment` → `.heartbeat`),
+        // so the coordinator can tell a quiet-but-alive transport from a dead one.
+        assertEquals(ChatStreamEvent.Heartbeat, events[0])
+        assertEquals(ChatStreamEvent.Token("Hel"), events[1])
+        assertEquals(ChatStreamEvent.Heartbeat, events[2])
+        assertEquals(ChatStreamEvent.Token("lo"), events[3])
+        assertEquals(ChatStreamEvent.Reasoning("thinking"), events[4])
+        val tool = events[5] as ChatStreamEvent.ToolStarted
         assertEquals("bash", tool.event.name)
         assertEquals("t-1", tool.event.stableId)
-        val complete = events[4] as ChatStreamEvent.ToolCompleted
+        val complete = events[6] as ChatStreamEvent.ToolCompleted
         assertEquals(1.5, complete.event.duration!!, 0.0)
         assertEquals(false, complete.event.isError)
-        assertEquals(ChatStreamEvent.Title(TitleStreamEvent("s1", "Greeting")), events[5])
-        val metering = events[6] as ChatStreamEvent.Metering
+        assertEquals(ChatStreamEvent.Title(TitleStreamEvent("s1", "Greeting")), events[7])
+        val metering = events[8] as ChatStreamEvent.Metering
         assertEquals(42.5, metering.event.displayableTokensPerSecond!!, 0.0)
-        assertEquals(ChatStreamEvent.Ignored, events[7])
-        val done = events[8] as ChatStreamEvent.Done
+        assertEquals(ChatStreamEvent.Ignored, events[9])
+        val done = events[10] as ChatStreamEvent.Done
         assertNotNull(done.event.usage)
-        assertEquals(ChatStreamEvent.StreamEnd, events[9])
-        assertEquals("terminal stream_end ends the flow", 10, events.size)
+        assertEquals(ChatStreamEvent.StreamEnd, events[11])
+        assertEquals("terminal stream_end ends the flow", 12, events.size)
 
-        // Heartbeat comments never surface as events.
-        assertFalse(events.any { it is ChatStreamEvent.Heartbeat })
         // The SSE id is tracked as the replay cursor.
         assertEquals("7", stream.lastEventId)
+    }
+
+    @Test
+    fun parserJoinsMultiLineDataAndDiscardsDatalessFrames() {
+        val frames = mutableListOf<Pair<String, String>>()
+        val comments = mutableListOf<String>()
+        val ids = mutableListOf<String>()
+        val parser = SseFrameParser(
+            onComment = { comments += it },
+            onEventId = { ids += it },
+            onFrame = { type, data -> frames += type to data },
+        )
+        listOf(
+            "event: token", "data: {\"a\":", "data:  1}", "id: run:12", "",
+            ":keep-alive", "",
+            "event: title", "",
+            "data: bare\r", "",
+            "id:   ", "data: x", "",
+        ).forEach(parser::feed)
+
+        assertEquals(listOf("token" to "{\"a\":\n 1}", "message" to "bare", "message" to "x"), frames)
+        assertEquals(listOf("keep-alive"), comments)
+        assertEquals("blank ids are ignored", listOf("run:12"), ids)
     }
 
     @Test

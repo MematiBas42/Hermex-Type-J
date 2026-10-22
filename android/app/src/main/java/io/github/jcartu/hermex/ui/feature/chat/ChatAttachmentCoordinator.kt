@@ -61,6 +61,10 @@ class ChatAttachmentCoordinator(
         return attachment
     }
 
+    /** Port of `uploadStandaloneAttachment`: caller commits staging only after its transaction succeeds. */
+    suspend fun uploadStandaloneAttachment(data: ByteArray, filename: String, previewData: ByteArray? = null): PendingAttachment? =
+        performUpload(data, filename, previewData)
+
     private suspend fun performUpload(
         data: ByteArray,
         filename: String,
@@ -106,7 +110,7 @@ class ChatAttachmentCoordinator(
                 mime = response.mime ?: "application/octet-stream",
                 size = response.size,
                 isImage = response.isImage ?: false,
-                thumbnailData = if (response.isImage == true) previewData else null,
+                thumbnailData = previewData,
             )
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
@@ -161,7 +165,10 @@ class ChatAttachmentCoordinator(
     /** Port of `restorePendingAttachments(_:)` — failed sends re-stage at the front. */
     fun restorePendingAttachments(attachments: List<PendingAttachment>) {
         if (attachments.isEmpty()) return
-        state.update { it.copy(pendingAttachments = attachments + it.pendingAttachments) }
+        state.update { current ->
+            val ids = current.pendingAttachments.mapTo(HashSet()) { it.id }
+            current.copy(pendingAttachments = attachments.filter { ids.add(it.id) } + current.pendingAttachments)
+        }
     }
 
     /** Port of `consumePendingAttachments()` — used by /queue, /steer, /interrupt. */

@@ -36,6 +36,10 @@ class AppContainer(context: Context) {
     private val appContext: Context = context.applicationContext
 
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** Port of NetworkPathMonitor: stream recovery waits offline and resumes on a path change. */
+    val networkMonitor by lazy { io.github.jcartu.hermex.net.NetworkMonitor(appContext).also { it.start() } }
+    /** ProcessLifecycleOwner foreground trigger shared by chat and the session list. */
+    val foregroundMonitor by lazy { io.github.jcartu.hermex.core.lifecycle.ForegroundMonitor().also { it.start() } }
 
     val json: Json = Json {
         ignoreUnknownKeys = true
