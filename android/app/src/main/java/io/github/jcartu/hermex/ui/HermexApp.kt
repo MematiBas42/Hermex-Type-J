@@ -47,10 +47,15 @@ import io.github.jcartu.hermex.core.media.DocumentPreviewHost
 import io.github.jcartu.hermex.model.ServerAccount
 import io.github.jcartu.hermex.core.navigation.AppDeepLink
 import io.github.jcartu.hermex.core.navigation.DeepLinkRouter
+import io.github.jcartu.hermex.core.navigation.HermesSessionResolution
 import io.github.jcartu.hermex.core.navigation.LinkRoutingContext
 import io.github.jcartu.hermex.core.navigation.MovedSessionLookup
 import io.github.jcartu.hermex.core.share.ShareRouting
 import io.github.jcartu.hermex.di.AppContainer
+import io.github.jcartu.hermex.ui.feature.bots.BotLinkMailbox
+import io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesSessionLinkOutcome
+import io.github.jcartu.hermex.ui.feature.hermes.sessions.HermesSessionLookup
+import io.github.jcartu.hermex.ui.feature.movetohermes.MovedSessionMap
 import io.github.jcartu.hermex.ui.adaptive.FirstPaneSplitRow
 import io.github.jcartu.hermex.ui.adaptive.FoldState
 import io.github.jcartu.hermex.ui.adaptive.LocalFoldState
@@ -146,10 +151,11 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 navigation.startNewChat()
             }
             is ShareRouting.Route.HermesNewChat -> {
-                // The Hermes home opens a new-session chat and claims the import into
-                // that draft; this branch calls HermesSessionsHome's
-                // `HermesSessionLookup.openNewChat(route.serverId)` once that lookup is
-                // merged onto this branch (the import stays queued meanwhile).
+                // #1181: a new chat on the active Hermes server. The home opens
+                // it and claims the import into the new-session draft via
+                // `HermesShareImport.transfer`, then acknowledges the durable
+                // inbox — which stays queued until the draft holds the share.
+                HermesSessionLookup.openNewChat(route.serverId)
             }
         }
     }
@@ -160,11 +166,27 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
             activeServerId = linkAuthState.account?.id,
             signedIn = linkAuthState is AuthState.LoggedIn,
             servers = linkServers,
+            // BotMode's `AppContainer.botModeGate` opt-in is wired by BotMode's
+            // own additive seam; off by default (#1239), so a bot link naming a
+            // webui server routes nowhere until the gate exists and is on.
             isBotModeEnabled = false,
             botConnectionId = { serverId -> runCatching { container.botConnectionStore.load(serverId)?.id }.getOrNull() },
-            movedSessions = MovedSessionLookup.NONE,
+            movedSessions = movedSessionLookup(container.movedSessionMap),
         )
-        when (val route = DeepLinkRouter.dispatch(pending.second, context)) {
+        when (
+            val route = DeepLinkRouter.dispatch(pending.second, context) { destination, _ ->
+                // HermesSessionsHome's registry/auth resolution (#1176), adapted
+                // to the dispatcher's outcome type; moved-webui mapping stays here.
+                when (val outcome = HermesSessionLookup.route(destination, container.authManager.state.value, container.authManager.servers.value)) {
+                    HermesSessionLinkOutcome.Ignore -> HermesSessionResolution.Ignore
+                    is HermesSessionLinkOutcome.Webui ->
+                        HermesSessionResolution.Webui(outcome.serverId, outcome.sessionId)
+                    is HermesSessionLinkOutcome.WaitForSignIn -> HermesSessionResolution.WaitForSignIn
+                    is HermesSessionLinkOutcome.SwitchServer -> HermesSessionResolution.SwitchServer(outcome.account)
+                    is HermesSessionLinkOutcome.Open -> HermesSessionResolution.Open
+                }
+            }
+        ) {
             // The link names another server: activate it and hold the link —
             // the rebuilt tree re-dispatches it (Swift `PendingLinks`).
             is DeepLinkRouter.Route.SwitchServer -> container.authManager.switchActiveServer(route.account)
@@ -193,16 +215,31 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
                 container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenHermesSession -> {
-                // Handed to HermesSessionsHome's `HermesSessionLookup.open(route.destination)`
-                // once that lookup is merged onto this branch; the link stays queued meanwhile.
+                // The Hermes home resolves the exact session on its saved
+                // connection (#1176) and consumes its own server's request.
+                HermesSessionLookup.open(route.destination)
+                container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenHermesNewChat -> {
-                // Handed to HermesSessionsHome's `HermesSessionLookup.openNewChat(...)`
-                // once that lookup is merged onto this branch; the link stays queued meanwhile.
+                HermesSessionLookup.openNewChat(
+                    serverId = route.destination.serverId,
+                    profile = route.destination.profile,
+                    autoStartsVoiceInput = route.destination.autoStartsVoiceInput,
+                )
+                container.deepLinks.acknowledge(pending.first)
             }
             is DeepLinkRouter.Route.OpenBot -> {
-                // Posted to BotMode's `BotLinkMailbox.post(...)` once that mailbox is
-                // merged onto this branch; the link stays queued meanwhile.
+                // BotMode's queue; the Hermes home turns to Bots and the inbox
+                // resolves it against the live roster (#554).
+                BotLinkMailbox.post(
+                    io.github.jcartu.hermex.ui.feature.bots.BotDestination(
+                        server = route.destination.serverId,
+                        connectionID = route.destination.connectionId,
+                        profile = route.destination.profile,
+                        conversation = route.destination.conversation,
+                    ),
+                )
+                container.deepLinks.acknowledge(pending.first)
             }
             DeepLinkRouter.Route.OpenShare -> {
                 sharedImport?.let { routeSharedImport(it) }
@@ -585,4 +622,29 @@ private class ServerViewModelStoreOwner(
     override val defaultViewModelCreationExtras: androidx.lifecycle.viewmodel.CreationExtras
         get() = (host as? androidx.lifecycle.HasDefaultViewModelProviderFactory)?.defaultViewModelCreationExtras
             ?: androidx.lifecycle.viewmodel.CreationExtras.Empty
+}
+
+/**
+ * Adapts MoveToHermes' `MovedSessionMap` to the navigation layer's
+ * moved-record seam (#707, #1217), keeping `core/navigation` free of UI
+ * imports. Reads pass through verbatim: a route exists only while its
+ * destination Hermes server is the configured generation.
+ */
+private fun movedSessionLookup(map: MovedSessionMap): MovedSessionLookup = object : MovedSessionLookup {
+    override fun destinationOf(sourceServerId: String): String? = map.destinationOf(sourceServerId)
+
+    override val moves: List<MovedSessionLookup.Move>
+        get() = map.moves.map { MovedSessionLookup.Move(it.destinationServerId, it.sourceServerId) }
+
+    override fun profileMapping(sourceServerId: String, profile: String): MovedSessionLookup.ProfileMapping? =
+        when (val mapping = map.profileMapping(sourceServerId, profile)) {
+            is MovedSessionMap.Mapping.Hermes -> MovedSessionLookup.ProfileMapping.Hermes(mapping.profileName)
+            MovedSessionMap.Mapping.KeepOnWebui -> MovedSessionLookup.ProfileMapping.KeepOnWebui
+            null -> null
+        }
+
+    override fun exactTarget(sourceServerId: String, sessionId: String): MovedSessionLookup.ExactTarget? =
+        map.lookup(sourceServerId, sessionId)?.let {
+            MovedSessionLookup.ExactTarget(it.destinationServerId, it.sessionKey, it.profile)
+        }
 }
