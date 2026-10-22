@@ -71,6 +71,7 @@ fun MessageBubble(
     onOpenWorkspaceFile: (String) -> Unit = {},
     onAskHermex: (String) -> Unit = {},
     hapticsEnabled: Boolean = true,
+    resolveRemoteImages: Boolean = false,
 ) {
     when {
         message.role == "local_notice" -> LocalStatusRow(
@@ -119,6 +120,7 @@ fun MessageBubble(
             onAskHermex = onAskHermex,
             onListen = onListen,
             hapticsEnabled = hapticsEnabled,
+            resolveRemoteImages = resolveRemoteImages,
             modifier = modifier,
         )
     }
@@ -278,6 +280,7 @@ private fun AssistantMessageRow(
     onListen: (String) -> Unit,
     hapticsEnabled: Boolean,
     modifier: Modifier,
+    resolveRemoteImages: Boolean,
 ) {
     val content = message.content.orEmpty()
     val displayed = rememberWordBoundaryText(content.ifEmpty { " " }, isStreaming, message.messageId ?: message.id)
@@ -308,7 +311,7 @@ private fun AssistantMessageRow(
                     imageLoader = imageLoader,
                     loadMediaUrl = { reference ->
                         when (val source = reference.source) {
-                            is TranscriptMediaSource.RemoteUrl -> source.url
+                            is TranscriptMediaSource.RemoteUrl -> if (resolveRemoteImages) attachmentUrlResolver(source.url) else source.url
                             is TranscriptMediaSource.LocalPath -> attachmentUrlResolver(source.path)
                         }
                     },

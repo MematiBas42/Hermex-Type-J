@@ -56,6 +56,7 @@ internal enum class ChatComposerSelectorSheet { MODEL, PROFILE, WORKSPACE }
 internal fun ChatComposerSelectorChips(
     state: ChatUiState,
     enabled: Boolean,
+    profileSelectionEnabled: Boolean = true,
     onOpenModel: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenWorkspace: () -> Unit,
@@ -147,7 +148,7 @@ internal fun ChatComposerSelectorChips(
 
         AssistChip(
             onClick = onOpenProfile,
-            enabled = enabled,
+            enabled = enabled && profileSelectionEnabled,
             label = {
                 Text(
                     text = state.selectedProfileTitle,
@@ -190,6 +191,7 @@ internal fun ChatComposerSelectorSheets(
     actions: ChatComposerActions,
     activeSheet: ChatComposerSelectorSheet?,
     onDismiss: () -> Unit,
+    onSelectWorkspace: ((String) -> Unit)? = null,
 ) {
     var pendingProfile by remember { mutableStateOf<ProfileSummary?>(null) }
 
@@ -208,7 +210,9 @@ internal fun ChatComposerSelectorSheets(
         )
 
         ChatComposerSelectorSheet.WORKSPACE -> WorkspacePickerSheet(
-            onSelect = actions::selectWorkspace,
+            onSelect = { path ->
+                if (onSelectWorkspace != null) onSelectWorkspace(path) else actions.selectWorkspace(path)
+            },
             onDismiss = onDismiss,
             selectedWorkspacePath = state.selectedWorkspacePath,
         )

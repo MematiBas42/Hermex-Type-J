@@ -157,7 +157,10 @@ internal sealed interface PreparedAttachmentResult {
         val previewData: ByteArray?,
     ) : PreparedAttachmentResult
 
-    data class TooLarge(val filename: String) : PreparedAttachmentResult
+    data class TooLarge(
+        val filename: String,
+        val maximumBytes: Int = PendingAttachment.maximumUploadBytes,
+    ) : PreparedAttachmentResult
     data class Failure(val message: String) : PreparedAttachmentResult
 }
 
@@ -174,19 +177,20 @@ internal suspend fun preparePickedAttachment(
     context: Context,
     uri: Uri,
     serverCacheNamespace: String,
+    maximumBytes: Int = PendingAttachment.maximumUploadBytes,
 ): PreparedAttachmentResult = withContext(Dispatchers.IO) {
     val resolver = context.contentResolver
     val metadata = pickedAttachmentMetadata(context, uri)
-    if (metadata.size != null && metadata.size > PendingAttachment.maximumUploadBytes) {
-        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename)
+    if (metadata.size != null && metadata.size > maximumBytes) {
+        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename, maximumBytes)
     }
 
     val bytes = try {
         resolver.openInputStream(uri)?.use { stream ->
-            stream.readBounded(PendingAttachment.maximumUploadBytes)
+            stream.readBounded(maximumBytes)
         }
     } catch (_: AttachmentTooLargeException) {
-        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename)
+        return@withContext PreparedAttachmentResult.TooLarge(metadata.filename, maximumBytes)
     } catch (_: SecurityException) {
         null
     } catch (_: IOException) {
@@ -215,13 +219,16 @@ internal suspend fun preparePickedAttachment(
     }
 }
 
-internal suspend fun prepareCameraAttachment(bitmap: Bitmap): PreparedAttachmentResult = withContext(Dispatchers.IO) {
+internal suspend fun prepareCameraAttachment(
+    bitmap: Bitmap,
+    maximumBytes: Int = PendingAttachment.maximumUploadBytes,
+): PreparedAttachmentResult = withContext(Dispatchers.IO) {
     val bytes = ByteArrayOutputStream().use { output ->
         if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) null else output.toByteArray()
     } ?: return@withContext PreparedAttachmentResult.Failure("Couldn't prepare the camera image.")
 
-    if (bytes.size > PendingAttachment.maximumUploadBytes) {
-        PreparedAttachmentResult.TooLarge("Camera image")
+    if (bytes.size > maximumBytes) {
+        PreparedAttachmentResult.TooLarge("Camera image", maximumBytes)
     } else {
         val preview = downsampleImage(bytes)
         PreparedAttachmentResult.Success(
