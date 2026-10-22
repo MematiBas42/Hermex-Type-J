@@ -25,17 +25,11 @@ data class ChatStartResponse(
     val streamId: String? = null,
     @SerialName("session_id")
     val sessionId: String? = null,
-    /**
-     * Unix epoch seconds for when the server started this turn (`pending_started_at`),
-     * so "Working for" counts from the server's clock. Absent on servers that do not send it.
-     */
     @SerialName("pending_started_at")
     val pendingStartedAt: Double? = null,
     val error: String? = null,
 ) {
-    /** Port of `runStartedAt(sentAt:)`: the server's start when it sent one, else the local send time. */
-    fun runStartedAt(sentAt: Double): Double =
-        pendingStartedAt?.takeIf { it > 0 } ?: sentAt
+    fun runStartedAt(sentAt: Double): Double = pendingStartedAt?.takeIf { it > 0 } ?: sentAt
 }
 
 @Serializable
