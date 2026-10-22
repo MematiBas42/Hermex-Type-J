@@ -30,6 +30,25 @@ private const val IDENTITY_DISPLAY_NAME_KEY = "sessionIdentity.displayName"
 private const val IDENTITY_INITIALS_KEY = "sessionIdentity.initials"
 
 /**
+ * Port of `ServerKind` (`Models/ServerAccount.swift`, #899): what a configured
+ * server is. A webui server is a `hermes-webui` instance, signed in through
+ * `AuthManager` with its own cookie; a Hermes server is a Hermes dashboard
+ * Hermex reaches directly (`net/hermes`), whose sign-in is the `BotConnection`
+ * saved under its own URL. A missing or unknown value reads as [WEBUI], the
+ * only kind before #899.
+ */
+enum class ServerKind(val rawValue: String) {
+    WEBUI("webui"),
+    HERMES("hermes"),
+    ;
+
+    companion object {
+        /** `ServerKind(rawValue:)` — null for an unknown wire value. */
+        fun fromRawValue(rawValue: String?): ServerKind? = entries.firstOrNull { it.rawValue == rawValue }
+    }
+}
+
+/**
  * Non-secret-shaped metadata for one configured Hermes Web UI server.
  *
  * This is the persisted account model introduced by I-039a (#15) — the
@@ -75,6 +94,17 @@ data class ServerAccount(
     val customHeadersRef: String? = null,
     val createdAt: Double = 0.0,
     val updatedAt: Double = 0.0,
+    /**
+     * Set when the server is added and never changed: a webui server and a
+     * Hermes server can't share a URL (`AuthManager.addHermesServer`). Wire key
+     * `kind`; missing or unknown reads as [ServerKind.WEBUI].
+     */
+    val kind: ServerKind = ServerKind.WEBUI,
+    /**
+     * A Hermes server's release, as `/api/status` reported it at the last saved
+     * sign-in. Null for webui servers, whose version Settings reads live.
+     */
+    val serverVersion: String? = null,
 )
 
 internal object ServerAccountSerializer : TolerantObjectSerializer<ServerAccount>("ServerAccount") {
@@ -98,6 +128,10 @@ internal object ServerAccountSerializer : TolerantObjectSerializer<ServerAccount
             customHeadersRef = obj.lossyString("custom_headers_ref", "customHeadersRef"),
             createdAt = createdAt,
             updatedAt = obj.lossyDouble("updated_at", "updatedAt") ?: createdAt,
+            // Read as text so a kind from a newer build, or a value of the wrong
+            // type, falls back to webui instead of failing the entry.
+            kind = ServerKind.fromRawValue(obj.lossyString("kind")) ?: ServerKind.WEBUI,
+            serverVersion = obj.lossyString("server_version", "serverVersion"),
         )
     }
 
@@ -110,6 +144,8 @@ internal object ServerAccountSerializer : TolerantObjectSerializer<ServerAccount
         value.customHeadersRef?.let { put("custom_headers_ref", JsonPrimitive(it)) }
         put("created_at", JsonPrimitive(value.createdAt))
         put("updated_at", JsonPrimitive(value.updatedAt))
+        put("kind", JsonPrimitive(value.kind.rawValue))
+        value.serverVersion?.let { put("server_version", JsonPrimitive(it)) }
     }
 }
 
@@ -221,12 +257,17 @@ class ServerRegistry(
      * Ensures `url` is registered and marked active, returning the active entry.
      *
      * Dedupes by id (the normalized URL string): a URL already present is just
-     * re-activated, never duplicated, and its identity is left untouched so any
-     * per-server edits from #17 survive. A new URL is inserted with its identity
-     * seeded from the current global identity defaults. Callers pass an
-     * already-normalized URL (`AuthManager.normalizedServerURL`).
+     * re-activated, never duplicated, and its identity and kind are left untouched
+     * so any per-server edits from #17 survive. A new URL is inserted as [kind],
+     * with [serverVersion] and its identity seeded from the current global identity
+     * defaults. Callers pass an already-normalized URL
+     * (`AuthManager.normalizedServerURL`, or `HermesAddress.parse` for a Hermes server).
      */
-    fun activate(url: String): ServerAccount {
+    fun activate(
+        url: String,
+        kind: ServerKind = ServerKind.WEBUI,
+        serverVersion: String? = null,
+    ): ServerAccount {
         val id = url
         // When re-activating an already-registered server we mirror its (possibly
         // per-server-edited, #17) identity into the global identity defaults so the
@@ -248,7 +289,7 @@ class ServerRegistry(
                 }
                 existing
             } else {
-                val account = makeSeededAccount(id, url)
+                val account = makeSeededAccount(id, url).copy(kind = kind, serverVersion = serverVersion)
                 storage = storage.copy(
                     servers = storage.servers + account,
                     activeServerID = id,
@@ -259,6 +300,24 @@ class ServerRegistry(
         }
         identityToMirror?.let { mirrorIdentityToDefaults(it) }
         return result
+    }
+
+    /**
+     * Port of `ServerRegistry.add(url:kind:serverVersion:)`: inserts a server without
+     * changing the active one, as [activate] inserts it: seeded from the global
+     * identity defaults. An id already present is returned untouched. Used for a
+     * Hermes server signed in from Move to Hermes, which switches only at its Done (#1266).
+     */
+    fun add(url: String, kind: ServerKind, serverVersion: String?): ServerAccount {
+        val id = url
+        return synchronized(lock) {
+            storage.servers.firstOrNull { it.id == id } ?: run {
+                val account = makeSeededAccount(id, url).copy(kind = kind, serverVersion = serverVersion)
+                storage = storage.copy(servers = storage.servers + account)
+                persist(storage)
+                account
+            }
+        }
     }
 
     /**
