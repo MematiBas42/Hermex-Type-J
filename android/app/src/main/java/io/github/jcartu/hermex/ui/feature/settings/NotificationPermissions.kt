@@ -1,20 +1,13 @@
 package io.github.jcartu.hermex.ui.feature.settings
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import io.github.jcartu.hermex.MainActivity
-import io.github.jcartu.hermex.R
 import io.github.jcartu.hermex.core.prefs.NotificationAuthorization
 
 /**
@@ -62,42 +55,7 @@ object NotificationPermissions {
         runCatching { context.startActivity(intent) }
     }
 
-    /**
-     * Settings' end-to-end check (#874, "Send Test Notification"): posts one
-     * local notification on the results channel the foreground run monitor
-     * uses (`AgentRunService` creates it), so the user sees exactly how a
-     * finished reply would arrive. No-op without the permission.
-     */
-    @SuppressLint("MissingPermission")
-    fun postTestNotification(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val platform = context.getSystemService(NotificationManager::class.java) ?: return
-        platform.createNotificationChannel(
-            NotificationChannel(RESULTS_CHANNEL_ID, "Agent results", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Completion, cancellation, and failure notifications"
-            },
-        )
-        val openApp = PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = NotificationCompat.Builder(context, RESULTS_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("Test notification")
-            .setContentText("This is how a finished reply will reach you.")
-            .setAutoCancel(true)
-            .setContentIntent(openApp)
-            .build()
-        NotificationManagerCompat.from(context).notify(TEST_NOTIFICATION_ID, notification)
-    }
-
-    /** `AgentRunService.CHANNEL_RESULTS`. */
-    private const val RESULTS_CHANNEL_ID = "agent_results"
-    private const val TEST_NOTIFICATION_ID = 0x5E57
+    /** Settings' end-to-end check shares the real reply channel, builder and permission checks with run alerts. */
+    fun postTestNotification(context: Context): io.github.jcartu.hermex.service.RunNotificationResult =
+        io.github.jcartu.hermex.service.RunNotifications.sendTestNotification(context)
 }

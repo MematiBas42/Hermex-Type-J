@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import io.github.jcartu.hermex.core.prefs.ServerConfigRepository
 import io.github.jcartu.hermex.core.prefs.SettingsRepository
 import io.github.jcartu.hermex.data.CacheStore
+import io.github.jcartu.hermex.data.ActiveChatStreamSnapshot
+import io.github.jcartu.hermex.data.ActiveChatStreamSnapshotStore
 import io.github.jcartu.hermex.core.share.SharedImport
 import io.github.jcartu.hermex.model.ApprovalChoice
 import io.github.jcartu.hermex.model.ApprovalPendingResponse
@@ -109,6 +111,8 @@ class ChatViewModel(
     private val network: NetworkAvailability? = null,
     foregroundEvents: Flow<Int> = emptyFlow(),
     private val onRunStarted: suspend () -> Unit = {},
+    private val streamSnapshots: ActiveChatStreamSnapshotStore = cacheStore.activeStreamSnapshots,
+    private val attachmentPreview: suspend (ByteArray, String, String, String, java.io.File?) -> ByteArray? = ::regenerateAttachmentPreview,
 ) : ViewModel(), ChatComposerActions, ChatStreamCoordinatorDelegate {
 
     private val _uiState = MutableStateFlow(
@@ -138,6 +142,7 @@ class ChatViewModel(
         isStreamConnectionSuspended = { streamCoordinator.isConnectionSuspended },
         onActionFailed = { message -> _uiState.update { it.copy(sendErrorMessage = message) } },
         pollingIntervals = pollingIntervals,
+        sse = sse,
     )
 
     private val attachmentCoordinator = ChatAttachmentCoordinator(api = api, state = _uiState)
@@ -197,8 +202,6 @@ class ChatViewModel(
 
     /** Approval/clarification polling only runs while ChatPane is visible. */
     private var isScreenActive = false
-    private val importedSharedDrafts = mutableSetOf<String>()
-    private val importedSharedFiles = mutableSetOf<String>()
     private var draftKey: ChatDraftKey? = null
     private val attachmentLease = drafts.makeAttachmentLease(null)
     private var draftRecords: List<ChatDraftAttachment> = emptyList()
@@ -374,7 +377,13 @@ class ChatViewModel(
             loadComposerConfiguration()
             if (sessionGeneration != generation) return@launch
             if (normalized == null && restored?.settings != null) restoreDraftSettings(restored.settings)
-            if (normalized != null) restoreDraftAttachments(generation)
+            if (draftRecords.isNotEmpty() && ensureSessionForSend() != null && sessionGeneration == generation) {
+                restoreDraftAttachments(generation)
+            }
+            if (isScreenActive) {
+                pendingActionCoordinator.startMonitoring()
+                pendingActionCoordinator.refreshApprovalBypassState()
+            }
             drafts.markUsed(key)
         }
     }
@@ -391,12 +400,14 @@ class ChatViewModel(
     private suspend fun performLoadMessages() {
         val sessionId = sessionId ?: return
 
+        // Flush before preparing the snapshot: buffered deltas belong to its cursor too.
+        val streamLoadPreparation = streamCoordinator.prepareForSessionLoad()
         resetPendingStreamingContentBuffers()
         latestServerLoadHadAssistantResponseAfterLatestUser = false
-        val streamLoadPreparation = streamCoordinator.prepareForSessionLoad()
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 
         val serverUrl = serverConfig.current().baseUrl
+        withContext(ioDispatcher) { streamSnapshots.loadIfNeeded() }
 
         // Cache-first render (#289): on a cold open with a populated cache paint
         // the cached transcript immediately so the loading skeleton never shows.
@@ -885,45 +896,48 @@ class ChatViewModel(
     }
 
     /**
-     * Imports Android ACTION_SEND content. Text is merged once; shared files
-     * force lazy session creation because hermes-webui uploads are session
-     * scoped. Returns true only when every copied file is staged.
+     * Port of `ChatDraftStore.appendShare` + `SharedImportReservation.moveIntoDraft`:
+     * copy every file before atomically committing text, records and the occurrence
+     * id. A failed import changes no composer content; the inbox keeps its source.
+     * After commit the durable draft owns all files, even if re-upload fails or
+     * navigation cancels hydration. Replaying the same occurrence adds nothing.
      */
     suspend fun applySharedImport(shared: SharedImport): Boolean {
-        if (importedSharedDrafts.add(shared.id)) {
-            val existing = _uiState.value.draft.trim()
-            val incoming = shared.text.trim()
-            val merged = listOf(existing, incoming).filter(String::isNotEmpty).distinct().joinToString("\n\n")
-            _uiState.update {
-                it.copy(
-                    draft = if (incoming.isNotEmpty() && merged.isNotEmpty()) "$merged\n" else merged,
-                    uploadAttachmentErrorMessage = shared.warnings.takeIf(List<String>::isNotEmpty)?.joinToString("\n"),
-                )
-            }
-        }
-        if (shared.attachments.isEmpty()) return true
-        if (ensureSessionForSend() == null) return false
-
-        var succeeded = true
-        for (attachment in shared.attachments) {
-            val key = attachment.file.absolutePath
-            if (key in importedSharedFiles) continue
-            val bytes = runCatching { withContext(ioDispatcher) { attachment.file.readBytes() } }
-                .getOrElse {
-                    attachmentCoordinator.setUploadAttachmentError(
-                        "${attachment.filename}: ${it.message ?: "could not be read"}",
-                    )
-                    succeeded = false
-                    continue
+        activationJob?.join()
+        val key = draftKey ?: return false
+        val generation = sessionGeneration
+        persistComposer()
+        try {
+            val previous = drafts.draft(key)
+            val files = if (shared.id in previous?.sharedImportIds.orEmpty()) emptyList() else withContext(ioDispatcher) {
+                shared.attachments.map { attachment ->
+                    if (attachment.file.length() > PendingAttachment.maximumUploadBytes) {
+                        throw java.io.IOException(PendingAttachment.uploadTooLargeMessage(attachment.filename))
+                    }
+                    val bytes = attachment.file.readBytes()
+                    val mime = attachment.mimeType ?: java.net.URLConnection.guessContentTypeFromName(attachment.filename)
+                        ?: "application/octet-stream"
+                    ChatDraftShareFile(bytes, attachment.filename, mime, mime.startsWith("image/"))
                 }
-            val uploaded = attachmentCoordinator.uploadAttachment(
-                data = bytes,
-                filename = attachment.filename,
-                previewData = bytes.takeIf { attachment.mimeType?.startsWith("image/") == true },
-            )
-            if (uploaded == null) succeeded = false else importedSharedFiles += key
+            }
+            drafts.appendShare(shared.id, shared.text.trim().let { if (it.isEmpty()) it else "$it\n" }, files,
+                key, PendingAttachment.maximumUploadBytes)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (generation == sessionGeneration) setUploadAttachmentError(error.message ?: "The shared files could not be saved.")
+            return false
         }
-        return succeeded
+        if (generation != sessionGeneration || draftKey != key) return true
+        val committed = drafts.draft(key) ?: return false
+        if (generation != sessionGeneration || draftKey != key) return true
+        applyDraft(committed)
+        composerRevision += 1
+        _uiState.update { it.copy(uploadAttachmentErrorMessage = shared.warnings.takeIf { notes -> notes.isNotEmpty() }?.joinToString("\n")) }
+        if (draftRecords.isNotEmpty() && ensureSessionForSend() != null && generation == sessionGeneration) {
+            restoreDraftAttachments(generation)
+        }
+        return true
     }
 
     override fun removePendingAttachment(id: String) {
@@ -963,10 +977,12 @@ class ChatViewModel(
     /** Lifecycle ON_START hook — resumes stream + auxiliary prompt polling. */
     fun resumeForForeground() {
         isScreenActive = true
-        if (_uiState.value.activeStreamId != null) {
-            pendingActionCoordinator.startMonitoring()
+        pendingActionCoordinator.startMonitoring()
+        viewModelScope.launch {
+            activationJob?.join()
+            streamCoordinator.reconnectIfNeeded()
+            if (isScreenActive) pendingActionCoordinator.refreshApprovalBypassState()
         }
-        viewModelScope.launch { streamCoordinator.reconnectIfNeeded() }
     }
 
     /** Lifecycle ON_STOP hook — suspends stream and all auxiliary polling. */
@@ -976,6 +992,7 @@ class ChatViewModel(
         persistComposer()
         persistPartialStream()
         streamCoordinator.suspendActiveStreamConnection()
+        pendingActionCoordinator.stopMonitoring(clearPrompt = false)
     }
 
     /** Port of `cancelActiveStream()`. */
@@ -1035,6 +1052,7 @@ class ChatViewModel(
     /** New-chat mode: create the session on first send (`POST /api/session/new`). */
     private suspend fun ensureSessionForSend(): String? {
         sessionId?.let { return it }
+        val generation = sessionGeneration
 
         try {
             val response = api.createSession(
@@ -1044,6 +1062,7 @@ class ChatViewModel(
                 profile = newChatProfileName ?: requestProfileName,
                 projectId = newChatProjectId,
             )
+            if (generation != sessionGeneration) return null
             val session = response.session
             val newSessionId = nonEmpty(session?.sessionId)
             if (newSessionId == null) {
@@ -1065,7 +1084,8 @@ class ChatViewModel(
             session?.title?.let(::applySessionTitle)
             return newSessionId
         } catch (error: Exception) {
-            _uiState.update { it.copy(sendErrorMessage = error.message) }
+            if (error is CancellationException) throw error
+            if (generation == sessionGeneration) _uiState.update { it.copy(sendErrorMessage = error.message) }
             return null
         }
     }
@@ -1131,7 +1151,8 @@ class ChatViewModel(
             completeExplicitModelPickForChatStart(explicitModelPick)
             streamCoordinator.start(streamId, runStartedAt = response.runStartedAt(sentAt))
             consumeSentAttachments(attachmentsToRestoreOnFailure)
-            onRunStarted()
+            // The host already accepted this run; a local offer-storage failure cannot roll back its message.
+            runCatching { onRunStarted() }
             return true
         } catch (error: Exception) {
             // Submission-owned cleanup is not scoped to whichever chat is now visible.
@@ -1141,7 +1162,7 @@ class ChatViewModel(
                 cacheCurrentMessages()
                 attachmentCoordinator.restorePendingAttachments(attachmentsToRestoreOnFailure)
             } else if (sourceKey != null) {
-                withContext(ioDispatcher) {
+                withContext(kotlinx.coroutines.NonCancellable + ioDispatcher) {
                     val cached = cacheStore.cachedMessages(sourceKey.serverId, sessionId)
                     cacheStore.cacheMessages(cached.filterNot { it.messageId == localMessageId }, sourceKey.serverId, sessionId)
                 }
@@ -2375,7 +2396,10 @@ class ChatViewModel(
                 _uiState.update { it.copy(uploadAttachmentErrorMessage = "${record.name}: ${error.message}") }
                 continue
             }
-            val uploaded = attachmentCoordinator.uploadStandaloneAttachment(bytes, record.name) ?: continue
+            val preview = attachmentPreview(bytes, record.name, record.mime,
+                _uiState.value.serverCacheNamespace, drafts.attachmentFile(file))
+            if (generation != sessionGeneration) return
+            val uploaded = attachmentCoordinator.uploadStandaloneAttachment(bytes, record.name, preview) ?: continue
             if (generation != sessionGeneration) return
             val retained = uploaded.copy(id = record.id, draftFileName = file)
             attachmentLease.filesByAttachmentId[record.id] = file
@@ -2410,7 +2434,7 @@ class ChatViewModel(
     }
 
     private fun persistPartialStream() {
-        flushPendingStreamingContent()
+        streamCoordinatorSaveSnapshotIfNeeded()
         cacheCurrentMessages()
     }
 
@@ -3814,9 +3838,71 @@ class ChatViewModel(
     }
 
     override fun streamCoordinatorStopAuxiliaryMonitoring(clearPrompt: Boolean) =
-        pendingActionCoordinator.stopMonitoring(clearPrompt)
+        pendingActionCoordinator.stopMonitoringForStreamTransition(clearClarification = clearPrompt)
 
-    override fun streamCoordinatorFlushPendingStreamingContent() = flushPendingStreamingContent()
+    /** Port of `streamCoordinatorSaveSnapshotIfNeeded` + `saveActiveStreamSnapshotIfNeeded`. */
+    override fun streamCoordinatorSaveSnapshotIfNeeded() {
+        flushPendingStreamingContent()
+        val current = _uiState.value
+        val session = sessionId ?: return
+        val stream = current.activeStreamId ?: return
+        if (streamCoordinator.hasCompletedCurrentResponse) return
+        streamSnapshots.save(
+            ActiveChatStreamSnapshot(
+                messages = current.messages,
+                messagesOffset = current.messagesOffset,
+                displayTitle = current.displayTitle,
+                completedToolCallGroups = current.completedToolCallGroups,
+                completedReasoningGroups = current.completedReasoningGroups,
+                liveToolCalls = current.liveToolCalls,
+                liveReasoningText = current.liveReasoningText,
+                activeStreamLastEventId = streamCoordinator.lastEventId,
+                streamingAssistantMessageId = current.streamingAssistantMessageId,
+                toolCallAnchorMessageId = toolCallAnchorMessageId,
+                reasoningAnchorMessageId = reasoningAnchorMessageId,
+                contextWindowSnapshot = current.contextWindow,
+                pinnedLocalNotices = current.pinnedLocalNotices,
+            ),
+            current.serverCacheNamespace, session, stream,
+        )
+    }
+
+    /** Port of `restoreActiveStreamSnapshotIfAvailable`: reconcile the live assistant and remap its anchors. */
+    override fun streamCoordinatorRestoreSnapshotIfAvailable(streamId: String): ChatStreamSnapshotRestoreResult {
+        val current = _uiState.value
+        val session = sessionId ?: return ChatStreamSnapshotRestoreResult.notRestored
+        val snapshot = streamSnapshots.snapshot(current.serverCacheNamespace, session, streamId)
+            ?: return ChatStreamSnapshotRestoreResult.notRestored
+        val merge = mergingLoadedMessages(current.messages, snapshot)
+        val assistant = merge.streamingAssistantMessageId ?: snapshot.streamingAssistantMessageId
+        updateMessages(merge.messages,
+            if (merge.usedSnapshotMessagesOffset) snapshot.messagesOffset else current.messagesOffset,
+            if (merge.usedSnapshotMessagesOffset) snapshot.messagesOffset > 0 else current.canLoadOlderMessages)
+        fun remap(anchor: String?): String? = if (anchor != null && anchor == snapshot.streamingAssistantMessageId) {
+            assistant ?: anchor
+        } else anchor
+        toolCallAnchorMessageId = remap(snapshot.toolCallAnchorMessageId)
+        reasoningAnchorMessageId = remap(snapshot.reasoningAnchorMessageId)
+        _uiState.update {
+            it.copy(
+                displayTitle = it.displayTitle.ifEmpty { snapshot.displayTitle },
+                completedToolCallGroups = snapshot.completedToolCallGroups,
+                completedReasoningGroups = snapshot.completedReasoningGroups,
+                liveToolCalls = snapshot.liveToolCalls,
+                liveReasoningText = snapshot.liveReasoningText,
+                streamingAssistantMessageId = assistant,
+                contextWindow = it.contextWindow ?: snapshot.contextWindowSnapshot,
+                pinnedLocalNotices = snapshot.pinnedLocalNotices,
+            )
+        }
+        bumpStreamingContentTrigger()
+        return ChatStreamSnapshotRestoreResult(true, snapshot.activeStreamLastEventId)
+    }
+
+    override fun streamCoordinatorRemoveSnapshot(streamId: String?) {
+        val session = sessionId ?: return
+        streamSnapshots.remove(_uiState.value.serverCacheNamespace, session, streamId ?: return)
+    }
 
     override fun streamCoordinatorFlushPinnedLocalNoticesToTranscript() = flushPinnedLocalNoticesToTranscript()
 
@@ -3960,8 +4046,56 @@ class ChatViewModel(
                     SseChatStream(container.okHttpClient, container.json, container.api) { container.customHeaderStore.snapshot() },
                     container.cacheStore, container.serverConfig, container.settings, container.modelFavorites, container.modelRecents,
                     initialSessionId, initialNewChat, network = container.networkMonitor,
-                    foregroundEvents = container.foregroundMonitor.foregroundEvents)
+                    foregroundEvents = container.foregroundMonitor.foregroundEvents,
+                    onRunStarted = { container.notificationOffer.claimForRunStart() })
             }
+        }
+
+        data class ActiveStreamMessageMerge(
+            val messages: List<ChatMessage>,
+            val streamingAssistantMessageId: String?,
+            val usedSnapshotMessagesOffset: Boolean,
+        )
+
+        /** Port of `mergingLoadedMessages(_:withActiveStreamSnapshot:)` — steer echoes never begin a turn. */
+        internal fun mergingLoadedMessages(
+            loaded: List<ChatMessage>,
+            snapshot: ActiveChatStreamSnapshot,
+        ): ActiveStreamMessageMerge {
+            if (snapshot.messages.isEmpty()) return ActiveStreamMessageMerge(loaded, latestAssistantMessageId(loaded), false)
+            val assistant = snapshot.streamingAssistantMessageId?.let { id -> snapshot.messages.find { it.messageId == id } }
+            if (assistant == null) {
+                return if (loaded.isEmpty()) ActiveStreamMessageMerge(snapshot.messages, latestAssistantMessageId(snapshot.messages), true)
+                else ActiveStreamMessageMerge(loaded, latestAssistantMessageId(loaded), false)
+            }
+            if (loaded.isEmpty()) return ActiveStreamMessageMerge(snapshot.messages, assistant.messageId, true)
+            val userIndex = loaded.indexOfLast(TranscriptTurnClassifier::isUserTurnBoundary)
+            val assistantIndex = loaded.indices.reversed().firstOrNull { it > userIndex && loaded[it].role == "assistant" }
+            if (assistantIndex != null) {
+                val row = loaded[assistantIndex]
+                val content = when {
+                    row.content.isNullOrEmpty() -> assistant.content
+                    assistant.content.isNullOrEmpty() -> row.content
+                    row.content.startsWith(assistant.content) -> row.content
+                    assistant.content.startsWith(row.content) -> assistant.content
+                    else -> row.content
+                }
+                val merged = loaded.toMutableList()
+                merged[assistantIndex] = row.copy(
+                    content = content, timestamp = row.timestamp ?: assistant.timestamp,
+                    messageId = row.messageId ?: assistant.messageId, name = row.name ?: assistant.name,
+                    toolCallId = row.toolCallId ?: assistant.toolCallId, toolUseId = row.toolUseId ?: assistant.toolUseId,
+                    toolCalls = row.toolCalls ?: assistant.toolCalls, contentParts = row.contentParts ?: assistant.contentParts,
+                    reasoning = row.reasoning ?: assistant.reasoning, attachments = row.attachments ?: assistant.attachments,
+                    turnTps = row.turnTps ?: assistant.turnTps,
+                )
+                return ActiveStreamMessageMerge(merged, merged[assistantIndex].messageId, false)
+            }
+            val equivalent = loaded.any { row ->
+                (assistant.messageId != null && row.messageId == assistant.messageId) ||
+                    (!assistant.content.isNullOrBlank() && row.role == assistant.role && row.content?.trim() == assistant.content.trim())
+            }
+            return ActiveStreamMessageMerge(if (equivalent) loaded else loaded + assistant, assistant.messageId, false)
         }
         private const val MESSAGE_PAGE_LIMIT = 50
         private const val STREAMING_CONTENT_COALESCING_MILLIS = 16L

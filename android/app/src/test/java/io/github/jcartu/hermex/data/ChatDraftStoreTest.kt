@@ -86,4 +86,62 @@ class ChatDraftStoreTest {
         assertEquals("recent", store.draft(recent)!!.attachments.single().file)
         assertTrue(sizes.values.sum() <= 200L * 1024 * 1024)
     }
+
+    @Test fun `typed Hermes contexts survive reload and connection purge preserves webui and other hosts`() = runTest {
+        val directory = Files.createTempDirectory("typed-drafts").toFile()
+        try {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val persistence = ChatDraftFilePersistence(directory, json, dispatcher)
+            val files = ChatDraftAttachmentStore(directory)
+            val ownedFile = files.save("owned".toByteArray(), "owned.txt")
+            val webui = ChatDraftKey.session("server", "same")
+            val hermes = ChatDraftKey.hermesSession("server", "connection", "", "same")
+            val new = ChatDraftKey.hermesSession("server", "connection", "", null)
+            val bot = ChatDraftKey.bot("server", "connection", "")
+            val other = ChatDraftKey.hermesSession("server", "other", "", "same")
+            persistence.write(mapOf(webui to ChatDraft(text = "webui"), hermes to ChatDraft(text = "hermes", attachments = listOf(
+                ChatDraftAttachment("f", "owned.txt", "text/plain", 5, false, ownedFile))),
+                new to ChatDraft(text = "new"), bot to ChatDraft(botSubmissionUncertain = true), other to ChatDraft(text = "other")))
+            val store = ChatDraftStore(persistence, files, backgroundScope, dispatcher)
+            assertTrue(store.draft(bot)!!.botSubmissionUncertain)
+            assertEquals("new", store.draft(new)?.text)
+            assertFalse(bot.isNewChat)
+            assertTrue(new.isNewChat)
+            store.discardHermesDrafts("server", "connection")
+            store.flush()
+            val remaining = persistence.load()
+            assertEquals(setOf(webui, other), remaining.keys)
+            assertFalse(files.file(ownedFile).exists())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `share commit write failure rolls back text records occurrence and staged copies`() = runTest {
+        val directory = Files.createTempDirectory("share-rollback").toFile()
+        try {
+            val key = ChatDraftKey("server", "s")
+            var disk = mapOf(key to ChatDraft(text = "Original"))
+            var refused = false
+            val persistence = object : ChatDraftPersisting {
+                override suspend fun load() = disk
+                override suspend fun write(drafts: Map<ChatDraftKey, ChatDraft>) {
+                    if (!refused && drafts[key]?.sharedImportIds?.isNotEmpty() == true) {
+                        refused = true
+                        throw java.io.IOException("disk full")
+                    }
+                    disk = drafts
+                }
+            }
+            val files = ChatDraftAttachmentStore(directory)
+            val store = ChatDraftStore(persistence, files, backgroundScope, UnconfinedTestDispatcher(testScheduler))
+            try {
+                store.appendShare("share", "Incoming", listOf(ChatDraftShareFile(byteArrayOf(1), "a.txt", "text/plain", false)), key, 100)
+                fail("write should fail")
+            } catch (_: java.io.IOException) { }
+            assertEquals("Original", store.draft(key)?.text)
+            assertTrue(store.draft(key)!!.attachments.isEmpty())
+            assertTrue(store.draft(key)!!.sharedImportIds.isEmpty())
+            assertEquals("Original", disk[key]?.text)
+            assertTrue(files.retainedFileBytes().isEmpty())
+        } finally { directory.deleteRecursively() }
+    }
 }
