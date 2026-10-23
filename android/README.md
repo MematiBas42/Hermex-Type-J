@@ -259,8 +259,10 @@ Current results are recorded by the build output and Android CI, not a static
 test-count badge. Run `./gradlew lintDebug assembleDebug assembleRelease` as
 the packaging/static gate, then install and exercise the actual app.
 
-GitHub Actions runs the same test task, builds the release variant, and uploads
-an unsigned APK for every Android change.
+GitHub Actions runs the same test task, Android Lint, and release packaging in
+separate bounded Gradle invocations, then uploads an unsigned APK. Each gate
+has a 10-minute limit; the complete job has a 20-minute limit. A stalled gate
+fails explicitly instead of leaving the runner occupied indefinitely.
 
 For an isolated real-Hermes smoke, run `python3 scripts/local-hermes --port 19199`
 from the repository root. The launcher uses the pinned host and a scripted model

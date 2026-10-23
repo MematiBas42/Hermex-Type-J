@@ -71,6 +71,8 @@ Entries use Added / Changed / Fixed / Security sections.
   system-bar contrast following the app's appearance rather than only the OS.
 - App-level Files/Git entries retain the active Hermes workspace; commit-message
   suggestions remain usable when the chat screen is parked.
+- Android CI runs tests, lint, and release packaging as separate, time-bounded
+  Gradle invocations, so a stalled gate fails explicitly.
 
 ### Security
 - Credential-bearing HTTP redirects are refused before crossing origins;
