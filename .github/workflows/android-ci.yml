@@ -12,6 +12,7 @@ jobs:
   build:
     name: Build & test Hermex-Type-J
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: android
@@ -28,7 +29,27 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests and Android Lint
-        run: ./gradlew :app:testDebugUnitTest :app:lintDebug --stacktrace
+        timeout-minutes: 12
+        run: |
+          cat > "$RUNNER_TEMP/trace-tests.gradle" <<'GRADLE'
+          allprojects {
+              tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+                  testLogging {
+                      events 'started', 'passed', 'skipped', 'failed'
+                      showStandardStreams = true
+                  }
+              }
+          }
+          GRADLE
+          (
+              sleep 360
+              for pid in $(jps -q); do
+                  jcmd "$pid" Thread.print -l || true
+              done
+          ) &
+          probe_pid=$!
+          trap 'kill "$probe_pid" 2>/dev/null || true' EXIT
+          ./gradlew --no-daemon --console=plain --init-script "$RUNNER_TEMP/trace-tests.gradle" :app:testDebugUnitTest :app:lintDebug --stacktrace
 
       - name: Build release APK (unsigned)
         run: ./gradlew assembleRelease --stacktrace
