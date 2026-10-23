@@ -11,10 +11,9 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -123,17 +122,23 @@ class HermesShareImportTest {
         val repository = repository()
         val import = repository.ingestTextAndFile()
         val draftStore = mockk<ChatDraftStore>()
+        val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         coEvery { draftStore.appendShare(any(), any(), any(), any(), any(), any()) } coAnswers {
+            entered.complete(Unit)
             gate.await()
         }
 
-        val first = async { HermesShareImport.transfer(repository, draftStore, "srv", "conn", "Inbox", import.id) }
-        // Let the first transfer reach the store write before claiming again.
-        withContext(Dispatchers.Default) { kotlinx.coroutines.yield() }
-        assertFalse(HermesShareImport.transfer(repository, draftStore, "srv", "conn", "Inbox", import.id))
-        gate.complete(Unit)
-        assertTrue(first.await())
+        withTimeout(5_000) {
+            val first = async { HermesShareImport.transfer(repository, draftStore, "srv", "conn", "Inbox", import.id) }
+            try {
+                entered.await()
+                assertFalse(HermesShareImport.transfer(repository, draftStore, "srv", "conn", "Inbox", import.id))
+            } finally {
+                gate.complete(Unit)
+            }
+            assertTrue(first.await())
+        }
         assertNull(repository.pending.value)
     }
 }

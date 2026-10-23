@@ -73,6 +73,9 @@ Entries use Added / Changed / Fixed / Security sections.
   suggestions remain usable when the chat screen is parked.
 - Android CI runs tests, lint, and release packaging as separate, time-bounded
   Gradle invocations, so a stalled gate fails explicitly.
+- The concurrent-share regression waits for the first write explicitly rather
+  than treating coroutine `yield()` as a synchronization barrier, eliminating
+  its cold-runner deadlock without changing production share handling.
 
 ### Security
 - Credential-bearing HTTP redirects are refused before crossing origins;

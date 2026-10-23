@@ -163,6 +163,9 @@ consumer-visible boundaries, state transitions, and protocol decisions:
   `okhttp-mockwebserver` and must close their sockets during teardown.
 - Robolectric is available for Android-dependent behavior. Android resources
   are not included in JVM tests, so these tests do not replace emulator proof.
+- Coordinate coroutine races with an explicit signal from the required boundary
+  (for example, `CompletableDeferred` when a write is entered). `yield()` and
+  dispatcher hops are not barriers. Bound waits and release test gates in `finally`.
 - The integrator builds, installs, and exercises the app on an emulator/device,
   including folded/unfolded layouts and a restart with saved server settings.
 - Android's regex engine rejects the JVM-only `(?U)` flag. Use portable Unicode
