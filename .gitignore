@@ -27,6 +27,8 @@ Config/Local.xcconfig
 
 # Local reference material
 UPDATES.md
+plan.md
+PLAN.md
 .obsidian/
 docs/research/
 
