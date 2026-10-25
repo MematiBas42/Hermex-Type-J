@@ -859,4 +859,49 @@ class HermesApiRequestShapeTest {
         assertEquals("GET", request.method)
         assertEquals("/api/models/live", request.path)
     }
+
+    // MARK: Hermes Dashboard fallbacks
+
+    @Test
+    fun modelsFallsBackToModelOptionsWhen404() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("{\"detail\":\"No such API endpoint: /api/models\"}"))
+        server.enqueue(
+            MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                """{"providers":[{"slug":"agy","name":"agy-gateway","models":["gemini-3.8-flash"]}],"model":"gemini-3.8-flash","provider":"agy"}""",
+            ),
+        )
+
+        val response = api.models()
+        val r1 = server.takeRequest()
+        val r2 = server.takeRequest()
+
+        assertEquals("/api/models", r1.path)
+        assertEquals("/api/model/options", r2.path)
+        assertEquals("gemini-3.8-flash", response.defaultModel)
+        assertEquals("agy", response.activeProvider)
+        assertEquals(1, response.catalogGroups.size)
+        assertEquals("gemini-3.8-flash", response.catalogGroups.first().models.first().id)
+    }
+
+    @Test
+    fun updateSessionFallsBackToModelSetWhen405() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(405).setBody("{\"detail\":\"Method Not Allowed\"}"))
+        server.enqueue(
+            MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json").setBody(
+                """{"ok":true,"scope":"main","provider":"agy","model":"gemini-3.8-flash"}""",
+            ),
+        )
+
+        val response = api.updateSession("sid-1", "/ws", "gemini-3.8-flash", "agy")
+        val r1 = server.takeRequest()
+        val r2 = server.takeRequest()
+
+        assertEquals("/api/session/update", r1.path)
+        assertEquals("/api/model/set", r2.path)
+        val body2 = jsonBody(r2)
+        assertEquals("gemini-3.8-flash", body2["model"]?.jsonPrimitive?.content)
+        assertEquals("agy", body2["provider"]?.jsonPrimitive?.content)
+        assertEquals("main", body2["scope"]?.jsonPrimitive?.content)
+        assertEquals("gemini-3.8-flash", response.session?.model)
+    }
 }

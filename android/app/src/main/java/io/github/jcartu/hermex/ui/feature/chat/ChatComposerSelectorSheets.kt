@@ -226,6 +226,7 @@ internal fun ChatComposerSelectorSheets(
             onDismiss = onDismiss,
             currentModel = state.selectedModelId,
             currentModelProvider = state.selectedModelProviderId,
+            initialGroups = state.modelCatalogGroups.takeIf { it.isNotEmpty() },
         )
 
         ChatComposerSelectorSheet.WORKSPACE -> WorkspacePickerSheet(

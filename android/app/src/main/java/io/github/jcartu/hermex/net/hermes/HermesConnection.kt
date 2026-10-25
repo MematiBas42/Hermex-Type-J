@@ -300,6 +300,7 @@ class HermesConnection(
                         checkCurrent()
                         val token = HermesREST.pageToken(page) ?: throw BotFailure.Unsupported
                         credential = Credential.PageToken(token)
+                        HermesSessionTokenStore.set(address, token)
                         // Any gated read proves the token. At the 0.21.5 pin `/api/auth/me` answers
                         // 401 in this mode, since only the password gate sets a session.
                         step = "token"

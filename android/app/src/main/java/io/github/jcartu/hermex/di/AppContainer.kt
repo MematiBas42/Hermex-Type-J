@@ -198,7 +198,7 @@ class AppContainer(context: Context) {
     }
 
     val okHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        val base = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -207,6 +207,14 @@ class AppContainer(context: Context) {
             // NOTE: never add Origin or Referer headers anywhere — the upstream
             // CSRF check treats requests without them as non-browser clients,
             // which is the supported path for native apps. See PROJECT_SPEC.md §6.1.
+            .build()
+
+        base.newBuilder()
+            .addInterceptor(
+                io.github.jcartu.hermex.net.hermes.HermesSessionTokenInterceptor(
+                    rawClientProvider = { base },
+                ),
+            )
             .build()
     }
 

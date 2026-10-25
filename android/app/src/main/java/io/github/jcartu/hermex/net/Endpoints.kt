@@ -95,6 +95,8 @@ sealed class Endpoint {
     object GitCommitMessageSelected : Endpoint()
     object Models : Endpoint()
     object ModelsLive : Endpoint()
+    object ModelOptions : Endpoint()
+    object ModelSet : Endpoint()
     object Commands : Endpoint()
     object DefaultModel : Endpoint()
     data class Reasoning(val model: String? = null, val provider: String? = null) : Endpoint()
@@ -233,6 +235,8 @@ sealed class Endpoint {
             is RawFile -> "/api/file/raw"
             Models -> "/api/models"
             ModelsLive -> "/api/models/live"
+            ModelOptions -> "/api/model/options"
+            ModelSet -> "/api/model/set"
             Commands -> "/api/commands"
             DefaultModel -> "/api/default-model"
             is Reasoning -> "/api/reasoning"

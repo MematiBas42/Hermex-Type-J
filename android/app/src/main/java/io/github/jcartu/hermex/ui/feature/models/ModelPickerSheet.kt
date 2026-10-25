@@ -51,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.jcartu.hermex.HermexApplication
+import io.github.jcartu.hermex.model.ModelCatalogGroup
 import io.github.jcartu.hermex.model.ModelCatalogOption
 import io.github.jcartu.hermex.ui.components.ErrorState
 import io.github.jcartu.hermex.ui.components.LoadingState
@@ -90,11 +91,12 @@ fun ModelPickerSheet(
     currentModel: String?,
     currentModelProvider: String? = null,
     clearAction: ModelPickerClearAction? = null,
+    initialGroups: List<ModelCatalogGroup>? = null,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as HermexApplication).container
     val viewModel: ModelPickerViewModel = viewModel(
-        key = "model-picker:$currentModel:$currentModelProvider",
+        key = "model-picker:$currentModel:$currentModelProvider:${initialGroups?.size ?: 0}",
         factory = viewModelFactory {
             initializer {
                 ModelPickerViewModel(
@@ -104,6 +106,7 @@ fun ModelPickerSheet(
                     initialModelID = currentModel,
                     initialProviderID = currentModelProvider,
                     writeScope = container.appScope,
+                    initialGroups = initialGroups,
                 )
             }
         },

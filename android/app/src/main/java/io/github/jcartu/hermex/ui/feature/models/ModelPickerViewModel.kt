@@ -85,6 +85,7 @@ class ModelPickerViewModel(
     initialModelID: String? = null,
     initialProviderID: String? = null,
     writeScope: CoroutineScope? = null,
+    initialGroups: List<ModelCatalogGroup>? = null,
 ) : ViewModel() {
 
     private val persistScope: CoroutineScope get() = externalWriteScope ?: viewModelScope
@@ -92,7 +93,8 @@ class ModelPickerViewModel(
 
     private val _uiState = MutableStateFlow(
         ModelPickerUiState(
-            isLoading = true,
+            isLoading = initialGroups.isNullOrEmpty(),
+            modelGroups = initialGroups.orEmpty(),
             selectedModelID = initialModelID?.trim()?.takeIf { it.isNotEmpty() },
             selectedModelProviderID = initialProviderID?.trim()?.takeIf { it.isNotEmpty() },
             // The pinned sections start open; provider groups start collapsed
@@ -119,7 +121,9 @@ class ModelPickerViewModel(
                 _uiState.update { it.copy(recentKeys = keys) }
             }
         }
-        loadCatalog()
+        if (initialGroups.isNullOrEmpty()) {
+            loadCatalog()
+        }
     }
 
     /** Loads `GET /api/models` and seeds the selection from `default_model` when none was passed in. */

@@ -102,12 +102,21 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.decodeFromString
+import io.github.jcartu.hermex.model.JSONValue
+import io.github.jcartu.hermex.model.SessionDetail
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -276,15 +285,43 @@ class HermesApi(
         workspace: String?,
         model: String?,
         modelProvider: String?,
-    ): SessionResponse = post(
-        Endpoint.UpdateSession,
-        UpdateSessionRequest(
-            sessionId = id,
-            workspace = workspace,
-            model = model,
-            modelProvider = modelProvider,
-        ),
-    )
+    ): SessionResponse {
+        return try {
+            post(
+                Endpoint.UpdateSession,
+                UpdateSessionRequest(
+                    sessionId = id,
+                    workspace = workspace,
+                    model = model,
+                    modelProvider = modelProvider,
+                ),
+            )
+        } catch (e: ApiError.Http) {
+            if ((e.statusCode == 404 || e.statusCode == 405) && model != null) {
+                setHermesModel(model, modelProvider)
+                SessionResponse(
+                    session = SessionDetail(
+                        sessionId = id,
+                        model = model,
+                        modelProvider = modelProvider,
+                        workspace = workspace,
+                    ),
+                )
+            } else {
+                throw e
+            }
+        }
+    }
+
+    suspend fun setHermesModel(model: String, provider: String? = null, scope: String = "main"): String {
+        val payload = buildJsonObject {
+            put("model", JsonPrimitive(model))
+            provider?.let { put("provider", JsonPrimitive(it)) }
+            put("scope", JsonPrimitive(scope))
+        }
+        val body = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+        return sendForBody(Endpoint.ModelSet, "POST", body)
+    }
 
     suspend fun moveSession(id: String, projectId: String?): SessionMutationResponse =
         post(Endpoint.MoveSession, MoveSessionRequest(id, projectId))
@@ -571,7 +608,52 @@ class HermesApi(
 
     // MARK: Server panels (APIClient+ServerPanels.swift)
 
-    suspend fun models(): ModelsResponse = get(Endpoint.Models)
+    suspend fun models(): ModelsResponse {
+        return try {
+            get(Endpoint.Models)
+        } catch (e: ApiError.Http) {
+            if (e.statusCode == 404) {
+                fetchHermesModelOptions()
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private suspend fun fetchHermesModelOptions(): ModelsResponse {
+        val jsonStr = sendForBody(Endpoint.ModelOptions, "GET", null)
+        val root = json.parseToJsonElement(jsonStr).jsonObject
+        val defaultModel = root["model"]?.jsonPrimitive?.contentOrNull
+        val activeProvider = root["provider"]?.jsonPrimitive?.contentOrNull
+
+        val providersArray = root["providers"]?.let { if (it is JsonArray) it else null } ?: JsonArray(emptyList())
+        val groups = providersArray.mapNotNull { provElem ->
+            val provObj = (provElem as? JsonObject) ?: return@mapNotNull null
+            val slug = provObj["slug"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val name = provObj["name"]?.jsonPrimitive?.contentOrNull ?: slug
+            val modelsArray = provObj["models"]?.let { if (it is JsonArray) it else null }
+            val modelsList = modelsArray?.mapNotNull { modelElem ->
+                val modelId = modelElem.jsonPrimitive.contentOrNull ?: return@mapNotNull null
+                buildJsonObject {
+                    put("id", JsonPrimitive(modelId))
+                    put("name", JsonPrimitive(modelId))
+                    put("provider_id", JsonPrimitive(slug))
+                }
+            } ?: emptyList()
+
+            buildJsonObject {
+                put("provider_id", JsonPrimitive(slug))
+                put("name", JsonPrimitive(name))
+                put("models", JsonArray(modelsList))
+            }
+        }
+
+        return ModelsResponse(
+            groups = groups.map { JSONValue(it) },
+            defaultModel = defaultModel,
+            activeProvider = activeProvider,
+        )
+    }
 
     /**
      * Live (uncached) model list for the active provider. The server resolves
