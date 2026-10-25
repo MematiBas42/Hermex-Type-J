@@ -1,0 +1,3234 @@
+[
+  {
+    "type": "View",
+    "name": "ContentView",
+    "swift_file": "ContentView.swift",
+    "category": "AppRoot",
+    "kt_target": "io/github/jcartu/hermex/core/share/ShareRouting.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "HermesServerHome",
+    "swift_file": "ContentView.swift",
+    "category": "AppRoot",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/home/HermesHome.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "HermesServerSignIn",
+    "swift_file": "ContentView.swift",
+    "category": "AppRoot",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/connect/HermesConnectionForm.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "HermesServerAvatarButton",
+    "swift_file": "ContentView.swift",
+    "category": "AppRoot",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermesUpdateSignInModifier",
+    "swift_file": "ContentView.swift",
+    "category": "AppRoot",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppLockView",
+    "swift_file": "Auth/AppLockWindow.swift",
+    "category": "Auth",
+    "kt_target": "io/github/jcartu/hermex/core/security/AppLockOverlay.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "AppLockIcon",
+    "swift_file": "Auth/AppLockWindow.swift",
+    "category": "Auth",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppLockButton",
+    "swift_file": "Auth/AppLockWindow.swift",
+    "category": "Auth",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HitchMeterOverlay",
+    "swift_file": "Config/HitchMeter.swift",
+    "category": "Config",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "NotificationOfferAlertModifier",
+    "swift_file": "Config/NotificationOffer.swift",
+    "category": "Config",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "OpenNotificationSettingsModifier",
+    "swift_file": "Config/NotificationOffer.swift",
+    "category": "Config",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotArtifactPreview",
+    "swift_file": "Features/Bots/BotArtifactPreview.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotAtAutocompleteView",
+    "swift_file": "Features/Bots/BotAtAutocompleteView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatComposerMentionAutocomplete.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotConnectionView",
+    "swift_file": "Features/Bots/BotConnectionView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/connect/HermesConnectionForm.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotConnectionWelcomeView",
+    "swift_file": "Features/Bots/BotConnectionView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotConnectionWelcome.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "OpenDashboardWarning",
+    "swift_file": "Features/Bots/BotConnectionView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/connect/HermesConnectionForm.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotCreateView",
+    "swift_file": "Features/Bots/BotCreateView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotExpressionPickerView",
+    "swift_file": "Features/Bots/BotExpressionPickerView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotAnimatedFaceView",
+    "swift_file": "Features/Bots/BotFaceMotion.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotFaceViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotInteractiveFaceView",
+    "swift_file": "Features/Bots/BotFaceMotion.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotFaceViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotMentionAutocompleteView",
+    "swift_file": "Features/Bots/BotMentionAutocompleteView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotMentionRow",
+    "swift_file": "Features/Bots/BotMentionAutocompleteView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotPendingRequestCard",
+    "swift_file": "Features/Bots/BotPendingRequestCard.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotApprovalRequestBody",
+    "swift_file": "Features/Bots/BotPendingRequestCard.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotQuestionRequestBody",
+    "swift_file": "Features/Bots/BotPendingRequestCard.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotCredentialRequestBody",
+    "swift_file": "Features/Bots/BotPendingRequestCard.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotRequestWithdrawalNote",
+    "swift_file": "Features/Bots/BotPendingRequestCard.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotAvatarMarkView",
+    "swift_file": "Features/Bots/BotProfileAppearance.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotFaceViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotChatTitlePill",
+    "swift_file": "Features/Bots/BotProfileAppearance.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotFaceViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBotChatPill",
+    "swift_file": "Features/Bots/BotProfileAppearance.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotAvatarView",
+    "swift_file": "Features/Bots/BotProfileAppearance.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotFaceViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "BotChatTitlePillFallback",
+    "swift_file": "Features/Bots/BotProfileAppearance.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotProfileEditorView",
+    "swift_file": "Features/Bots/BotProfileEditorView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomComposerView",
+    "swift_file": "Features/Bots/BotRoomComposerView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomActionCard",
+    "swift_file": "Features/Bots/BotRoomComposerView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotComposerPillView",
+    "swift_file": "Features/Bots/BotRoomComposerView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomCreateView",
+    "swift_file": "Features/Bots/BotRoomCreateView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomCreateScreen.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomProfileView",
+    "swift_file": "Features/Bots/BotRoomProfileView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomView",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomThreadPreview",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomEventView",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomAvatars",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomMemberAvatar",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomWelcomeView",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomInboxRow",
+    "swift_file": "Features/Bots/BotRoomView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotRoomScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotSearchView",
+    "swift_file": "Features/Bots/BotSearchView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotSearchSheet.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "BotsInboxView",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotsInbox.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "BotSectionOrderView",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotSectionOrderSheet.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "BotHeroTile",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotRoomHeroTile",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotInboxRow",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BotLiveStatusLabel",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotsInboxScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotInboxSkeletonRow",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotsInboxScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "BotUnreadDot",
+    "swift_file": "Features/Bots/BotsInboxView.swift",
+    "category": "Bots",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/bots/BotsInboxScreen.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ApprovalRequestOverlay",
+    "swift_file": "Features/Chat/ApprovalRequestOverlay.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ApprovalRequestOverlay.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ApprovalBypassStatusPill",
+    "swift_file": "Features/Chat/ApprovalRequestOverlay.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ApprovalRequestOverlay.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "HermexAttachmentCameraPanel",
+    "swift_file": "Features/Chat/CameraPickerView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatActiveRunStatusView",
+    "swift_file": "Features/Chat/ChatActiveRunStatusView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatActiveRunStatusView.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ChatRunStatusDot",
+    "swift_file": "Features/Chat/ChatActiveRunStatusView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatActiveRunStatusView.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ChatActiveRunStatusPreviewStack",
+    "swift_file": "Features/Chat/ChatActiveRunStatusView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatActiveRunStatusView.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ChatAttachmentPreviewView",
+    "swift_file": "Features/Chat/ChatAttachmentPreviewView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatAttachmentImageLightbox",
+    "swift_file": "Features/Chat/ChatAttachmentPreviewView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerAttachmentStripView",
+    "swift_file": "Features/Chat/ChatComposerAttachmentStripView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerAttachmentPillPreview",
+    "swift_file": "Features/Chat/ChatComposerAttachmentStripView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerAttachmentThumbnailView",
+    "swift_file": "Features/Chat/ChatComposerAttachmentStripView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ChatComposerSurfaceStyle",
+    "swift_file": "Features/Chat/ChatComposerPresentation.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerWorkspaceSelectorButton",
+    "swift_file": "Features/Chat/ChatComposerSelectorControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerFastModeButton",
+    "swift_file": "Features/Chat/ChatComposerSelectorControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerProfileSelectorMenu",
+    "swift_file": "Features/Chat/ChatComposerSelectorControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerModelEffortMenu",
+    "swift_file": "Features/Chat/ChatComposerSelectorControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerInlineControlLabel",
+    "swift_file": "Features/Chat/ChatComposerSelectorControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerWorkspacePickerSheet",
+    "swift_file": "Features/Chat/ChatComposerSelectorSheets.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/models/WorkspacePickerSheet.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "ComposerTextInputView",
+    "swift_file": "Features/Chat/ChatComposerTextInputView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatComposerTextInput.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ComposerCollapsedDraft",
+    "swift_file": "Features/Chat/ChatComposerTextInputView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatComposerTextInput.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ComposerStatusView",
+    "swift_file": "Features/Chat/ChatComposerView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerQuoteDetailView",
+    "swift_file": "Features/Chat/ChatComposerView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MessageComposerView",
+    "swift_file": "Features/Chat/ChatComposerView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerVoiceStatusView",
+    "swift_file": "Features/Chat/ChatComposerVoiceControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerVoiceControlButton",
+    "swift_file": "Features/Chat/ChatComposerVoiceControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ComposerVoiceRecordingBar",
+    "swift_file": "Features/Chat/ChatComposerVoiceControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GoalControlsMenu",
+    "swift_file": "Features/Chat/ChatGoalControls.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "GoalSubmissionSheet",
+    "swift_file": "Features/Chat/ChatGoalControls.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatMessageActionMenu",
+    "swift_file": "Features/Chat/ChatMessageActions.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SelectableTextPresentationView",
+    "swift_file": "Features/Chat/ChatMessageActions.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "EditMessageSheet",
+    "swift_file": "Features/Chat/ChatMessageActions.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatCopyButton",
+    "swift_file": "Features/Chat/ChatMessageMeta.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ChatDisclosureToggledModifier",
+    "swift_file": "Features/Chat/ChatScrollPolicy.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatScrollPolicy.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "TranscriptLinkHandlerModifier",
+    "swift_file": "Features/Chat/ChatScrollPolicy.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatScrollPolicy.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "TranscriptLinksModifier",
+    "swift_file": "Features/Chat/ChatScrollPolicy.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatScrollPolicy.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ChatTimelineAccessoryInsetSurfaceModifier",
+    "swift_file": "Features/Chat/ChatTimelineAccessorySurface.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatWorkingRowView",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "BottomComposerMaterialFade",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "StreamRecoveryStatusView",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatTranscriptLoadingSkeletonView",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatTranscriptLoadingSkeletonRow",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatOfflineCacheBanner",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "PinnedLocalNoticeStack",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ForcedLeftToRightModifier",
+    "swift_file": "Features/Chat/ChatTranscriptSupportingViews.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatTranscriptView",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatTranscript.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "StreamingFollowTrigger",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatTranscriptMessageBlock",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatTranscriptMessageRow",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatScrollToBottomButton",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "LoadOlderMessagesButton",
+    "swift_file": "Features/Chat/ChatTranscriptView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatTranscript.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ListenPlaybackBar",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatView",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ChatToolbarTitleLabel",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "LegacyToolbarClusterStyle",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ClearConversationAlertModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "StopConfirmationModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ChatDraftSyncModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ChatNavigationBackground",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermesModelConfirmationModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermesAutomationConfirmationModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermesPersonalityConfirmationModifier",
+    "swift_file": "Features/Chat/ChatView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ClarificationRequestInset",
+    "swift_file": "Features/Chat/ClarificationRequestCard.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ClarificationRequestBar",
+    "swift_file": "Features/Chat/ClarificationRequestCard.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ClarificationRequestCard",
+    "swift_file": "Features/Chat/ClarificationRequestCard.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ClarificationRequestOverlay.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "HermesRequestInset",
+    "swift_file": "Features/Chat/ClarificationRequestCard.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ContextWindowIndicatorView",
+    "swift_file": "Features/Chat/ContextWindowIndicatorView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ContextWindowIndicatorView.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ContextWindowPopover",
+    "swift_file": "Features/Chat/ContextWindowIndicatorView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ContextWindowIndicatorView.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ContextWindowInfoRow",
+    "swift_file": "Features/Chat/ContextWindowIndicatorView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ContextWindowIndicatorView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermexAttachmentPickerView",
+    "swift_file": "Features/Chat/CustomAttachmentPicker.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HermexPhotoAssetThumbnail",
+    "swift_file": "Features/Chat/CustomAttachmentPicker.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HermexAttachmentMenuRow",
+    "swift_file": "Features/Chat/CustomAttachmentPicker.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermexAttachmentPanelSurface",
+    "swift_file": "Features/Chat/CustomAttachmentPicker.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "DisplayMathView",
+    "swift_file": "Features/Chat/DisplayMathView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MathInlineText",
+    "swift_file": "Features/Chat/DisplayMathView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "FilePathAutocompleteView",
+    "swift_file": "Features/Chat/FilePathAutocompleteView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/SlashCommandAutocomplete.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "FilePathRow",
+    "swift_file": "Features/Chat/FilePathAutocompleteView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ForkOriginRowView",
+    "swift_file": "Features/Chat/ForkOrigin.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionRow.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwCard",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwBar",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwFullScreen",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwHeader",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwLabel",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwCloseButton",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwAnswer",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesBtwRunPill",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesBtwPanel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HermesBtwAnnouncement",
+    "swift_file": "Features/Chat/HermesBtwPanel.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HermesDelegatedWorkButton",
+    "swift_file": "Features/Chat/HermesDelegatedWorkView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesDelegatedWorkView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesDelegatedWorkView",
+    "swift_file": "Features/Chat/HermesDelegatedWorkView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesDelegatedWorkView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesDelegationCompletionCard",
+    "swift_file": "Features/Chat/HermesDelegatedWorkView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesDelegatedWorkView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesDelegationResultsSheet",
+    "swift_file": "Features/Chat/HermesDelegatedWorkView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesDelegatedWorkView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesPlanRowView",
+    "swift_file": "Features/Chat/HermesPlanViews.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesPlanViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesPlanItemList",
+    "swift_file": "Features/Chat/HermesPlanViews.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesPlanViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesPlanStrip",
+    "swift_file": "Features/Chat/HermesPlanViews.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesPlanViews.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesDesktopTaskRequestBody",
+    "swift_file": "Features/Chat/HermesRequestCards.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesConnectionRequestBody",
+    "swift_file": "Features/Chat/HermesRequestCards.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesConnectionTargetRow",
+    "swift_file": "Features/Chat/HermesRequestCards.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesRequestHeader",
+    "swift_file": "Features/Chat/HermesRequestCards.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesRequestCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesTurnOutcomeRow",
+    "swift_file": "Features/Chat/HermesTurnOutcomeRow.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/hermes/HermesTurnOutcomeRow.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HorizontalOverflowFadesModifier",
+    "swift_file": "Features/Chat/HorizontalOverflowEdgeFades.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ImageLightboxActionButton",
+    "swift_file": "Features/Chat/ImageLightboxView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "InlineAudioPlayerView",
+    "swift_file": "Features/Chat/InlineAudioPlayerView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/InlineAudioPlayerView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "DiffCodeBlockScrollBody",
+    "swift_file": "Features/Chat/MarkdownDiffCodeBlock.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ToolCallDiff.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "DiffCodeBlockText",
+    "swift_file": "Features/Chat/MarkdownDiffCodeBlock.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ToolCallDiff.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "MarkdownRenderer",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "StreamingMarkdownRenderer",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "StreamingMarkdownDisplayedContentView",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "StreamingMarkdownChunkedView",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatMarkdownView",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MathFenceOrCodeBlock",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatCodeBlock",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "PlainCodeBlockText",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HighlightedCodeBlockText",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "PlainMarkdownFallbackView",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ChatMarkdownTable",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SelectableMarkdownHeading",
+    "swift_file": "Features/Chat/MarkdownRenderer.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MarkerMessageCardView",
+    "swift_file": "Features/Chat/MarkerMessageCardView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MessageBubbleView",
+    "swift_file": "Features/Chat/MessageBubbleView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ChatAttachmentViews.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "GridAttachmentCell",
+    "swift_file": "Features/Chat/MessageBubbleView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/model/AttachmentAudioDetection.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "RemoteAttachmentImage",
+    "swift_file": "Features/Chat/MessageBubbleView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "PendingRequestSubmitButton",
+    "swift_file": "Features/Chat/PendingRequestSurfaces.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "PendingRequestFieldSurface",
+    "swift_file": "Features/Chat/PendingRequestSurfaces.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "PendingRequestBlockSurface",
+    "swift_file": "Features/Chat/PendingRequestSurfaces.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProviderGlyph",
+    "swift_file": "Features/Chat/ProviderGlyph.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/models/ProviderGlyph.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ReasoningBlockView",
+    "swift_file": "Features/Chat/ReasoningBlockView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ReasoningBlockView.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "LiveReasoningTextView",
+    "swift_file": "Features/Chat/ReasoningBlockView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ResponseSelectionLeaf",
+    "swift_file": "Features/Chat/ResponseTextSelection.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "RegisteredResponseSelectionLeaf",
+    "swift_file": "Features/Chat/ResponseTextSelection.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "ResponseTextSelectionPolicy",
+    "swift_file": "Features/Chat/ResponseTextSelection.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SlashCommandAutocompleteView",
+    "swift_file": "Features/Chat/SlashCommandAutocompleteView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/HermesComposerSupport.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "ToolActivityGroupView",
+    "swift_file": "Features/Chat/ToolActivityGroupView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ToolCallLogRowView",
+    "swift_file": "Features/Chat/ToolCallLogRowView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ToolCallCardView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ToolCallDetailBodyView",
+    "swift_file": "Features/Chat/ToolCallLogRowView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptLinkPreviewView",
+    "swift_file": "Features/Chat/TranscriptLinkPreviewView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/TranscriptLinkPreviewView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaImageLightbox",
+    "swift_file": "Features/Chat/TranscriptMediaImageLightbox.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaContentView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/TranscriptMediaView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaThumbnailView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaResolvedRemoteView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaAudioExportView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaFileExportView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaVideoTile",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaUnavailableChip",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptMediaPreviewView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptVideoPreviewPlayerView",
+    "swift_file": "Features/Chat/TranscriptMediaView.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TranscriptTurnFoldRowView",
+    "swift_file": "Features/Chat/TranscriptTurnFolding.swift",
+    "category": "Chat",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HermesHomeSwitch",
+    "swift_file": "Features/Hermes/HermesHome.swift",
+    "category": "Hermes",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/home/HermesHomeBar.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "HiddenBottomScrollEdge",
+    "swift_file": "Features/Hermes/HermesHome.swift",
+    "category": "Hermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "InsightsView",
+    "swift_file": "Features/Insights/InsightsView.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/InsightsViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "UsageTitle",
+    "swift_file": "Features/Insights/InsightsView.swift",
+    "category": "Insights",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProviderLimitsSection",
+    "swift_file": "Features/Insights/ProviderLimitsCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/ProviderLimitsCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProviderLimitsPlaceholderCard",
+    "swift_file": "Features/Insights/ProviderLimitsCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/ProviderLimitsCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProviderLimitsCard",
+    "swift_file": "Features/Insights/ProviderLimitsCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/model/ProviderQuota.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "ProviderLimitRowView",
+    "swift_file": "Features/Insights/ProviderLimitsCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/ProviderLimitsCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProviderLimitBar",
+    "swift_file": "Features/Insights/ProviderLimitsCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/ProviderLimitsCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageChartCard",
+    "swift_file": "Features/Insights/UsageChartCard.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/UsageChartCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageModelsCard",
+    "swift_file": "Features/Insights/UsageModelRows.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/UsageModelCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageModelRow",
+    "swift_file": "Features/Insights/UsageModelRows.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/UsageModelCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageTopSessionsCard",
+    "swift_file": "Features/Insights/UsageModelRows.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/UsageModelCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageTotalsGrid",
+    "swift_file": "Features/Insights/UsageTotalsGrid.swift",
+    "category": "Insights",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/insights/UsageModelCards.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "UsageMetricCell",
+    "swift_file": "Features/Insights/UsageTotalsGrid.swift",
+    "category": "Insights",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanCardDetailView",
+    "swift_file": "Features/Kanban/KanbanCardDetailView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanCardDetailContent",
+    "swift_file": "Features/Kanban/KanbanCardDetailView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanCardEditorView",
+    "swift_file": "Features/Kanban/KanbanCardEditorView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanStatusFocusView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanBoardManagementView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanBoardEditorView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanBulkActionsView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanFiltersView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanCardSummaryView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "KanbanView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/kanban/KanbanViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "KanbanLabView",
+    "swift_file": "Features/Kanban/KanbanLabView.swift",
+    "category": "Kanban",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MemoryView",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/memory/MemoryViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "MemorySectionHeader",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProjectContextSectionHeader",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProjectContextSectionFooter",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MemorySectionContent",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MemoryEditSheet",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MemoryEditTitle",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "MemoryProfileSubtitle",
+    "swift_file": "Features/Memory/MemoryView.swift",
+    "category": "Memory",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesSheet",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesProfilePicker",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesReportView",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesStep",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesRow",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesBanner",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesQuestionSheet",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesOfferSheet",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "MoveToHermesNoticesRefresh",
+    "swift_file": "Features/MoveToHermes/MoveToHermesView.swift",
+    "category": "MoveToHermes",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingAgentPromptPage",
+    "swift_file": "Features/Onboarding/OnboardingAgentPromptPage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingPages.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HeroBadge",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SetupStepRow",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingCommandPill",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingStatusBanner",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingStepHeader",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingAgentPromptCard",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingPageIndicator",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ConnectionModePicker",
+    "swift_file": "Features/Onboarding/OnboardingComponents.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/ConnectFormComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingConnectPage",
+    "swift_file": "Features/Onboarding/OnboardingConnectPage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingPages.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingFeaturesPage",
+    "swift_file": "Features/Onboarding/OnboardingFeaturesPage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingPages.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingFeatureRow",
+    "swift_file": "Features/Onboarding/OnboardingFeaturesPage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingTailscalePage",
+    "swift_file": "Features/Onboarding/OnboardingTailscalePage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingPages.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingView",
+    "swift_file": "Features/Onboarding/OnboardingView.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "OnboardingWelcomePage",
+    "swift_file": "Features/Onboarding/OnboardingWelcomePage.swift",
+    "category": "Onboarding",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/OnboardingPages.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesSessionListView",
+    "swift_file": "Features/SessionList/HermesSessionListView.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/hermes/sessions/HermesSessionListViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProjectCreationSheet",
+    "swift_file": "Features/SessionList/ProjectCreationSheet.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionDialogs.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "ProjectRenameSheet",
+    "swift_file": "Features/SessionList/ProjectCreationSheet.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProjectFormSheet",
+    "swift_file": "Features/SessionList/ProjectCreationSheet.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionDialogs.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "SessionActionConfirmations",
+    "swift_file": "Features/SessionList/SessionListActionConfirmations.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionsHeader",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsHeader.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SessionSidebarUtilityRows",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SessionListRowsSection",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SessionInteractiveRow",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ScheduledSessionsDisclosure",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ScheduledSessionsView",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SessionRowContextMenu",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionProjectMoveMenu",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionDialogs.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "AvatarServerSwitcherMenu",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SidebarNavButton",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SidebarDisclosureChevron",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SidebarUtilityIcon",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SidebarSelectedSubrowIndicator",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ActiveProfilePickerRow",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProjectFilterRow",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CompactStatusRow",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionListStatusRow",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionRowSkeletonView",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "OfflineCacheBanner",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionsListPane.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "SidebarSubrowSelectionStyle",
+    "swift_file": "Features/SessionList/SessionListComponents.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionListView",
+    "swift_file": "Features/SessionList/SessionListView.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionListViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesHeaderLogo",
+    "swift_file": "Features/SessionList/SessionListView.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "PendingNewChatView",
+    "swift_file": "Features/SessionList/SessionListView.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ComposerVoiceInput.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SessionRenameSheet",
+    "swift_file": "Features/SessionList/SessionRenameSheet.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionDialogs.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "SessionRowView",
+    "swift_file": "Features/SessionList/SessionRowView.swift",
+    "category": "SessionList",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/SessionRow.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "SessionSourceBadge",
+    "swift_file": "Features/SessionList/SessionRowView.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionProfileTag",
+    "swift_file": "Features/SessionList/SessionRowView.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SessionRowStateBadge",
+    "swift_file": "Features/SessionList/SessionRowView.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "TipJarCard",
+    "swift_file": "Features/SessionList/TipJarCard.swift",
+    "category": "SessionList",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AddServerView",
+    "swift_file": "Features/Settings/AddServerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/AddServerDialog.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "ServerIdentityEditor",
+    "swift_file": "Features/Settings/AddServerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/ServerIdentity.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SettingsFootnote",
+    "swift_file": "Features/Settings/AddServerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SettingsButton",
+    "swift_file": "Features/Settings/AddServerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/AddServerDialog.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "SettingsDivider",
+    "swift_file": "Features/Settings/AddServerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "AppIconSettingsSection",
+    "swift_file": "Features/Settings/AppIconSettingsSection.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppIconDisclosureLabel",
+    "swift_file": "Features/Settings/AppIconSettingsSection.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppIconChoiceRow",
+    "swift_file": "Features/Settings/AppIconSettingsSection.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppIconChoicePreview",
+    "swift_file": "Features/Settings/AppIconSettingsSection.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AppIconPreviewImage",
+    "swift_file": "Features/Settings/AppIconSettingsSection.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ArchivedSessionsView",
+    "swift_file": "Features/Settings/ArchivedSessionsView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/sessions/ArchivedSessionsViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ArchivedStatusRow",
+    "swift_file": "Features/Settings/ArchivedSessionsView.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "DefaultModelPickerView",
+    "swift_file": "Features/Settings/DefaultModelPickerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/ServerPageViewModel.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "DefaultProfilePickerView",
+    "swift_file": "Features/Settings/DefaultProfilePickerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/models/ProfilePickerViewModel.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "CreateProfileSheet",
+    "swift_file": "Features/Settings/DefaultProfilePickerView.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProfileStatusBadge",
+    "swift_file": "Features/Settings/DefaultProfilePickerView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/models/ProfilePickerSheet.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "HermesUpdateCallout",
+    "swift_file": "Features/Settings/HermesUpdateCallout.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/HermesServerSettingsSlot.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProviderGlyphGalleryView",
+    "swift_file": "Features/Settings/ProviderGlyphGalleryView.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ProvidersView",
+    "swift_file": "Features/Settings/ProvidersView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/ProvidersViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ProviderDisclosure",
+    "swift_file": "Features/Settings/ProvidersView.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsAboutPage",
+    "swift_file": "Features/Settings/SettingsAboutPage.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SettingsDeveloperPage",
+    "swift_file": "Features/Settings/SettingsAboutPage.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsAppearancePage",
+    "swift_file": "Features/Settings/SettingsAppPages.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsComposerPage",
+    "swift_file": "Features/Settings/SettingsAppPages.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SettingsChatPage",
+    "swift_file": "Features/Settings/SettingsAppPages.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SettingsGeneralPage",
+    "swift_file": "Features/Settings/SettingsAppPages.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "AppLockSection",
+    "swift_file": "Features/Settings/SettingsAppPages.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SettingsNotificationsPage",
+    "swift_file": "Features/Settings/SettingsNotificationsPage.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsAppPages.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "SettingsLabel",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsExternalLink",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ServerAvatarBadge",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/ServerIdentity.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SettingsStatusPill",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SettingsTextFieldRow",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HeaderLogoColorSettings",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "HeaderLogoColorPresetButton",
+    "swift_file": "Features/Settings/SettingsRows.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsServerPage",
+    "swift_file": "Features/Settings/SettingsServerPage.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/ServerPageViewModel.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "MoveToHermesSection",
+    "swift_file": "Features/Settings/SettingsServerPage.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SettingsView",
+    "swift_file": "Features/Settings/SettingsView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SettingsServerRow",
+    "swift_file": "Features/Settings/SettingsView.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/SettingsRoute.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "WebuiServerSections",
+    "swift_file": "Features/Settings/WebuiServerSettings.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "CustomHeadersSettingsView",
+    "swift_file": "Features/Settings/WebuiServerSettings.swift",
+    "category": "Settings",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/settings/CustomHeadersDialog.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "WebuiServerPresentations",
+    "swift_file": "Features/Settings/WebuiServerSettings.swift",
+    "category": "Settings",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "ActionToastView",
+    "swift_file": "Features/Shared/ActionToast.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "AdaptiveGlassDebugFixture",
+    "swift_file": "Features/Shared/AdaptiveGlassDebugFixture.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "AdaptiveReadableContentModifier",
+    "swift_file": "Features/Shared/AdaptiveGlassModifier.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "AdaptiveReadableScrollContentModifier",
+    "swift_file": "Features/Shared/AdaptiveGlassModifier.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "AdaptiveSecondaryNavigationTitleModifier",
+    "swift_file": "Features/Shared/AdaptiveGlassModifier.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "AdaptiveSoftScrollEdgeModifier",
+    "swift_file": "Features/Shared/AdaptiveGlassModifier.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "CustomHeadersEditor",
+    "swift_file": "Features/Shared/CustomHeadersEditor.swift",
+    "category": "Shared",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/onboarding/ConnectFormComponents.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "ModelPickerSheet",
+    "swift_file": "Features/Shared/ModelPickerSheet.swift",
+    "category": "Shared",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/models/ModelPickerSheet.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "CustomModelFieldStyle",
+    "swift_file": "Features/Shared/ModelPickerSheet.swift",
+    "category": "Shared",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SkillsView",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/skills/SkillsViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SkillCategorySection",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SkillRow",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SkillDetailView",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/skills/SkillDetailViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "SkillLinkedFilesSection",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SkillLinkedFileView",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "SkillsTitle",
+    "swift_file": "Features/Skills/SkillsView.swift",
+    "category": "Skills",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "CronJobModelRow",
+    "swift_file": "Features/Tasks/CronJobConfigurationPickers.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobConfigurationPickers.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobProfileRow",
+    "swift_file": "Features/Tasks/CronJobConfigurationPickers.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobConfigurationPickers.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobPickerChevron",
+    "swift_file": "Features/Tasks/CronJobConfigurationPickers.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobConfigurationPickers.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobProfilePickerSheet",
+    "swift_file": "Features/Tasks/CronJobConfigurationPickers.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobConfigurationPickers.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobEditorSheet",
+    "swift_file": "Features/Tasks/CronJobEditorSheet.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobEditorSheet.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobRowView",
+    "swift_file": "Features/Tasks/CronJobRowView.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobRowView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobSkillsRow",
+    "swift_file": "Features/Tasks/CronJobSkillsPicker.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobSkillsPicker.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "CronJobSkillsPickerSheet",
+    "swift_file": "Features/Tasks/CronJobSkillsPicker.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobSkillsPicker.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskDetailHeaderCard",
+    "swift_file": "Features/Tasks/TaskDetailHeaderCard.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskDetailHeaderCard.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskDetailView",
+    "swift_file": "Features/Tasks/TaskDetailView.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskDetailViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskRecentRunRowView",
+    "swift_file": "Features/Tasks/TaskRecentRunRowView.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskRecentRunRowView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskRunHistorySection",
+    "swift_file": "Features/Tasks/TaskRunHistorySection.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskRunHistorySection.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskRunHistoryRow",
+    "swift_file": "Features/Tasks/TaskRunHistorySection.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskRunHistorySection.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TaskRunOutputSheet",
+    "swift_file": "Features/Tasks/TaskRunOutputSheet.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TaskRunOutputSheet.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "TasksView",
+    "swift_file": "Features/Tasks/TasksView.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/TasksViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "StatusBadge",
+    "swift_file": "Features/Tasks/TasksView.swift",
+    "category": "Tasks",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/tasks/CronJobRowView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "FileBrowserView",
+    "swift_file": "Features/Workspace/FileBrowserView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "FileTreeRowView",
+    "swift_file": "Features/Workspace/FileBrowserView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "FilePreviewView",
+    "swift_file": "Features/Workspace/FilePreviewView.swift",
+    "category": "Workspace",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/workspace/WorkspaceFileNavigation.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "GitActionToastOverlay",
+    "swift_file": "Features/Workspace/GitActionToastOverlay.swift",
+    "category": "Workspace",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/git/GitActionToast.kt",
+    "port_status": "Port Annotated"
+  },
+  {
+    "type": "View",
+    "name": "GitActionsMenuButton",
+    "swift_file": "Features/Workspace/GitActionsMenuButton.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitBranchPickerButton",
+    "swift_file": "Features/Workspace/GitBranchPickerView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitBranchPickerSheet",
+    "swift_file": "Features/Workspace/GitBranchPickerView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitCommitView",
+    "swift_file": "Features/Workspace/GitCommitView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitCommitFileRow",
+    "swift_file": "Features/Workspace/GitCommitView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitDiffView",
+    "swift_file": "Features/Workspace/GitDiffView.swift",
+    "category": "Workspace",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/git/ReviewDiffModel.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "View",
+    "name": "GitInlineCommitButton",
+    "swift_file": "Features/Workspace/GitInlineCommitButton.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitTurnChangesCard",
+    "swift_file": "Features/Workspace/GitTurnChangesCard.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitWorkspaceView",
+    "swift_file": "Features/Workspace/GitWorkspaceView.swift",
+    "category": "Workspace",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/git/GitWorkspaceViewModel.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "GitAheadBehindBadges",
+    "swift_file": "Features/Workspace/GitWorkspaceView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "DiffCountsLabel",
+    "swift_file": "Features/Workspace/GitWorkspaceView.swift",
+    "category": "Workspace",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/chat/ToolCallCardView.kt",
+    "port_status": "Direct Port"
+  },
+  {
+    "type": "View",
+    "name": "GitFileCard",
+    "swift_file": "Features/Workspace/GitWorkspaceView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "GitStatusChip",
+    "swift_file": "Features/Workspace/GitWorkspaceView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "WorkspaceManagerView",
+    "swift_file": "Features/Workspace/WorkspaceManagerView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "WorkspaceAddSheet",
+    "swift_file": "Features/Workspace/WorkspaceManagerView.swift",
+    "category": "Workspace",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "View",
+    "name": "SourceFileSurface",
+    "swift_file": "Features/Workspace/SourceViewer/SourceFileSurface.swift",
+    "category": "Workspace/SourceViewer",
+    "kt_target": "io/github/jcartu/hermex/ui/feature/workspace/SourceViewerScreen.kt",
+    "port_status": "Referenced"
+  },
+  {
+    "type": "ViewModifier",
+    "name": "PushPresenceModifier",
+    "swift_file": "Push/PushNotificationRouter.swift",
+    "category": "Push",
+    "kt_target": "None (Missing in Android)",
+    "port_status": "Missing"
+  },
+  {
+    "type": "Widget",
+    "name": "AgentRunLiveActivityWidget",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Glance Widget Pending)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunExpandedIslandBottomView",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunLockScreenView",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunChipRow",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunLeadingMark",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunIslandBadge",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunIslandStatusView",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunIslandCompactMark",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunStatusDot",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunProgressRail",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunTimerPill",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "LiveActivityView",
+    "name": "AgentRunElapsedTimerText",
+    "swift_file": "HermesLiveActivityWidget/AgentRunLiveActivityWidget.swift",
+    "category": "LiveActivities",
+    "kt_target": "service/AgentRunService.kt (Notification RemoteViews)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "AppIntent",
+    "name": "NewChatIntent",
+    "swift_file": "AppIntents/HermexAppIntents.swift",
+    "category": "AppIntents",
+    "kt_target": "MainActivity.kt / shortcuts.xml",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "AppIntent",
+    "name": "NewChatVoiceIntent",
+    "swift_file": "AppIntents/HermexAppIntents.swift",
+    "category": "AppIntents",
+    "kt_target": "MainActivity.kt / shortcuts.xml",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "AppIntent",
+    "name": "NewChatInProfileIntent",
+    "swift_file": "AppIntents/HermexAppIntents.swift",
+    "category": "AppIntents",
+    "kt_target": "MainActivity.kt / shortcuts.xml",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "AppShortcutsProvider",
+    "name": "HermexShortcuts",
+    "swift_file": "AppIntents/HermexAppIntents.swift",
+    "category": "AppIntents",
+    "kt_target": "res/xml/shortcuts.xml",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "ShareExtension",
+    "name": "ShareInputReader",
+    "swift_file": "HermesShareExtension/ShareInputReader.swift",
+    "category": "ShareExtension",
+    "kt_target": "MainActivity.kt (ACTION_SEND filter)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "ShareExtension",
+    "name": "ShareViewController",
+    "swift_file": "HermesShareExtension/ShareViewController.swift",
+    "category": "ShareExtension",
+    "kt_target": "MainActivity.kt (ACTION_SEND filter)",
+    "port_status": "Platform Equivalent"
+  },
+  {
+    "type": "NotificationService",
+    "name": "NotificationService",
+    "swift_file": "HermesNotificationService/NotificationService.swift",
+    "category": "Push",
+    "kt_target": "service/HermexFirebaseMessagingService.kt",
+    "port_status": "Platform Equivalent"
+  }
+]
