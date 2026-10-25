@@ -65,6 +65,10 @@ android {
         unitTests {
             isIncludeAndroidResources = false
             isReturnDefaultValues = true
+            all { test ->
+                test.systemProperty("robolectric.nativeruntime.enable", "false")
+                test.jvmArgs("-Drobolectric.nativeruntime.enable=false")
+            }
         }
     }
 }
@@ -127,4 +131,5 @@ dependencies {
 // the contract + ViewModel suites on CI and local JDK 21.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     maxHeapSize = "4g"
+    systemProperty("robolectric.nativeruntime.enable", "false")
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -215,27 +216,33 @@ fun HermesChatPane(
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) {
-                    if (titleSlot != null) titleSlot(turn?.settings?.roster.orEmpty(), face, turn?.engine?.connectionState == HermesConversation.ConnectionState.CONNECTED)
-                    else if (turn?.policy == HermesChatPolicy.BOT_CHAT) {
-                        TextButton(onClick = { onOpenBotEditor?.invoke(model.profile) }, enabled = onOpenBotEditor != null) { Text(model.profile, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    } else Text(state.displayTitle.ifBlank { "New chat" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (workspace?.isLocal == true) {
-                    IconButton(onClick = { val value = workspace ?: return@IconButton; if (onOpenFiles != null) onOpenFiles(value) else filesOpen = true }) { Icon(Icons.Outlined.Folder, "Files") }
-                    IconButton(onClick = { val value = workspace ?: return@IconButton; if (onOpenGit != null) onOpenGit(value) else gitOpen = true }) { Icon(Icons.Outlined.Source, "Git") }
-                }
-                if (turn != null && !state.isViewingCachedData && turn.activity.delegatedWork.activeCount > 0) HermesDelegatedWorkButton(turn.activity.delegatedWork.activeCount, onClick = { showWorkers = true; perform { turn.activity.delegatedWork.refresh() } })
-                var menu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Chat actions") }
-                    DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; model.retryLoad() })
-                        if (turn?.policy?.offersHistoryActions == true) {
-                            DropdownMenuItem(text = { Text("Fork conversation") }, enabled = !state.isStreaming, onClick = { menu = false; model.branch() })
-                            DropdownMenuItem(text = { Text("Duplicate conversation") }, enabled = !state.isStreaming, onClick = { menu = false; model.duplicate() })
-                            DropdownMenuItem(text = { Text("Sessions") }, onClick = { menu = false; onOpenSessions?.invoke(model.profile, "") })
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        if (titleSlot != null) titleSlot(turn?.settings?.roster.orEmpty(), face, turn?.engine?.connectionState == HermesConversation.ConnectionState.CONNECTED)
+                        else if (turn?.policy == HermesChatPolicy.BOT_CHAT) {
+                            TextButton(onClick = { onOpenBotEditor?.invoke(model.profile) }, enabled = onOpenBotEditor != null) { Text(model.profile, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        } else Text(state.displayTitle.ifBlank { "New chat" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (workspace?.isLocal == true) {
+                        IconButton(onClick = { val value = workspace ?: return@IconButton; if (onOpenFiles != null) onOpenFiles(value) else filesOpen = true }) { Icon(Icons.Outlined.Folder, "Files") }
+                        IconButton(onClick = { val value = workspace ?: return@IconButton; if (onOpenGit != null) onOpenGit(value) else gitOpen = true }) { Icon(Icons.AutoMirrored.Filled.CallSplit, "Git") }
+                    }
+                    if (turn != null && !state.isViewingCachedData && turn.activity.delegatedWork.activeCount > 0) HermesDelegatedWorkButton(turn.activity.delegatedWork.activeCount, onClick = { showWorkers = true; perform { turn.activity.delegatedWork.refresh() } })
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Chat actions") }
+                        DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; model.retryLoad() })
+                            if (turn?.policy?.offersHistoryActions == true) {
+                                DropdownMenuItem(text = { Text("Fork conversation") }, enabled = !state.isStreaming, onClick = { menu = false; model.branch() })
+                                DropdownMenuItem(text = { Text("Duplicate conversation") }, enabled = !state.isStreaming, onClick = { menu = false; model.duplicate() })
+                                DropdownMenuItem(text = { Text("Sessions") }, onClick = { menu = false; onOpenSessions?.invoke(model.profile, "") })
+                            }
                         }
                     }
                 }
@@ -253,6 +260,7 @@ fun HermesChatPane(
                             workspaceRoot = state.selectedWorkspacePath, onOpenWeb = onOpenWeb, onOpenWorkspaceFile = openFile,
                             onAskHermex = model::askAboutSelection, hapticsEnabled = settings.hapticsEnabled,
                             resolveRemoteImages = true,
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 120.dp),
                             leadingContent = if (presentation.forkParent != null || turn?.compaction?.anchorMessageID == null && turn?.compaction != null) ({
                                 presentation.forkParent?.let { parent -> TextButton(onClick = { onOpenSession?.invoke(model.profile, parent.id) ?: model.openSession(model.profile, parent.id) }) { Text("Forked from ${parent.title ?: parent.id}") } }
                                 turn?.compaction?.takeIf { it.anchorMessageID == null }?.let { MarkerMessageCard(ChatMarkerMessageClassifier.compressionReference(it.referenceText)) }
@@ -309,7 +317,6 @@ fun HermesChatPane(
                             if (request != null) HermesBtwBar(btw, { expandedBtw = true }, turn.sideTasks::closeBtw, Modifier.padding(horizontal = 12.dp))
                             else HermesBtwCard(btw, 220.dp, { expandedBtw = true }, turn.sideTasks::closeBtw, Modifier.padding(horizontal = 12.dp))
                         }
-                        state.contextWindow?.let { ContextWindowIndicator(it, Modifier.align(Alignment.End).padding(horizontal = 12.dp)) }
                         if (requests?.approvalBypass == true) TextButton(enabled = requests.mayTurnOffApprovalBypass, onClick = { perform { requests.turnOffApprovalBypass() } }) { Text("Approvals bypassed${if (requests.mayTurnOffApprovalBypass) " · Ask again" else " by the host"}") }
                         state.queuedMessagesReceipt?.let { Text(it, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 16.dp)) }
                         if (turn?.isUploadingAttachments == true) TextButton(onClick = model::cancelUpload) { Text("Cancel upload") }
@@ -451,14 +458,34 @@ fun HermesChatPane(
         val hinge = LocalFoldState.current.features.firstOrNull { it.orientation == FoldingFeature.Orientation.HORIZONTAL && it.state == FoldingFeature.State.HALF_OPENED }
         var top by remember { mutableFloatStateOf(0f) }
         val density = LocalDensity.current
-        Column(modifier.fillMaxSize().imePadding().onGloballyPositioned { top = it.positionInWindow().y }) {
-            if (hinge == null) {
-                transcriptRegion(Modifier.weight(1f).fillMaxWidth())
-                composerRegion(Modifier.fillMaxWidth())
-            } else {
+        if (hinge != null) {
+            Column(modifier.fillMaxSize().imePadding().onGloballyPositioned { top = it.positionInWindow().y }) {
                 transcriptRegion(Modifier.fillMaxWidth().height(with(density) { (hinge.bounds.top - top).coerceAtLeast(0f).toDp() }))
                 Spacer(Modifier.height(with(density) { hinge.bounds.height().toFloat().toDp() }))
                 composerRegion(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
+            }
+        } else {
+            var composerHeight by remember { mutableStateOf(100.dp) }
+            Box(modifier = modifier.fillMaxSize()) {
+                transcriptRegion(Modifier.fillMaxSize())
+
+                BottomComposerMaterialFade(
+                    composerHeight = composerHeight,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .onGloballyPositioned {
+                            composerHeight = with(density) { it.size.height.toDp() }
+                        },
+                ) {
+                    composerRegion(Modifier.fillMaxWidth())
+                }
             }
         }
     }

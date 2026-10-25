@@ -1,5 +1,15 @@
 package io.github.jcartu.hermex.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -100,6 +110,10 @@ import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceRoute
 import io.github.jcartu.hermex.ui.feature.workspace.WorkspaceFileNavigation
 import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceNavigation
 import io.github.jcartu.hermex.ui.feature.workspace.hermes.HermesWorkspaceRoute
+
+val LocalBottomBarVisibility = compositionLocalOf<MutableState<Boolean>> {
+    error("LocalBottomBarVisibility not provided")
+}
 
 enum class HermexDestination(val label: String, val icon: ImageVector) {
     CHATS("Chats", Icons.AutoMirrored.Filled.Chat),
@@ -312,9 +326,11 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
         }
     }
     io.github.jcartu.hermex.ui.feature.settings.NotificationOfferHost(container)
+    val bottomBarVisibility = remember { mutableStateOf(true) }
     CompositionLocalProvider(
         LocalFoldState provides fold.value,
         LocalPaneCount provides paneCount,
+        LocalBottomBarVisibility provides bottomBarVisibility,
     ) {
         val destinationContent: @Composable (HermexDestination) -> Unit = { destination ->
             when (destination) {
@@ -374,24 +390,32 @@ private fun MainShell(container: AppContainer, account: ServerAccount) {
         }
 
         if (paneCount == 1) {
+            val showBottomBar = bottomBarVisibility.value
             Scaffold(
                 bottomBar = {
-                    NavigationBar {
-                        HermexDestination.entries.forEach { destination ->
-                            if (destination == HermexDestination.TASKS && !settings.showsTasksEntry) {
-                                return@forEach
+                    AnimatedVisibility(
+                        visible = showBottomBar,
+                        enter = slideInVertically { it } + fadeIn(),
+                        exit = slideOutVertically { it } + fadeOut(),
+                    ) {
+                        NavigationBar {
+                            HermexDestination.entries.forEach { destination ->
+                                if (destination == HermexDestination.TASKS && !settings.showsTasksEntry) {
+                                    return@forEach
+                                }
+                                NavigationBarItem(
+                                    selected = selected == destination,
+                                    onClick = { navigation.selectDestination(destination) },
+                                    icon = { Icon(destination.icon, contentDescription = destination.label) },
+                                    label = { Text(destination.label) },
+                                )
                             }
-                            NavigationBarItem(
-                                selected = selected == destination,
-                                onClick = { navigation.selectDestination(destination) },
-                                icon = { Icon(destination.icon, contentDescription = destination.label) },
-                                label = { Text(destination.label) },
-                            )
                         }
                     }
                 },
+                contentWindowInsets = if (showBottomBar) ScaffoldDefaults.contentWindowInsets else WindowInsets(0, 0, 0, 0),
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding)) {
+                Box(Modifier.fillMaxSize().padding(if (showBottomBar) padding else PaddingValues(0.dp))) {
                     hostedContent()
                 }
             }
@@ -442,6 +466,15 @@ private fun ChatsArea(navigation: AppNavigationViewModel, container: AppContaine
     val paneCount = LocalPaneCount.current
     val selectedSessionId = navigation.selectedSessionId
     val newChat = navigation.isNewChat
+    val bottomBarVisibility = LocalBottomBarVisibility.current
+
+    LaunchedEffect(paneCount, selectedSessionId, newChat) {
+        if (paneCount == 1) {
+            bottomBarVisibility.value = (selectedSessionId == null && !newChat)
+        } else {
+            bottomBarVisibility.value = true
+        }
+    }
 
     // Hardware-keyboard chat shortcuts (HermexCommands port): bubbles key
     // events from any focused child in the chats area; the sessions list

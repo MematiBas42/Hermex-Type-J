@@ -1,0 +1,55 @@
+name: Release Hermex-Type-J Android (Obtainium Support)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Debug & Release APKs
+        run: |
+          ./gradlew assembleDebug assembleRelease --no-daemon --console=plain --stacktrace
+
+      - name: Prepare APKs for Release
+        run: |
+          mkdir -p ../dist
+          cp app/build/outputs/apk/debug/app-debug.apk ../dist/Hermex-Type-J-debug.apk
+          if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned.apk ../dist/Hermex-Type-J-release-unsigned.apk
+          fi
+
+      - name: Create GitHub Release (Obtainium Target)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

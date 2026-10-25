@@ -107,29 +107,6 @@ fun ChatActiveRunStatusRow(
                     maxLines = 1,
                 )
             }
-
-            Spacer(Modifier.width(4.dp))
-
-            IconButton(
-                onClick = onStop,
-                enabled = !state.isCancellingStream,
-                modifier = Modifier.size(32.dp),
-            ) {
-                if (state.isCancellingStream) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Stop,
-                        contentDescription = "Stop response",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
         }
     }
 }

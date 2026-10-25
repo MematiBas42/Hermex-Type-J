@@ -3,6 +3,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -297,13 +300,13 @@ private fun SingleRegionChatLayout(
     var paneTopInWindow by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding()
-            .onGloballyPositioned { paneTopInWindow = it.positionInWindow().y },
-    ) {
-        if (horizontalHinge != null) {
+    if (horizontalHinge != null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .onGloballyPositioned { paneTopInWindow = it.positionInWindow().y },
+        ) {
             // Book posture: transcript fills exactly up to the hinge top,
             // then a spacer covers the occluded strip.
             val hingeTopDp = with(density) {
@@ -339,7 +342,10 @@ private fun SingleRegionChatLayout(
                     .fillMaxWidth()
                     .weight(1f),
             )
-        } else {
+        }
+    } else {
+        var composerHeight by remember { mutableStateOf(100.dp) }
+        Box(modifier = Modifier.fillMaxSize()) {
             ChatTranscript(
                 state = state,
                 listState = listState,
@@ -354,16 +360,37 @@ private fun SingleRegionChatLayout(
                 onListen = onListen,
                 onLoadOlder = viewModel::loadOlderMessages,
                 onRetry = viewModel::retryLoad,
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 16.dp,
+                    bottom = composerHeight + 16.dp,
+                ),
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            BottomComposerMaterialFade(
+                composerHeight = composerHeight,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+
+            Box(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .weight(1f),
-            )
-            ComposerRegion(
-                state = state,
-                viewModel = viewModel,
-                hapticsEnabled = hapticsEnabled,
-                modifier = Modifier.fillMaxWidth(),
-            )
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .onGloballyPositioned {
+                        composerHeight = with(density) { it.size.height.toDp() }
+                    },
+            ) {
+                ComposerRegion(
+                    state = state,
+                    viewModel = viewModel,
+                    hapticsEnabled = hapticsEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -453,14 +480,6 @@ private fun ComposerRegion(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
         )
-        state.contextWindow?.let { snapshot ->
-            ContextWindowIndicator(
-                snapshot = snapshot,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-            )
-        }
         ChatComposer(
             state = state,
             actions = viewModel,

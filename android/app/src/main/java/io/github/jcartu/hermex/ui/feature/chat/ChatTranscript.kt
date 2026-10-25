@@ -99,6 +99,7 @@ fun ChatTranscript(
     trailingContent: (@Composable () -> Unit)? = null,
     rowContent: (@Composable (TranscriptMessage, @Composable () -> Unit) -> Unit)? = null,
     resolveRemoteImages: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
 ) {
     when {
         state.isLoading && state.messages.isEmpty() -> LoadingState(modifier, "Loading messages")
@@ -130,6 +131,7 @@ fun ChatTranscript(
             trailingContent = trailingContent,
             rowContent = rowContent,
             resolveRemoteImages = resolveRemoteImages,
+            contentPadding = contentPadding,
             modifier = modifier,
         )
     }
@@ -154,6 +156,7 @@ private fun TranscriptList(
     trailingContent: (@Composable () -> Unit)?,
     rowContent: (@Composable (TranscriptMessage, @Composable () -> Unit) -> Unit)?,
     resolveRemoteImages: Boolean,
+    contentPadding: PaddingValues,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -282,7 +285,7 @@ private fun TranscriptList(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+                    contentPadding = contentPadding,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     leadingContent?.let { content -> item("leading-content") { CenteredReadingColumn { content() } } }

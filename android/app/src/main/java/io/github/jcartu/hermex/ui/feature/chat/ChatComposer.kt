@@ -455,6 +455,13 @@ fun ChatComposer(
                         modifier = Modifier.weight(1f),
                     )
 
+                    state.contextWindow?.let { contextWindow ->
+                        ContextWindowIndicator(
+                            snapshot = contextWindow,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
+                    }
+
                     ComposerSendButton(
                         isRunActive = state.isStreaming,
                         hasPayload = hasSendPayload,
@@ -545,7 +552,12 @@ private fun ComposerSendButton(
                     enabled = enabled,
                     role = Role.Button,
                     hapticFeedbackEnabled = false,
-                    onClick = { if (showsStop) onStop() else onSend() },
+                    onClick = {
+                        if (hapticsEnabled) {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        }
+                        if (showsStop) onStop() else onSend()
+                    },
                     onLongClick = if (mayOpenMenu) {
                         {
                             if (hapticsEnabled) {

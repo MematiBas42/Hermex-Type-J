@@ -82,6 +82,14 @@ fun HermesHome(account: ServerAccount, container: AppContainer, onOpenSettings: 
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
     val paneCount = LocalPaneCount.current
+    val bottomBarVisibility = io.github.jcartu.hermex.ui.LocalBottomBarVisibility.current
+    LaunchedEffect(paneCount, chat) {
+        if (paneCount == 1) {
+            bottomBarVisibility.value = (chat == null)
+        } else {
+            bottomBarVisibility.value = true
+        }
+    }
     val sides = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     val pending by HermesSessionLookup.pending.collectAsStateWithLifecycle()

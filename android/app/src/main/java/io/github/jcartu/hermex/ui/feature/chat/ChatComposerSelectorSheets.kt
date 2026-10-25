@@ -1,5 +1,11 @@
 package io.github.jcartu.hermex.ui.feature.chat
 
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +80,19 @@ internal fun ChatComposerSelectorChips(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        0.0f to Color.Transparent,
+                        0.03f to Color.Black,
+                        0.97f to Color.Black,
+                        1.0f to Color.Transparent,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
